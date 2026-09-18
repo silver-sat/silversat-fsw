@@ -1,0 +1,20 @@
+/*
+ * Application overlay for the Nucleo-F446RE flatsat target.
+ *
+ * Empty for now. The magnetometer PR adds:
+ *
+ *   &spi1 {
+ *           status = "okay";
+ *           cs-gpios = <&gpiob 6 GPIO_ACTIVE_LOW>;
+ *
+ *           mag: mag@0 {
+ *                   compatible = "silversat,mag";
+ *                   reg = <0>;
+ *                   spi-max-frequency = <10000000>;
+ *           };
+ *   };
+ *
+ * Note that the node label (`mag`) matches the one used in the native_sim
+ * overlay. That is what lets the same driver code and the same tests run
+ * against both, with no #ifdef anywhere.
+ */

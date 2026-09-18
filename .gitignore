@@ -1,0 +1,27 @@
+# Zephyr / west build output
+build/
+build-*/
+twister-out/
+twister-out.*/
+.west/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NOTE: do NOT add zephyr/ here. That directory belongs to this repository
+# (it holds module.yml). The Zephyr source tree that west fetches lives
+# OUTSIDE this repo, as a sibling directory.

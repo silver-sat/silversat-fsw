@@ -1,0 +1,32 @@
+/*
+ * Emulated SPI bus for driver tests.
+ *
+ * The container node with explicit #address-cells/#size-cells is the
+ * convention upstream Zephyr tests use; it avoids unit-address complaints
+ * against the root node.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	test {
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		test_spi: spi@40000000 {
+			compatible = "zephyr,spi-emul-controller";
+			status = "okay";
+			reg = <0x40000000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			clock-frequency = <4000000>;
+
+			mag: mag@0 {
+				compatible = "silversat,mag";
+				status = "okay";
+				reg = <0>;
+				spi-max-frequency = <10000000>;
+			};
+		};
+	};
+};

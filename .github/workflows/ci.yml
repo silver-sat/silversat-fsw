@@ -1,0 +1,127 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch cancels the run it supersedes. Students push
+# in bursts; without this you pay for every intermediate commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native_sim:
+    name: native_sim tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # MUST match `self: path:` in west.yml.
+          path: app
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install 32-bit host libraries
+        # Needed only for the default (32-bit) native_sim target. If this
+        # ever becomes a problem, drop this step and the `-p native_sim`
+        # line below, keeping native_sim/native/64.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: app
+          # Not used by native_sim (which builds with the host compiler),
+          # but cached here so the target-build job below is fast.
+          toolchains: arm-zephyr-eabi
+
+      - name: Run twister
+        working-directory: app
+        run: |
+          west twister \
+            -p native_sim \
+            -p native_sim/native/64 \
+            -T tests \
+            --inline-logs \
+            -v
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twister-results
+          path: |
+            app/twister-out/twister.xml
+            app/twister-out/twister.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build_target:
+    name: nucleo_f446re build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: app
+          toolchains: arm-zephyr-eabi
+
+      - name: Build application
+        working-directory: app
+        run: west build --pristine -b nucleo_f446re app
+
+      - name: Report footprint
+        working-directory: app
+        run: |
+          arm-zephyr-eabi-size build/zephyr/zephyr.elf || \
+            size build/zephyr/zephyr.elf
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: zephyr-nucleo_f446re
+          path: app/build/zephyr/zephyr.elf
+          retention-days: 7
+
+# ---------------------------------------------------------------------------
+# Not yet enabled -- add these as separate pull requests once the above is
+# reliably green, so that a failure has exactly one plausible cause:
+#
+#   * sanitizers:  add --enable-asan --enable-ubsan to the twister line.
+#                  If host libc produces spurious leak reports, set
+#                  ASAN_OPTIONS: detect_leaks=0 in the job env rather than
+#                  dropping the flag.
+#
+#   * compliance:  python zephyr/scripts/ci/check_compliance.py \
+#                      -c origin/main..HEAD
+#
+#   * coverage:    add --coverage to twister and publish the report.
+#
+#   * hardware:    the flatsat job, gated on a repository variable:
+#                      if: vars.FLATSAT_ENABLED == 'true'
+#                  and with `concurrency: group: flatsat` plus
+#                  cancel-in-progress: FALSE, so runs queue instead of
+#                  cancelling each other. One board, one job at a time.
+# ---------------------------------------------------------------------------

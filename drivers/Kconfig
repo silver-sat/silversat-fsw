@@ -1,0 +1,11 @@
+# Kconfig for out-of-tree drivers.
+#
+# Add one `rsource` line per driver subdirectory as they are written, e.g.:
+#
+#   rsource "magnetometer/Kconfig"
+#
+# An empty menu keeps this file valid until the first driver lands.
+
+menu "SilverSat drivers"
+
+endmenu

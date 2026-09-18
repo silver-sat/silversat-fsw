@@ -1,0 +1,21 @@
+# Copyright (c) 2026 SilverSat
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  SilverSat three-axis magnetometer.
+
+  The same binding is used for the real part on a hardware SPI bus and for
+  the emulated part on zephyr,spi-emul-controller. Nothing in the driver or
+  the application should need to know which one it is talking to -- that is
+  the whole point.
+
+compatible: "silversat,mag"
+
+include: [sensor-device.yaml, spi-device.yaml]
+
+properties:
+  drdy-gpios:
+    type: phandle-array
+    description: |
+      Data-ready interrupt line, if wired. Optional; the driver falls back
+      to polling the status register when this is absent.

@@ -1,0 +1,6 @@
+# Module-level Kconfig. Referenced by zephyr/module.yml.
+#
+# Kconfig symbols defined under here become available to every application
+# and test that uses this module, so they can be set in prj.conf.
+
+rsource "drivers/Kconfig"

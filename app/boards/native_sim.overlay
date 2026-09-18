@@ -1,0 +1,8 @@
+/*
+ * Application overlay for native_sim.
+ *
+ * Empty for now. When the magnetometer driver lands, this gains an emulated
+ * SPI bus with a mag node on it -- see tests/drivers/mag/boards/ for the
+ * shape. Keeping it present (and empty) means the file path is already
+ * correct and nobody has to discover the boards/ convention under pressure.
+ */

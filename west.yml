@@ -1,0 +1,46 @@
+# West manifest for the SilverSat flight software workspace.
+#
+# This repository is the manifest repository (west "T2" topology). Running
+# `west update` fetches Zephyr and its modules as SIBLINGS of this directory:
+#
+#   workspace/
+#   ├── app/        <- this repository
+#   ├── zephyr/     <- fetched by west, not version controlled here
+#   └── modules/    <- fetched by west, not version controlled here
+#
+manifest:
+  remotes:
+    - name: upstream
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: upstream
+      # Pinned deliberately. Do NOT track main -- upstream changes will break
+      # student CI on days unrelated to anything they did. Bump this on
+      # purpose, in its own pull request, and read the release notes.
+      # Check https://github.com/zephyrproject-rtos/zephyr/releases for tags.
+      revision: v4.4.0
+      import:
+        # Trim the module set once CI is green. Removing HALs you do not use
+        # cuts several GB and a minute or two off every cold `west update`.
+        # Start permissive; optimize later.
+        name-blocklist:
+          - hal_altera
+          - hal_espressif
+          - hal_infineon
+          - hal_microchip
+          - hal_nordic
+          - hal_nxp
+          - hal_quicklogic
+          - hal_renesas
+          - hal_rpi_pico
+          - hal_silabs
+          - hal_telink
+          - hal_ti
+          - hal_xtensa
+
+  self:
+    # MUST match the directory this repo is checked out into, both locally
+    # and in CI (see .github/workflows/ci.yml, `path: app`).
+    path: app
