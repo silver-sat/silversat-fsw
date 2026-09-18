@@ -1,15 +1,9 @@
 # Declares this repository as a Zephyr module.
-#
-# Without this file, Zephyr's build system will not see our out-of-tree
-# drivers, devicetree bindings, or board definitions. Note that this
-# `zephyr/` directory belongs to THIS repo and is unrelated to the
-# workspace-level `zephyr/` directory that west creates as a sibling.
 
 build:
   cmake: .
   kconfig: Kconfig
-
-settings:
-  # Adds dts/bindings/ to the devicetree binding search path.
-  dts_root: .
-  # Adds boards/ to the board search path (for custom SilverSat boards later).
+  settings:
+    # Adds dts/bindings/ to the binding search path, and makes
+    # dts/bindings/vendor-prefixes.txt recognized.
+    dts_root: .
