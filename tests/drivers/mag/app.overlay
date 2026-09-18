@@ -1,11 +1,9 @@
 /*
  * Emulated SPI bus for driver tests.
  *
- * The container node with explicit #address-cells/#size-cells is the
- * convention upstream Zephyr tests use; it avoids unit-address complaints
- * against the root node.
- *
- * SPDX-License-Identifier: Apache-2.0
+ * The mag@0 child node returns with the driver. A child on this bus needs a
+ * real device object (from DEVICE_DT_INST_DEFINE in the driver), or the
+ * controller's child table fails to link.
  */
 
 / {
@@ -20,13 +18,6 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			clock-frequency = <4000000>;
-
-			mag: mag@0 {
-				compatible = "silversat,mag";
-				status = "okay";
-				reg = <0>;
-				spi-max-frequency = <10000000>;
-			};
 		};
 	};
 };

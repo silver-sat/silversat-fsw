@@ -1,0 +1,52 @@
+{
+	"name": "SilverSat FSW (Zephyr)",
+
+	// The Zephyr project's own CI image: SDK, toolchains for every
+	// architecture, 32-bit multilib, dtc, and the Python dependencies.
+	// Large (several GB) but maintained upstream and known-complete, which
+	// matters more than size once prebuilds are on.
+	//
+	// Pin this to a version tag once things are stable, so a student's
+	// Codespace and CI never disagree about the toolchain.
+	"image": "ghcr.io/zephyrproject-rtos/ci:latest",
+
+	"features": {
+		"ghcr.io/devcontainers/features/github-cli:1": {}
+	},
+
+	// Runs during prebuild, so the west workspace is baked into the image
+	// and a new Codespace opens ready to build.
+	"onCreateCommand": "bash .devcontainer/setup.sh",
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-vscode.cpptools",
+				"ms-vscode.cmake-tools",
+				"marus25.cortex-debug",
+				"nordic-semiconductor.nrf-devicetree",
+				"nordic-semiconductor.nrf-kconfig",
+				"redhat.vscode-yaml"
+			],
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"files.associations": {
+					"*.overlay": "dts",
+					"*.dtsi": "dts",
+					"prj.conf": "properties",
+					"*.conf": "properties"
+				},
+				"C_Cpp.default.compilerPath": "",
+				"cmake.configureOnOpen": false
+			}
+		}
+	},
+
+	"remoteEnv": {
+		"ZEPHYR_TOOLCHAIN_VARIANT": "zephyr"
+	},
+
+	// The Zephyr CI image runs as root. If VS Code complains or file
+	// ownership looks wrong, try "remoteUser": "user" instead.
+	"remoteUser": "root"
+}

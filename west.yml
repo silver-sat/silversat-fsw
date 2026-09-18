@@ -42,6 +42,6 @@ manifest:
           - nrf_hw_models      # depends on hal_nordic
 
   self:
-    # MUST match the directory this repo is checked out into, both locally
-    # and in CI (see .github/workflows/ci.yml, `path: app`).
-    path: app
+    # Must match the directory name in every environment. Codespaces clones
+    # to /workspaces/silversat-fsw, so CI checks out to the same name.
+    path: silversat-fsw
