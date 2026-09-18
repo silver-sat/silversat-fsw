@@ -61,6 +61,12 @@ west build --pristine -b nucleo_f446re app
 
 ## How we work
 
+Start by creating a branch for your changes:
+
+```sh
+git switch -c fix/whatever
+```
+
 Every pull request runs the emulated test suite. A PR needs a green check
 and one review before it merges. No pushing to `main`.
 
