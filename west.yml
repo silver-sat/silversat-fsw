@@ -39,6 +39,7 @@ manifest:
           - hal_telink
           - hal_ti
           - hal_xtensa
+          - nrf_hw_models      # depends on hal_nordic
 
   self:
     # MUST match the directory this repo is checked out into, both locally

@@ -13,4 +13,3 @@ settings:
   # Adds dts/bindings/ to the devicetree binding search path.
   dts_root: .
   # Adds boards/ to the board search path (for custom SilverSat boards later).
-  board_root: .
