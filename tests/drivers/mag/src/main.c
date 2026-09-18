@@ -28,7 +28,7 @@ ZTEST_SUITE(mag, NULL, NULL, NULL, NULL, NULL);
 ZTEST(mag, test_devicetree_wiring)
 {
 	zassert_true(DT_NODE_EXISTS(DT_NODELABEL(mag)),
-		     "mag node missing -- is boards/native_sim.overlay applied?");
+		     "mag node missing -- is app.overlay applied?");
 
 	zassert_true(DT_NODE_HAS_COMPAT(DT_NODELABEL(mag), silversat_mag),
 		     "mag node has the wrong compatible");
