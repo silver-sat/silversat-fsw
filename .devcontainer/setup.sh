@@ -17,6 +17,12 @@ echo "==> manifest repo:  $REPO_NAME"
 
 cd "$WORKSPACE_ROOT"
 
+if [ ! -w "$WORKSPACE_ROOT" ]; then
+	echo "ERROR: $WORKSPACE_ROOT is not writable by $(id -un)." >&2
+	echo "The Dockerfile should chown it to the container user." >&2
+	exit 1
+fi
+
 if [ ! -d .west ]; then
 	echo "==> west init"
 	west init -l "$REPO_NAME"
