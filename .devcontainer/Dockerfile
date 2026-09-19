@@ -57,3 +57,8 @@ ENV ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-${ZSDK_VERSION}
 # Ubuntu 24.04 marks its Python as externally managed; this container is
 # single-purpose, so installing into the system interpreter is fine.
 RUN pip3 install --break-system-packages --no-cache-dir west
+
+# Create the west workspace root ahead of time. In Codespaces this directory
+# is created for us; with a local bind mount, Docker creates only the parent
+# and leaves it owned by root, so west cannot write /workspaces/.west.
+RUN mkdir -p /workspaces && chown vscode:vscode /workspaces
