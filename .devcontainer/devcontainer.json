@@ -2,9 +2,11 @@
 	"name": "SilverSat FSW (Zephyr)",
 
 	"build": {
-		"dockerfile": "Dockerfile"
+		"dockerfile": "Dockerfile",
+		"options": ["--platform=linux/amd64"]
 	},
-
+	"runArgs": ["--platform=linux/amd64"],
+	
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
