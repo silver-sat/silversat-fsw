@@ -66,6 +66,7 @@ Start by creating a branch for your changes:
 ```sh
 git switch -c fix/whatever
 ```
+Our branch naming convention is a prefix: fix/, feat/, docs/; plus a few words. This makes git branch readable.
 
 Every pull request runs the emulated test suite. A PR needs a green check
 and one review before it merges. No pushing to `main`.
