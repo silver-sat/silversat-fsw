@@ -4,18 +4,23 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 6 * * *'        # 02:17 ET, off the hour so it isn't queued behind everyone else's midnight jobs
+  workflow_dispatch:
 
-# A new push to the same branch cancels the run it supersedes. Students push
-# in bursts; without this you pay for every intermediate commit.
+# Cancel only in-progress runs for pull requests, not for pushes to main or scheduled runs.
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native_sim:
     name: native_sim tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
 
     steps:
       - name: Checkout
@@ -55,7 +60,8 @@ jobs:
             --inline-logs \
             -v \
             --enable-asan \
-            --enable-ubsan
+            --enable-ubsann \
+            --coverage
 
       - name: Upload test results
         if: always()
@@ -67,6 +73,14 @@ jobs:
             silversat-fsw/twister-out/twister.log
           retention-days: 7
           if-no-files-found: ignore
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: silversat-fsw/twister-out/coverage/
+          retention-days: 14
 
   build_target:
     name: nucleo_f446re build
@@ -145,23 +159,109 @@ jobs:
           python ../zephyr/scripts/ci/check_compliance.py \
             -m Kconfig -m Devicetree -m YAMLLint \
             -c "origin/$BASE_REF..HEAD"
-# ---------------------------------------------------------------------------
-# Not yet enabled -- add these as separate pull requests once the above is
-# reliably green, so that a failure has exactly one plausible cause:
-#
-#   * sanitizers:  add --enable-asan --enable-ubsan to the twister line.
-#                  If host libc produces spurious leak reports, set
-#                  ASAN_OPTIONS: detect_leaks=0 in the job env rather than
-#                  dropping the flag.
-#
-#   * compliance:  python zephyr/scripts/ci/check_compliance.py \
-#                      -c origin/main..HEAD
-#
-#   * coverage:    add --coverage to twister and publish the report.
-#
-#   * hardware:    the flatsat job, gated on a repository variable:
-#                      if: vars.FLATSAT_ENABLED == 'true'
-#                  and with `concurrency: group: flatsat` plus
-#                  cancel-in-progress: FALSE, so runs queue instead of
-#                  cancelling each other. One board, one job at a time.
-# ---------------------------------------------------------------------------
+
+  flatsat:
+    name: flatsat (HIL)
+    needs: [build_target]
+
+    # Two gates. The repository variable is the master switch -- set
+    # FLATSAT_ENABLED to "true" in Settings -> Secrets and variables ->
+    # Actions -> Variables when the rig is up. The second condition keeps
+    # fork pull requests off the hardware: a fork PR can run arbitrary
+    # code, and this job holds a tailnet key.
+    if: >-
+      vars.FLATSAT_ENABLED == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+
+    # Deliberately the OPPOSITE of the workflow-level setting: one board
+    # means runs must QUEUE, not cancel each other. The group is keyed on
+    # the hardware, not the branch, so every trigger shares one lane.
+    concurrency:
+      group: flatsat-nucleo-f446re
+      cancel-in-progress: false
+
+    # Informational until the rig has earned trust. A flaky required check
+    # that blocks ten students will teach them to ignore CI. Remove this
+    # line -- and add the job to the ruleset -- after a couple of weeks of
+    # clean nightly runs.
+    continue-on-error: true
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: silversat-fsw
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install host-side tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdb-multiarch
+          pip install pygdbmi
+
+      - name: Download firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: zephyr-nucleo_f446re
+          path: fw
+
+      - name: Join tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configure SSH to the flatsat
+        env:
+          FLATSAT_SSH_KEY: ${{ secrets.FLATSAT_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$FLATSAT_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat >> ~/.ssh/config <<'EOF'
+          Host flatsat
+            HostName flatsat.${{ secrets.TS_TAILNET }}.ts.net
+            User flatsat
+            StrictHostKeyChecking accept-new
+            ConnectTimeout 15
+          EOF
+
+      - name: Power-cycle the target
+        run: |
+          ssh flatsat 'ykushcmd ykush3 -d 1' || true
+          sleep 3
+          ssh flatsat 'ykushcmd ykush3 -u 1'
+          sleep 5
+
+      - name: Flash and run
+        working-directory: silversat-fsw
+        run: |
+          python tools/hil.py \
+            --elf      ../fw/zephyr.elf \
+            --gdb-host flatsat --gdb-port 2331 \
+            --rtt-host flatsat --rtt-port 19021 \
+            --timeout  120 \
+            --log      ../hil.log
+
+      - name: Upload hardware logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatsat-logs
+          path: |
+            hil.log
+            fw/zephyr.elf
+          retention-days: 14
+
+      - name: Leave the target powered down
+        if: always()
+        run: ssh flatsat 'ykushcmd ykush3 -d 1' || true
