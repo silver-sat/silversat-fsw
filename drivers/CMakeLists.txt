@@ -4,6 +4,7 @@
 # an application only compiles what it actually enables. Add a line here when
 # you add a driver, e.g.:
 #
-#   add_subdirectory_ifdef(CONFIG_SILVERSAT_MAG magnetometer)
+# Add one line per driver as they are written, guarded by that driver's
+# Kconfig symbol -- see the magnetometer PR for the pattern.
 #
 # (No drivers yet -- the first one arrives with the magnetometer PR.)

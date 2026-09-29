@@ -106,7 +106,7 @@ jobs:
           name: zephyr-nucleo_f446re
           path: silversat-fsw/build/zephyr/zephyr.elf
           retention-days: 7
-          
+
   compliance:
     name: compliance
     if: github.event_name == 'pull_request'
