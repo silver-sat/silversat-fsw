@@ -19,6 +19,8 @@ jobs:
     name: native_sim tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
 
     steps:
       - name: Checkout
