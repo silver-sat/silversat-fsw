@@ -17,7 +17,7 @@ concurrency:
 jobs:
   native_sim:
     name: native_sim tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       ZEPHYR_TOOLCHAIN_VARIANT: zephyr
@@ -84,7 +84,7 @@ jobs:
 
   build_target:
     name: nucleo_f446re build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
 
     steps:
@@ -124,7 +124,7 @@ jobs:
   compliance:
     name: compliance
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     steps:
@@ -157,7 +157,7 @@ jobs:
         run: |
           git fetch --no-tags origin "$BASE_REF"
           python ../zephyr/scripts/ci/check_compliance.py \
-            -m Kconfig -m Devicetree -m YAMLLint \
+            -m Kconfig -m DevicetreeBindings -m DevicetreeLinting -m YAMLLint \
             -c "origin/$BASE_REF..HEAD"
 
   flatsat:
@@ -187,7 +187,7 @@ jobs:
     # clean nightly runs.
     continue-on-error: true
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     steps:
