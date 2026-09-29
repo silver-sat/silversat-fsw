@@ -53,6 +53,7 @@ RUN mkdir -p /opt/toolchains \
  && "zephyr-sdk-${ZSDK_VERSION}/setup.sh" -h -c
 
 ENV ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-${ZSDK_VERSION}
+ENV ZEPHYR_TOOLCHAIN_VARIANT=zephyr
 
 # Ubuntu 24.04 marks its Python as externally managed; this container is
 # single-purpose, so installing into the system interpreter is fine.
