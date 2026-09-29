@@ -6,6 +6,10 @@
 
 <!-- Which tests cover this? If hardware was involved, say what you saw. -->
 
+## LLM use
+
+<!-- Did you use AI on this? What did you ask, and what did you change about the answer? -->
+
 ## Checklist
 
 - [ ] `west twister -p native_sim -T tests` passes locally
