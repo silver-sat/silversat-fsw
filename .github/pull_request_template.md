@@ -4,15 +4,16 @@
 
 ## How you know it works
 
-<!-- Which tests cover this? If hardware was involved, say what you saw. -->
+<!-- Which tests cover this? If you used the flatsat, what did you see? -->
 
-## LLM use
+## Did you use AI on this?
 
-<!-- Did you use AI on this? What did you ask, and what did you change about the answer? -->
+<!-- Which tool, what you asked it, and what you changed about its answer.
+     Using it is fine. Not knowing what your code does is not. -->
 
 ## Checklist
 
-- [ ] `west twister -p native_sim -T tests` passes locally
+- [ ] `make test` passes
 - [ ] New or changed behavior has a test
-- [ ] No `#ifdef CONFIG_BOARD_NATIVE_SIM` in driver or application code
-- [ ] Devicetree changes are in an overlay, not hardcoded
+- [ ] I can explain every line in this PR
+- [ ] No `#ifdef CONFIG_BOARD_NATIVE_SIM` in driver or app code
