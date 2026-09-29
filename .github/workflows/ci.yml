@@ -53,7 +53,9 @@ jobs:
             -p native_sim/native/64 \
             -T tests \
             --inline-logs \
-            -v
+            -v \
+            --enable-asan \
+            --enable-ubsan
 
       - name: Upload test results
         if: always()
