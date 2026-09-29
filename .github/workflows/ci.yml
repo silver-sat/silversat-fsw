@@ -106,7 +106,45 @@ jobs:
           name: zephyr-nucleo_f446re
           path: silversat-fsw/build/zephyr/zephyr.elf
           retention-days: 7
+          
+  compliance:
+    name: compliance
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: silversat-fsw
+          # Compliance diffs against the base branch, so the default
+          # shallow clone is not enough.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: silversat-fsw
+          toolchains: arm-zephyr-eabi
+
+      - name: Install compliance requirements
+        run: pip install -r zephyr/scripts/requirements-compliance.txt
+
+      - name: Run compliance checks
+        working-directory: silversat-fsw
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          python ../zephyr/scripts/ci/check_compliance.py \
+            -m Kconfig -m Devicetree -m YAMLLint \
+            -c "origin/$BASE_REF..HEAD"
 # ---------------------------------------------------------------------------
 # Not yet enabled -- add these as separate pull requests once the above is
 # reliably green, so that a failure has exactly one plausible cause:
