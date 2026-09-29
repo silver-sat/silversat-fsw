@@ -52,16 +52,7 @@ jobs:
 
       - name: Run twister
         working-directory: silversat-fsw
-        run: |
-          west twister \
-            -p native_sim \
-            -p native_sim/native/64 \
-            -T tests \
-            --inline-logs \
-            -v \
-            --enable-asan \
-            --enable-ubsann \
-            --coverage
+        run: make test
 
       - name: Upload test results
         if: always()
@@ -106,7 +97,7 @@ jobs:
 
       - name: Build application
         working-directory: silversat-fsw
-        run: west build --pristine -b nucleo_f446re app
+        run: make build
 
       - name: Report footprint
         working-directory: silversat-fsw

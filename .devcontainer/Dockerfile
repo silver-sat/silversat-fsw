@@ -44,11 +44,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # bundle which pulls all architectures.
 RUN mkdir -p /opt/toolchains \
  && cd /opt/toolchains \
- && wget "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK_VERSION}/zephyr-sdk-${ZSDK_VERSION}_linux-x86_64_minimal.tar.xz" \
+ && wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK_VERSION}/zephyr-sdk-${ZSDK_VERSION}_linux-x86_64_minimal.tar.xz" \
  && tar xf "zephyr-sdk-${ZSDK_VERSION}_linux-x86_64_minimal.tar.xz" \
  && rm "zephyr-sdk-${ZSDK_VERSION}_linux-x86_64_minimal.tar.xz" \
- && wget "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK_VERSION}/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz" \
- && tar xf "toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz" -C "zephyr-sdk-${ZSDK_VERSION}/" \
+ && wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK_VERSION}/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz" \
+ && mkdir -p "zephyr-sdk-${ZSDK_VERSION}/gnu" \
+ && tar xf "toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz" \
+      -C "zephyr-sdk-${ZSDK_VERSION}/gnu/" \
  && rm "toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz" \
  && "zephyr-sdk-${ZSDK_VERSION}/setup.sh" -h -c
 

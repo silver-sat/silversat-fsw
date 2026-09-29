@@ -15,6 +15,7 @@ __pycache__/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.swp
 

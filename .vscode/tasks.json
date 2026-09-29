@@ -1,0 +1,78 @@
+{
+	// These tasks are a thin wrapper around the Makefile. They exist for two
+	// reasons only: the keyboard shortcut, and the problem matchers that turn
+	// compiler errors into clickable entries in the Problems panel.
+	//
+	// What the commands actually ARE lives in the Makefile, which CI also
+	// uses. Change flags there, not here.
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "test",
+			"detail": "Run the emulated test suite",
+			"type": "shell",
+			"command": "make test",
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": ["$gcc"]
+		},
+		{
+			"label": "run",
+			"detail": "Run the application under emulation",
+			"type": "shell",
+			"command": "make run",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": ["$gcc"]
+		},
+		{
+			"label": "build",
+			"detail": "Cross-compile for the flatsat board",
+			"type": "shell",
+			"command": "make build",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": ["$gcc"]
+		},
+		{
+			"label": "flash",
+			"detail": "Load firmware onto the flatsat (not yet wired up)",
+			"type": "shell",
+			"command": "make flash",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": ["$gcc"]
+		},
+		{
+			"label": "clean",
+			"detail": "Delete build output",
+			"type": "shell",
+			"command": "make clean",
+			"presentation": {
+				"reveal": "silent",
+				"panel": "dedicated"
+			},
+			"problemMatcher": []
+		}
+	]
+}
