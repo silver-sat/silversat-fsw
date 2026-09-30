@@ -65,6 +65,38 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # Coverage runs in its own job rather than inside `make test` (DS-05).
+  # Coverage instrumentation slows every build and doesn't mix well with
+  # the sanitizers, so `make test` stays fast and `make coverage` runs
+  # here in parallel. 64-bit only, so no 32-bit host libraries needed.
+  coverage:
+    name: native_sim coverage
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          path: silversat-fsw
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: silversat-fsw
+          toolchains: arm-zephyr-eabi
+
+      - name: Run twister with coverage
+        working-directory: silversat-fsw
+        run: make coverage
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
