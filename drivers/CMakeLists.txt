@@ -1,8 +1,7 @@
 # Out-of-tree drivers.
 #
 # Each driver gets its own subdirectory and its own Kconfig symbol, so that
-# an application only compiles what it actually enables. Add a line here when
-# you add a driver, e.g.:
+# an application only compiles what it actually enables.
 #
 # Add one line per driver as they are written, guarded by that driver's
 # Kconfig symbol -- see the magnetometer PR for the pattern.
