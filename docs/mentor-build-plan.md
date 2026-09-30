@@ -32,7 +32,6 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
 8. **Small issues:**
    - `app/boards/native_sim.overlay` points to `tests/drivers/mag/boards/`, which doesn't exist (the test uses `app.overlay`).
    - `drivers/CMakeLists.txt` has a dangling "e.g.:".
-   - CI uploads `twister-out/coverage/`, but `make test` doesn't pass `--coverage`, while DS-05 says coverage runs on every push.
 
 ## 2a. How zbus actually behaves (verified against the v4.4.0 source)
 - **The channel is last-value.** `zbus_chan_read` always returns the newest publish.
