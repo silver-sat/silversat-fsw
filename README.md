@@ -58,6 +58,7 @@ manifest repository, and Zephyr itself is fetched alongside it.
 ```
 .
 ├── app/                 Application: entry point, board overlays, config
+├── docs/                Design specifications (DS-nn) and rationale
 ├── drivers/             Out-of-tree device drivers and their emulators
 ├── dts/bindings/        Devicetree bindings for SilverSat hardware
 ├── include/silversat/   Public headers shared across the module

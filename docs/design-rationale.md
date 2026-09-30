@@ -49,6 +49,20 @@ The cFS software bus copies every message into each subscriber's pipe. A plain z
 
 Rule: **commands** use message subscribers because a dropped command is a bug; **telemetry and sensor data** use last-value semantics because the newest value is what consumers want.
 
+### What an app actually receives
+
+The channel itself is always last-value: `zbus_chan_read` returns the newest publish. What an *app* receives depends on its observer type, and each app has exactly one pending point, so it has exactly one observer type:
+
+- With a plain subscriber, two commands published back to back would collapse into one read of the newest value. A command would be lost.
+- So every app uses a message subscriber, and **every** channel it observes, including its frame wakeup, arrives as a queued copy. Nothing is overwritten.
+
+Two consequences, both checked against the Zephyr v4.4.0 source (`subsys/zbus/zbus.c`):
+
+1. A message subscriber's queue is an unbounded `k_fifo`. A stuck app gives the publisher no queue-full error; its wakeups just pile up, each holding a buffer from the shared pool.
+2. When the pool is empty, `zbus_chan_pub` does not return an error. The allocation failure hits an assert: a development build panics, and a flight build dereferences NULL. One stuck app could crash the spacecraft.
+
+The fix is to never publish a copy the app can't consume. The frame manager counts wakeups delivered to each app and compares them with the app's step counter; once `FRAME_MAX_PENDING` are outstanding it skips the publish and counts an overrun (DS-22). With every app bounded, the pool size is simple arithmetic in the resource map (DS-07).
+
 Channel validators run at publish time in the publisher's context. That is how parameter validation reaches command ingest: the target app owns the rules, and command ingest learns immediately if the publish was rejected.
 
 ---
@@ -65,7 +79,7 @@ zbus permits publishing from an ISR, but any listener would then run in interrup
 
 ### Why `K_NO_WAIT`
 
-The frame manager must never stall. If an app's queue is still full from its last wakeup, the app is overrunning: count it, emit an event, move on. The same reasoning applies to command ingest: one wedged app must not block the command that would fix it.
+The frame manager must never stall. If an app still has `FRAME_MAX_PENDING` wakeups it hasn't stepped through, the app is overrunning: skip its wakeup, count it, move on. Health decides whether a repeated overrun means the app is stuck (DS-43). The same reasoning applies to command ingest: one wedged app must not block the command that would fix it.
 
 ### Contrast with the Arduino loop
 
@@ -216,18 +230,30 @@ ZBUS_CHAN_ADD_OBS(hk_req_chan, adcs_sub, 3);
 
 static struct app_status status;
 
+/*
+ * One buffer that can hold any message this app receives. A union is
+ * aligned for every member, so reading a struct out of it is safe. Casting
+ * a plain uint8_t array to a struct pointer is a misaligned access that
+ * UBSan reports. (The generator emits this union for each app.)
+ */
+union adcs_msg {
+    struct frame_tick tick;
+    struct adcs_cmd cmd;
+    struct hk_req hk_req;
+};
+
 static void adcs_main(void *a, void *b, void *c)
 {
     const struct zbus_channel *chan;
-    uint8_t msg[MSG_MAX_SIZE];
+    union adcs_msg msg;
 
     adcs_init();
-    while (zbus_sub_wait_msg(&adcs_sub, &chan, msg, K_FOREVER) == 0) {
+    while (zbus_sub_wait_msg(&adcs_sub, &chan, &msg, K_FOREVER) == 0) {
         if (chan == &adcs_wakeup_chan) {
-            adcs_step((const struct frame_tick *)msg);
+            adcs_step(&msg.tick);
             status.steps++;
         } else if (chan == &adcs_cmd_chan) {
-            if (adcs_dispatch((const struct adcs_cmd *)msg) == 0) {
+            if (adcs_dispatch(&msg.cmd) == 0) {
                 status.cmd_accepted++;
             } else {
                 status.cmd_rejected++;
@@ -245,7 +271,12 @@ K_THREAD_DEFINE(adcs_tid, ADCS_STACK_SIZE, adcs_main, NULL, NULL, NULL,
 ### Frame manager loop
 
 ```c
-struct frame_entry { uint8_t slot; const struct zbus_channel *chan; bool enabled; };
+struct frame_entry {
+    uint8_t slot;
+    uint8_t app;                             /* index into the resource map's app rows */
+    const struct zbus_channel *chan;         /* the app's wakeup channel */
+    const struct zbus_channel *status_chan;  /* the app's status: steps */
+};
 
 static void frame_main(void *a, void *b, void *c)
 {
@@ -254,21 +285,33 @@ static void frame_main(void *a, void *b, void *c)
     k_timer_start(&minor_frame_timer, K_MSEC(FRAME_MINOR_MS), K_MSEC(FRAME_MINOR_MS));
     for (;;) {
         k_timer_status_sync(&minor_frame_timer);   /* drift-free periodic wake */
-        tick.minor  = tick.count % FRAME_SLOTS;
-        tick.met    = time_get_met();
-        tick.uptime = k_uptime_get_32();
+        tick.slot      = tick.count % FRAME_SLOTS;
+        tick.met       = time_get_met();
+        tick.uptime_ms = k_uptime_get();           /* 64-bit: never wraps */
 
         for (size_t i = 0; i < active_table_len; i++) {
             const struct frame_entry *e = &active_table[i];
-            if (e->enabled && e->slot == tick.minor) {
-                if (zbus_chan_pub(e->chan, &tick, K_NO_WAIT) != 0) {
-                    frame_hk.overruns++;
-                } else {
-                    frame_hk.delivered[i]++;       /* health compares against steps */
-                }
+            struct app_status st;
+
+            if (!entry_enabled[i] || e->slot != tick.slot) {
+                continue;
+            }
+            /* Never publish a copy the app can't consume (DS-22). If the
+             * status can't be read without waiting, skip rather than guess. */
+            if (zbus_chan_read(e->status_chan, &st, K_NO_WAIT) != 0) {
+                frame_hk.overruns[e->app]++;
+                continue;
+            }
+            /* Counted per app: a 10 Hz app has ten entries but one step counter. */
+            if (frame_hk.delivered[e->app] - st.steps >= FRAME_MAX_PENDING) {
+                frame_hk.overruns[e->app]++;
+                continue;
+            }
+            if (zbus_chan_pub(e->chan, &tick, K_NO_WAIT) == 0) {
+                frame_hk.delivered[e->app]++;      /* health compares against steps */
             }
         }
-        if (tick.minor == FRAME_SLOTS - 1) {
+        if (tick.slot == FRAME_SLOTS - 1) {
             frame_apply_pending_table();           /* mode changes at major-frame boundary */
         }
         tick.count++;

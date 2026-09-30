@@ -42,6 +42,8 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 - CI builds both.
 
 **DS-07 Resource map: Specified.** A single header defines all thread priorities, stack sizes, zbus message pool sizes, and UART assignments.
+- It also holds one const attribute row per app: the protected flag, the stall threshold, and the re-enable policy (DS-43). The frame manager and health both read this row, so each app's attributes are stated once.
+- The zbus message pool size is a compile-time expression: `FRAME_MAX_PENDING` times the number of apps, plus the command and housekeeping-request depths (DS-22).
 
 ## 2. Architecture
 
@@ -80,13 +82,15 @@ Apps timestamp their data from the frame tick, not by calling the clock.
 - Phasing is intentional: for example, sensors read in slot 0 and ADCS runs in slot 1.
 - If an app needs a higher rate, increase the slot count rather than giving it a separate timer.
 
-**DS-22 Mechanism: Proposed.** A `k_timer` wakes a high-priority thread, and the thread publishes. Nothing is published from the ISR. Publishes use `K_NO_WAIT`, and a full observer queue is counted as an overrun.
+**DS-22 Mechanism: Proposed.** A `k_timer` wakes a high-priority thread, and the thread publishes. Nothing is published from the ISR. Publishes use `K_NO_WAIT`.
+- Each app receives on a single message subscriber (one pending point), so every wakeup is a queued copy holding a buffer from the zbus pool. A message subscriber gives no queue-full signal, and pool exhaustion faults rather than returning an error (see the rationale, section 2).
+- Overruns are therefore detected by per-wakeup counting. The frame manager counts wakeups delivered per table entry and reads the target app's step counter from its status channel. If delivered minus steps has reached `FRAME_MAX_PENDING` (initially 2, the same for every app), the frame manager skips the publish and counts an overrun for that entry. This bounds each app's share of the pool.
 
-**DS-23 Enable/disable entries: Specified.** Table entries can be enabled and disabled by command, for recovery and power management. There is one table per mode (see DS-40), and table switches happen at major-frame boundaries, except entry into safe mode.
+**DS-23 Enable/disable entries: Specified.** Table entries can be enabled and disabled by command, for recovery and power management. Entries for protected apps (DS-43) cannot be disabled; the command is rejected. There is one table per mode (see DS-40), and table switches happen at major-frame boundaries, except entry into safe mode.
 
 **DS-24 Thread priorities: Proposed.** Rate-monotonic assignment: the shorter an app's period, the higher its priority. The frame manager is highest, then 10 Hz apps (for example, ADCS), then 1 Hz apps, then housekeeping and telemetry output. Event-driven apps (command ingest, subsystem receive paths) are placed by required response time. All values live in the resource map (DS-07).
 
-**DS-25 Time in the frame tick: Proposed.** Each tick carries the frame count, slot, uptime (elapsed time since this boot), and MET (mission elapsed time: total time since deployment, carried across resets from FRAM). RTC time is attached by telemetry output and events, not by apps.
+**DS-25 Time in the frame tick: Proposed.** Each tick carries the frame count, slot, uptime (elapsed time since this boot, 64-bit milliseconds, so it never wraps), and MET (mission elapsed time: total time since deployment, carried across resets from FRAM). RTC time is attached by telemetry output and events, not by apps.
 
 **DS-26 Low power between frames: Proposed.** Enable Zephyr power management (`CONFIG_PM`, `CONFIG_TICKLESS_KERNEL`). The CPU enters a low-power state only when every thread is blocked, so an app still working at the end of its slot simply keeps the CPU awake; nothing is interrupted, and an app still busy at its next wakeup is counted as an overrun (DS-22).
 - Nominal: Sleep mode (WFI) between frames. Peripherals, clocks, and UART reception keep running; wake latency is negligible.
@@ -138,7 +142,9 @@ Apps timestamp their data from the frame tick, not by calling the clock.
 
 **DS-43 Health and watchdog: Proposed.**
 - Health checks each app's step counter against the number of wakeups the frame manager delivered.
-- Graded response: event, then disable the app, then reset if a critical app stalled. Individual threads are not restarted.
+- Graded response: event, then disable the app by commanding the frame manager to stop delivering its wakeups, then reset if a protected app stalled. Individual threads are not restarted.
+- Protected apps are never disabled; a stall goes straight to reset. The protected apps are health, mode manager, command ingest, and telemetry output.
+- Re-enable policy is per app, from the app's attribute row (DS-07): `NEVER`, `GROUND` (ground command only), or `AUTO` (after a cooldown, re-enable and watch; after a set number of automatic re-enables, fall back to `GROUND` with an event).
 - Health is the only feeder of the hardware watchdog (IWDG), which forms the chain frame manager, then health, then IWDG.
 - Use `WDT_OPT_PAUSE_HALTED_BY_DBG` on the flatsat.
 
@@ -397,3 +403,4 @@ The dictionary version and hash are included in the beacon.
 | 2026-09-30 | Added DS-26 low power, DS-75 operation without FRAM, single-point FRAM region map (DS-74), counter bounds and per-key floors (DS-53); test/flight key separation Specified; CRC parameters and IEEE fallback in DS-65; removed DS-67 (belongs to the radio specification) |
 | 2026-09-30 | DS-66 printable KISS command bytes marked Open, with reversal of the SilverSat 1 lesson and trade-off noted; FRAM bus reversal stated in DS-75 |
 | 2026-09-30 | Added DS-69 beacon contents |
+| 2026-09-30 | Moved to `docs/`. DS-07 gains per-app attribute rows and pool sizing. DS-22 overrun detection by per-wakeup counting with a pending bound, because message subscribers give no queue-full signal and pool exhaustion faults. DS-23 protected entries. DS-25 64-bit uptime. DS-43 disable via the frame manager, protected apps, per-app re-enable policy |
