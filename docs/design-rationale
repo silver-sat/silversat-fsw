@@ -1,0 +1,397 @@
+# SilverSat 2 Flight Software — Design Rationale and Patterns
+
+Companion to `silversat2-fsw-design-decisions.md`. The specification says *what*; this document records *why*, what was considered and rejected, and the code patterns every app should follow. When the two disagree, the specification wins and this document should be corrected.
+
+---
+
+## 1. Why this architecture
+
+### Starting point: SilverSat 1
+
+SilverSat 1 ran an Arduino loop on a SAMD21: each C++ class was "touched" every pass and either did work or returned. The loop order determined priority. It worked, but:
+
+- A slow class stretched everyone's timing, usually unnoticed.
+- There was no way to phase work deliberately or to disable work for recovery or power.
+- The processor ran continuously.
+- The loop design was stretched to its limit by the command, radio, and board interfaces.
+
+### Why a cFS-style design on zbus, not cFS itself
+
+NASA's cFS is the reference architecture for small spacecraft (software bus, apps with housekeeping, events, command tables). Running cFS itself is not realistic on a Cortex-M with a few hundred KB of RAM; its OS abstraction targets Linux, VxWorks, and RTEMS, and the Zephyr port is not mature enough to depend on. We take the vocabulary and structure and map it onto Zephyr:
+
+| cFS | Here |
+|---|---|
+| Software Bus, Message IDs | zbus channels |
+| App main loop pending on a pipe | One thread pending on one zbus subscriber |
+| Scheduler (SCH) | Frame manager |
+| Executive Services | Kernel init plus the health app |
+| Event Services | Events channel |
+| Table Services | Const tables in flash, validated copies in FRAM |
+| CI / TO | Command ingest / telemetry output |
+
+### Rejected alternatives
+
+- **F Prime** (JPL), including fprime-zephyr and the PROVES Kit reference. Closest existing match to this design, with flight heritage and a ground system. Rejected because it adds C++ and its own modeling language on top of an already deep toolchain for students working a few hours a week, uses point-to-point ports rather than pub/sub, and has its own framing. Status: Monitor.
+- **cFS on Zephyr, NOS3, cFS Basecamp.** See above. Basecamp remains a possible teaching aid on the ground side. Status: Monitor.
+- **YAMCS** for mission control. We have an existing ground station (Flask, SQLite, browser UI) that mentors and returning students know. Status: Monitor.
+- **CCSDS packets and frames.** Professional standard, but big-endian headers and a poor fit with KISS, text commands, and the amateur ecosystem. A deliberate divergence.
+- **Protocol Buffers / Kaitai Struct** for message definitions. Protobuf's variable-length encoding suits neither fixed telemetry frames nor text commands; Kaitai is effectively decode-only. A small custom generator is the right size.
+
+---
+
+## 2. zbus semantics: the key difference from cFS
+
+The cFS software bus copies every message into each subscriber's pipe. A plain zbus channel is a **single shared buffer holding the latest value**; publishing overwrites it. zbus has three observer kinds:
+
+- **Listeners**: callback runs synchronously in the publisher's context. Fast, but must not block. Avoid in student code.
+- **Subscribers**: notified the channel changed, then read the current value. A slow subscriber sees the newest value and misses intermediate ones.
+- **Message subscribers**: get their own copy of each message from a `net_buf` pool. Closest to cFS pipes.
+
+Rule: **commands** use message subscribers because a dropped command is a bug; **telemetry and sensor data** use last-value semantics because the newest value is what consumers want.
+
+Channel validators run at publish time in the publisher's context. That is how parameter validation reaches command ingest: the target app owns the rules, and command ingest learns immediately if the publish was rejected.
+
+---
+
+## 3. Frame manager
+
+### Why phasing
+
+A table of slots within a fixed major frame makes data flow through each second in a known order: sensors read in slot 0, so ADCS in slot 1 always has fresh data; housekeeping is collected in slot 5 and shipped in slot 6. Independent timers per app drift relative to each other in ways that are hard to predict.
+
+### Why a thread, not the timer ISR
+
+zbus permits publishing from an ISR, but any listener would then run in interrupt context, and eventually someone puts a blocking call in one. A `k_timer` wakes a high-priority thread, and the thread publishes.
+
+### Why `K_NO_WAIT`
+
+The frame manager must never stall. If an app's queue is still full from its last wakeup, the app is overrunning: count it, emit an event, move on. The same reasoning applies to command ingest: one wedged app must not block the command that would fix it.
+
+### Contrast with the Arduino loop
+
+The loop gave mutual exclusion for free, since one class ran at a time. Preemptive threads remove that guarantee. Sharing data only through channels (zbus locks the channel during publish and read) restores most of it.
+
+### Thread priorities: rate-monotonic
+
+Shorter period, higher priority (Liu and Layland, 1973): this is the optimal fixed-priority assignment for periodic tasks. For many tasks, total CPU utilization under about 69 percent guarantees all deadlines are met. In Zephyr, a lower number means a higher priority.
+
+### Low power
+
+The CPU enters a low-power state only when every thread is blocked, so an app still working simply keeps the CPU awake; nothing is interrupted. Use Sleep (WFI) nominally. Stop mode halts the F446's high-speed clocks and ordinary UART reception, so it is only for quiet link conditions, with apps holding a power-state lock during transactions.
+
+---
+
+## 4. Health, watchdog, and modes
+
+### Step counters, not pings
+
+A running thread stuck in an infinite loop inside its step function still exists; its step counter stops advancing. Health compares each app's steps against the wakeups the frame manager delivered, so a deliberately disabled app is never flagged.
+
+### Why no individual thread restarts
+
+In a single address space, a thread killed mid-step may hold a zbus channel lock or leave a driver half-configured. Disabling the app is safe; a full reset is honest. Anything in between is where subtle bugs live.
+
+### Why the plain watchdog, not Zephyr's task watchdog
+
+The task watchdog (`CONFIG_TASK_WDT`) resets on any missed per-thread feed, which removes the graded middle steps (event, disable app). With health as the only feeder, and health running in a frame slot, the chain frame manager → health → IWDG covers every failure: if either stops, the watchdog isn't fed.
+
+Set `WDT_OPT_PAUSE_HALTED_BY_DBG` on the flatsat, or the board resets under a student sitting at a breakpoint.
+
+### Payload app vs. payload health
+
+The payload app never stops stepping, even during a long job; waiting is a state. Health watches the *app* (step counter). The payload app watches the *payload* (status polls, deadlines). Keeping these separate stops a flaky payload from resetting the spacecraft.
+
+### Safe mode
+
+Anything can enter safe mode; only the ground exits it. Autonomy's job is to reach a stable state and wait, because the triggering fault may still be present. Safe mode is sticky across resets so a reset doesn't erase the ground's decision to hold.
+
+---
+
+## 5. Commanding and security
+
+### Threat model
+
+Not a high-security environment; students and mentors come and go. The realistic risk is **accidental commanding** (a test script or student ground setup pointed at the real satellite), not a sophisticated adversary. Separate test and flight keys address the realistic risk better than any cryptographic subtlety.
+
+### Pipeline order is the security design
+
+Signature before counter check: a forged packet must never be able to raise the floor and lock out the real ground station. Decode after authentication: the text parser, the most bug-prone code in the path, is unreachable without the key. Persist the floor before sending the ACK: otherwise a reset between them reopens the replay window.
+
+### Counter behavior
+
+- Accept if strictly greater than the floor; gaps allowed. The ground jumping ahead re-establishes the floor after a loss (SilverSat 1 practice).
+- Epoch milliseconds as the counter: monotonic without the ground remembering anything; ground sends `max(now_ms, last + 1)` to survive clock steps.
+- **Never wrap.** Wrapping to zero would make every recorded command valid again. Plain unsigned 64-bit comparison; do *not* reuse the serial-number comparison from FRAM generations, which would treat a huge jump as going backward.
+- Bounded jump on the spacecraft and a margin check on the ground protect against an erroneous huge value. Recovery if the floor is ever set too high: rotate keys (floors are per key slot).
+
+### Lost ACKs and retries
+
+If a command executes but its ACK is lost, the operator resends with a new counter and it runs twice. The fix is in command design, not protocol: commands set state rather than toggle it, and one-shot actions carry their own guards.
+
+### Signing details
+
+Keyed BLAKE2s (the key initializes the hash; not a hash of secret-plus-message). Tags travel as hex so commands stay printable. Compare tags in constant time; not a realistic threat here, but a free habit and a good lesson.
+
+---
+
+## 6. Messages and links
+
+### Why one source of truth
+
+Messages are consumed by C flight code, Python simulators, the ground station, and possibly other teams in other languages. Hand-maintained copies drift. The generator produces all of them, plus golden vectors both C and Python must decode identically.
+
+### Why never copy structs onto the wire
+
+Padding and field sizes differ between the Cortex-M4, 32-bit native_sim, and 64-bit native_sim.
+
+### Why CRC before KISS escaping
+
+1. The CRC bytes themselves must be escaped; appending a CRC after escaping would occasionally put a raw frame delimiter in the stream.
+2. The CRC should protect content, not its transport encoding.
+3. The CRC code stays independent of the framing.
+
+The KISS type byte is included in the CRC because a flipped bit there could turn a local radio command into a remote one, or the reverse.
+
+### Why CRC-32C
+
+Better error detection than IEEE CRC-32 at frame lengths of a few hundred bytes. IEEE CRC-32 is the fallback for a subsystem that cannot support it.
+
+### Two layers in the shared Python package
+
+- **Local serial link** (software ↔ its own radio): KISS, local/remote command field, CRC, sequence. Used by the ground station and mirrored by the satellite radio simulator.
+- **End-to-end space link** (ground software ↔ command ingest): command encoding, signature, counter, telemetry decoding. Radios carry it opaquely.
+
+---
+
+## 7. FRAM
+
+### Why a synchronous service, not a frame-driven app
+
+Command ingest must know the floor is stored before sending the ACK, and health needs FRAM at boot before the frame manager runs. A small `nvm` app handles background scrubbing and housekeeping.
+
+### Why not Zephyr settings, NVS, or ZMS
+
+They are designed around flash (erase blocks, wear leveling, garbage collection), none of which FRAM needs, and they make the on-chip layout opaque to ground dumps. The record layer is about 200 lines with fully explainable behavior.
+
+### Why two slots, generation, and CRC
+
+Power can fail mid-write and tear a multi-byte record. Writing alternately to the older slot means a torn write can only damage the slot being written; the other still holds the previous good value. The commit point is when the new slot's CRC becomes valid.
+
+### Why the boot log has no head pointer
+
+A separate head index is a second value that can tear independently of the entry it points to. Each entry carries its own boot number; the newest valid entry is found by scanning.
+
+### Why operation without FRAM
+
+FRAM is unproven in flight for this team. SilverSat 1 lessons recommended keeping it on a non-critical bus; SilverSat 2 reverses that (SPI removes the I2C hang concern) but requires that FRAM loss degrades operation rather than ending it: flash defaults, backup SRAM mirrors, and defined per-record fallbacks.
+
+---
+
+## 8. Simulation
+
+Subsystem simulators are Python processes connected over UART. On native_sim the UART is a host PTY; on the flatsat it is a real USART through a USB-serial adapter to the same Python process. Migrating to real hardware means unplugging an adapter and plugging in the board; flight code and build do not change.
+
+native_sim's simulated time runs ahead of the wall clock, so tests with external Python peers must use real-time pacing. Long-duration scenarios (days of command loss, reset storms) use minimal in-image C fakes instead.
+
+Principle: **native_sim tells you whether the logic is right; the flatsat tells you whether assumptions about the physical world are right.**
+
+---
+
+## 9. Code patterns
+
+These are sketches of the shape, not final code. Real message types, channel names, and priorities come from the generator and the resource map.
+
+### App skeleton
+
+```c
+/* Channels and structs come from the generated header for this app. */
+#include "msg/adcs.h"
+#include "msg/common.h"
+#include "resource_map.h"
+
+ZBUS_MSG_SUBSCRIBER_DEFINE(adcs_sub);
+ZBUS_CHAN_ADD_OBS(adcs_wakeup_chan, adcs_sub, 3);
+ZBUS_CHAN_ADD_OBS(adcs_cmd_chan, adcs_sub, 3);
+ZBUS_CHAN_ADD_OBS(hk_req_chan, adcs_sub, 3);
+
+static struct app_status status;
+
+static void adcs_main(void *a, void *b, void *c)
+{
+    const struct zbus_channel *chan;
+    uint8_t msg[MSG_MAX_SIZE];
+
+    adcs_init();
+    while (zbus_sub_wait_msg(&adcs_sub, &chan, msg, K_FOREVER) == 0) {
+        if (chan == &adcs_wakeup_chan) {
+            adcs_step((const struct frame_tick *)msg);
+            status.steps++;
+        } else if (chan == &adcs_cmd_chan) {
+            if (adcs_dispatch((const struct adcs_cmd *)msg) == 0) {
+                status.cmd_accepted++;
+            } else {
+                status.cmd_rejected++;
+            }
+        } else if (chan == &hk_req_chan) {
+            zbus_chan_pub(&adcs_hk_chan, &adcs_hk, K_NO_WAIT);
+        }
+        zbus_chan_pub(&adcs_status_chan, &status, K_NO_WAIT);
+    }
+}
+K_THREAD_DEFINE(adcs_tid, ADCS_STACK_SIZE, adcs_main, NULL, NULL, NULL,
+                ADCS_PRIORITY, 0, 0);
+```
+
+### Frame manager loop
+
+```c
+struct frame_entry { uint8_t slot; const struct zbus_channel *chan; bool enabled; };
+
+static void frame_main(void *a, void *b, void *c)
+{
+    struct frame_tick tick = {0};
+
+    k_timer_start(&minor_frame_timer, K_MSEC(FRAME_MINOR_MS), K_MSEC(FRAME_MINOR_MS));
+    for (;;) {
+        k_timer_status_sync(&minor_frame_timer);   /* drift-free periodic wake */
+        tick.minor  = tick.count % FRAME_SLOTS;
+        tick.met    = time_get_met();
+        tick.uptime = k_uptime_get_32();
+
+        for (size_t i = 0; i < active_table_len; i++) {
+            const struct frame_entry *e = &active_table[i];
+            if (e->enabled && e->slot == tick.minor) {
+                if (zbus_chan_pub(e->chan, &tick, K_NO_WAIT) != 0) {
+                    frame_hk.overruns++;
+                } else {
+                    frame_hk.delivered[i]++;       /* health compares against steps */
+                }
+            }
+        }
+        if (tick.minor == FRAME_SLOTS - 1) {
+            frame_apply_pending_table();           /* mode changes at major-frame boundary */
+        }
+        tick.count++;
+    }
+}
+```
+
+### Device app step
+
+```c
+static void mag_step(const struct frame_tick *tick)
+{
+    struct sensor_value raw[3];
+    int rc = sensor_sample_fetch(mag_dev);
+
+    if (rc == 0) {
+        rc = sensor_channel_get(mag_dev, SENSOR_CHAN_MAGN_XYZ, raw);
+    }
+    if (rc != 0) {
+        mag_fault(rc);                 /* count; reinit after N; mark failed after M */
+        mag_out.valid = false;
+    } else {
+        mag_apply_cal(raw, mag_out.b_body);
+        mag_out.valid = mag_range_check(mag_out.b_body);
+        mag_hk.consecutive_errors = 0;
+    }
+    mag_out.met = tick->met;
+    mag_out.seq++;
+    zbus_chan_pub(&mag_data_chan, &mag_out, K_NO_WAIT);
+}
+```
+
+### Subsystem app state machine
+
+```c
+static void payload_step(const struct frame_tick *tick)
+{
+    switch (pl.state) {
+    case PL_IDLE:
+        break;
+    case PL_START_SENT:
+        if (reply_received(PL_MSG_START_ACK)) {
+            pl.state = PL_RUNNING;
+            pl.deadline = tick->met + pl.job.max_duration;
+        } else if (tick->met > pl.sent_at + START_TIMEOUT) {
+            pl_fault(PL_ERR_NO_START_ACK);
+        }
+        break;
+    case PL_RUNNING:
+        if (tick->count % STATUS_POLL_FRAMES == 0) {
+            pl_send(PL_MSG_STATUS_REQ);
+        }
+        if (reply_received(PL_MSG_JOB_DONE)) {
+            pl.state = PL_TRANSFERRING;
+        } else if (tick->met > pl.deadline || pl.missed_polls > MAX_MISSED) {
+            pl_fault(PL_ERR_TIMEOUT);
+        }
+        break;
+    case PL_TRANSFERRING:
+        pl_transfer_step();
+        break;
+    case PL_FAULT:
+        pl_recover_step();             /* retry, soft reset, rail cycle via eps_cmd, mark failed */
+        break;
+    }
+    pl_publish_status(tick);
+}
+```
+
+### FRAM two-slot record
+
+```c
+static inline bool gen_newer(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) > 0;       /* FRAM generations only; never the command counter */
+}
+
+int nvm_read(const struct nvm_region *r, void *buf)
+{
+    /* Read both slots; discard bad magic/version/CRC; return the valid one with
+     * the newer generation. If neither is valid, copy the flash default and
+     * return -ENODATA so the owner knows it is running on defaults. */
+}
+
+int nvm_write(const struct nvm_region *r, const void *buf)
+{
+    /* Under the service mutex: pick the slot with the older generation,
+     * write header (gen = newest + 1) + payload + CRC, read back and verify.
+     * The CRC becoming valid is the commit point. */
+}
+```
+
+### Command counter check
+
+```c
+/* Plain unsigned comparison. No wrap, no serial arithmetic, no floor + 1. */
+static int counter_check(uint64_t c, uint64_t floor)
+{
+    if (c <= floor) {
+        return COUNTER_REPLAY;         /* no retransmission handling (DS-53) */
+    }
+    if (c - floor > COUNTER_MAX_JUMP) {
+        return COUNTER_JUMP_TOO_LARGE;
+    }
+    return COUNTER_OK;
+}
+```
+
+### Constant-time tag comparison
+
+```c
+static bool tag_equal(const uint8_t *a, const uint8_t *b, size_t n)
+{
+    uint8_t diff = 0;
+    for (size_t i = 0; i < n; i++) {
+        diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
+}
+```
+
+---
+
+## 10. Student progression
+
+Device apps come first because they are self-contained, have a clear input and output, and test entirely on native_sim: MCU die temperature (the app pattern alone), shift register (an output device with readback verification), IMU, sun sensor (real math and a meaningful validity flag), magnetometer (SPI, calibration, fault injection; strong students write the driver against the emulator). Then link-layer codecs and tests, Python simulators with fault menus, message tooling, and FRAM record layer torn-write tests. Framework apps (frame manager, health, mode manager, command ingest, telemetry output) and subsystem apps stay with mentors or the strongest students, with students writing their rejection-path and transition tests.
