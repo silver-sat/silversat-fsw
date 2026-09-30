@@ -1,0 +1,74 @@
+{% import "_macros.j2" as m %}
+{% set guard = "SILVERSAT_MSG_" ~ app.name | upper ~ "_H_" %}
+{{ m.banner(app.source) }}
+
+#ifndef {{ guard }}
+#define {{ guard }}
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <zephyr/zbus/zbus.h>
+
+#include "msg/common.h"
+{% if app.commands %}
+
+/** Command identifiers, carried in struct {{ app.cmd_struct }}. */
+enum {{ app.cmd_id_enum }} {
+{% for c in app.commands %}
+	{{ c.constant }} = {{ c.id }},
+{% endfor %}
+};
+{% endif %}
+{% for c in app.commands_with_args %}
+
+{{ c.description | comment }}
+struct {{ c.struct }} {
+{{ m.struct_body(c.fields) -}}
+};
+{% endfor %}
+
+/** A command for {{ app.name }}, as published on {{ app.cmd_chan }}. */
+struct {{ app.cmd_struct }} {
+{% if app.commands %}
+	/** enum {{ app.cmd_id_enum }} */
+{% else %}
+	/** No commands are defined yet. */
+{% endif %}
+	uint16_t id;
+{% if app.commands_with_args %}
+	/** The member named after the command in id. */
+	union {
+{% for c in app.commands_with_args %}
+		struct {{ c.struct }} {{ c.name }};
+{% endfor %}
+	} args;
+{% endif %}
+};
+
+{{ app.housekeeping.description | comment }}
+struct {{ app.hk_struct }} {
+{{ m.struct_body(app.housekeeping.fields) -}}
+};
+
+/**
+ * One buffer that can hold any message {{ app.name }} receives. Pass it to
+ * zbus_sub_wait_msg(). A union is aligned for every member, so reading a
+ * struct out of it is safe; casting a byte array to a struct pointer is a
+ * misaligned access that UBSan reports.
+ */
+union {{ app.msg_union }} {
+	struct {{ app.cmd_struct }} cmd; /* {{ app.cmd_chan }} */
+{% if app.wakeup %}
+	struct frame_tick tick; /* {{ app.wakeup_chan }} */
+{% endif %}
+};
+
+ZBUS_CHAN_DECLARE({{ app.cmd_chan }});
+ZBUS_CHAN_DECLARE({{ app.hk_chan }});
+
+/*
+ * {{ app.status_chan }}{% if app.wakeup %} and {{ app.wakeup_chan }} are{% else %} is{% endif %} declared in msg/common.h.
+ */
+
+#endif /* {{ guard }} */

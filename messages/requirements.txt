@@ -1,0 +1,5 @@
+# Python packages the message generator and its tests need.
+# Installed by .devcontainer/setup.sh and by CI.
+jinja2>=3.1
+pyyaml>=6.0
+pytest>=8

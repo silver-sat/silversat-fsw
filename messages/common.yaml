@@ -1,0 +1,90 @@
+# Shared message types (DS-68).
+#
+# Everything here is emitted into msg/common.h, which every app may include.
+# Keep this file small: a type belongs here only if the framework itself
+# depends on it (the frame tick, app status, events). An app's own messages
+# go in apps/<app>.yaml.
+#
+# The generator requires frame_tick and app_status: every app's wakeup and
+# status channels carry them (DS-14, DS-25).
+
+enums:
+  - name: severity
+    type: uint8
+    description: How serious an event is. Telemetry output and the ground filter on it.
+    values:
+      - name: debug
+        value: 0
+        description: Development detail; not downlinked in the flight build.
+      - name: info
+        value: 1
+        description: Normal operation worth recording (a mode change, a command accepted).
+      - name: warning
+        value: 2
+        description: Something unexpected that the software handled.
+      - name: error
+        value: 3
+        description: A fault; an app or device is degraded.
+      - name: critical
+        value: 4
+        description: A fault that triggers recovery (disable, reset, or safe mode).
+
+structs:
+  - name: frame_tick
+    description: >
+      Published by the frame manager to each app's wakeup channel (DS-21,
+      DS-25). Apps timestamp their data from the tick, never by calling
+      the clock.
+    fields:
+      - name: count
+        type: uint32
+        description: Minor frames since boot. At 10 Hz this wraps after about 13 years.
+      - name: slot
+        type: uint8
+        description: Minor-frame slot within the major frame (count modulo the slot count).
+      - name: uptime_ms
+        type: int64
+        description: Milliseconds since this boot. 64-bit, so it never wraps.
+      - name: met_ms
+        type: int64
+        description: Mission elapsed time in milliseconds, carried across resets.
+
+  - name: app_status
+    description: >
+      Published by every app on its status channel after each message it
+      handles (DS-14). The frame manager compares steps with the wakeups it
+      delivered to bound each app's pending wakeups (DS-22); health uses the
+      same counts to detect a stalled app (DS-43).
+    fields:
+      - name: steps
+        type: uint32
+        description: Wakeups handled. Compare using unsigned subtraction, so a wrap is harmless.
+      - name: cmd_accepted
+        type: uint32
+        description: Commands accepted.
+      - name: cmd_rejected
+        type: uint32
+        description: Commands rejected.
+
+  - name: event
+    description: >
+      One event message. Telemetry output attaches RTC time, so apps do not
+      read the clock (DS-25).
+    fields:
+      - name: met_ms
+        type: int64
+        description: Mission elapsed time from the tick that was current when the event occurred.
+      - name: app
+        type: uint8
+        description: The reporting app (enum app_id).
+      - name: severity
+        type: severity
+      - name: id
+        type: uint16
+        description: Event number, unique within the reporting app.
+      - name: arg0
+        type: int32
+        description: Event-specific detail.
+      - name: arg1
+        type: int32
+        description: Event-specific detail.

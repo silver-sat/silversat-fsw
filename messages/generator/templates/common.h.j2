@@ -1,0 +1,51 @@
+{% import "_macros.j2" as m %}
+{{ m.banner("common.yaml and apps/") }}
+
+#ifndef SILVERSAT_MSG_COMMON_H_
+#define SILVERSAT_MSG_COMMON_H_
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <zephyr/zbus/zbus.h>
+
+/** App identifiers, from the id in each apps/<app>.yaml. */
+enum app_id {
+{% for app in defs.apps %}
+	{{ app.id_constant }} = {{ app.id }},
+{% endfor %}
+};
+{% for e in defs.enums %}
+
+{{ e.description | comment }}
+enum {{ e.name }} {
+{% for v in e.values %}
+{% if v.description %}
+{{ v.description | comment("\t") }}
+{% endif %}
+	{{ v.constant }} = {{ v.value }},
+{% endfor %}
+};
+{% endfor %}
+{% for s in defs.structs %}
+
+{{ s.description | comment }}
+struct {{ s.name }} {
+{{ m.struct_body(s.fields) -}}
+};
+{% endfor %}
+
+/*
+ * Every app's status channel, and the wakeup channel of every app the frame
+ * manager drives. They carry only the common types above, so they are
+ * declared here: the frame manager and health reach them without including
+ * another app's header (DS-68).
+ */
+{% for app in defs.apps %}
+ZBUS_CHAN_DECLARE({{ app.status_chan }});
+{% if app.wakeup %}
+ZBUS_CHAN_DECLARE({{ app.wakeup_chan }});
+{% endif %}
+{% endfor %}
+
+#endif /* SILVERSAT_MSG_COMMON_H_ */

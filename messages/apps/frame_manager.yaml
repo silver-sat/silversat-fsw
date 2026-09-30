@@ -1,0 +1,49 @@
+# Frame manager messages (DS-20 to DS-25).
+#
+# The file name must match `app:`. From this file the generator emits
+# msg/frame_manager.h and the app's channels:
+#
+#   frame_manager_cmd_chan     struct frame_manager_cmd  (commands below)
+#   frame_manager_hk_chan      struct frame_manager_hk   (housekeeping below)
+#   frame_manager_status_chan  struct app_status         (declared in msg/common.h)
+#
+# There is no wakeup channel: the frame manager is driven by its own timer.
+
+app: frame_manager
+id: 1
+description: Drives all periodic work from a table of minor-frame slots.
+wakeup: false
+
+commands:
+  - name: set_entry_enabled
+    id: 1
+    description: >
+      Enable or disable one entry in a frame table. Sets the state rather
+      than toggling it (DS-35). Rejected for an entry that belongs to a
+      protected app (DS-23).
+    fields:
+      - name: table
+        type: uint8
+        description: Frame table index (one table per mode).
+      - name: entry
+        type: uint8
+        description: Entry index within that table.
+      - name: enabled
+        type: bool
+        description: True to deliver the entry's wakeups, false to stop.
+
+housekeeping:
+  description: Frame manager state, published when housekeeping is requested.
+  fields:
+    - name: frame_count
+      type: uint32
+      description: Minor frames since boot (the tick count).
+    - name: active_table
+      type: uint8
+      description: Index of the frame table in use.
+    - name: overruns
+      type: uint32
+      description: Wakeups skipped because an app had too many pending (DS-22).
+    - name: idle_percent
+      type: uint8
+      description: CPU idle time over the last major frame (DS-26).

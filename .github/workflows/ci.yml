@@ -50,6 +50,9 @@ jobs:
           # but cached here so the target-build job below is fast.
           toolchains: arm-zephyr-eabi
 
+      - name: Install message generator requirements
+        run: pip install -r silversat-fsw/messages/requirements.txt
+
       - name: Run twister
         working-directory: silversat-fsw
         run: make test
@@ -93,6 +96,9 @@ jobs:
           app-path: silversat-fsw
           toolchains: arm-zephyr-eabi
 
+      - name: Install message generator requirements
+        run: pip install -r silversat-fsw/messages/requirements.txt
+
       - name: Run twister with coverage
         working-directory: silversat-fsw
         run: make coverage
@@ -126,6 +132,9 @@ jobs:
         with:
           app-path: silversat-fsw
           toolchains: arm-zephyr-eabi
+
+      - name: Install message generator requirements
+        run: pip install -r silversat-fsw/messages/requirements.txt
 
       - name: Build application
         working-directory: silversat-fsw
