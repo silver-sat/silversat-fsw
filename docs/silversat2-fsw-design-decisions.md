@@ -43,7 +43,8 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 
 **DS-07 Resource map: Specified.** A single header defines all thread priorities, stack sizes, zbus message pool sizes, and UART assignments.
 - It also holds one const attribute row per app: the protected flag, the stall threshold, and the re-enable policy (DS-43). The frame manager and health both read this row, so each app's attributes are stated once.
-- The zbus message pool size is a compile-time expression: `FRAME_MAX_PENDING` times the number of apps, plus the command and housekeeping-request depths (DS-22).
+- The zbus message pool size is computed in the header from the app counts: `FRAME_MAX_PENDING` for each frame-driven app, plus each app's command and housekeeping-request depths, plus one buffer for each thread that publishes, because every publish holds a buffer while it runs (DS-22). Zephyr takes the pool size from Kconfig, so a build check fails if the Kconfig value is smaller than the computed size.
+- Every buffer must hold the largest message on any channel, observed or not, because every publish takes one. The generated channel definitions fail the build if a message does not fit.
 
 ## 2. Architecture
 
@@ -83,7 +84,7 @@ Apps timestamp their data from the frame tick, not by calling the clock.
 - If an app needs a higher rate, increase the slot count rather than giving it a separate timer.
 
 **DS-22 Mechanism: Proposed.** A `k_timer` wakes a high-priority thread, and the thread publishes. Nothing is published from the ISR. Publishes use `K_NO_WAIT`.
-- Each app receives on a single message subscriber (one pending point), so every wakeup is a queued copy holding a buffer from the zbus pool. A message subscriber gives no queue-full signal, and pool exhaustion faults rather than returning an error (see the rationale, section 2).
+- Each app receives on a single message subscriber (one pending point), so every wakeup is a queued copy holding a buffer from the zbus pool, which all channels share. A stuck app's copies pile up until the pool is nearly empty. Then a copy that cannot be allocated makes the publish return an error, but another publish in flight at that moment cannot get its own buffer and faults (see the rationale, section 2).
 - Overruns are therefore detected by per-wakeup counting. The frame manager counts wakeups delivered per table entry and reads the target app's step counter from its status channel. If delivered minus steps has reached `FRAME_MAX_PENDING` (initially 2, the same for every app), the frame manager skips the publish and counts an overrun for that entry. This bounds each app's share of the pool.
 
 **DS-23 Enable/disable entries: Specified.** Table entries can be enabled and disabled by command, for recovery and power management. Entries for protected apps (DS-43) cannot be disabled; the command is rejected. There is one table per mode (see DS-40), and table switches happen at major-frame boundaries, except entry into safe mode.
@@ -404,3 +405,4 @@ The dictionary version and hash are included in the beacon.
 | 2026-09-30 | DS-66 printable KISS command bytes marked Open, with reversal of the SilverSat 1 lesson and trade-off noted; FRAM bus reversal stated in DS-75 |
 | 2026-09-30 | Added DS-69 beacon contents |
 | 2026-09-30 | Moved to `docs/`. DS-07 gains per-app attribute rows and pool sizing. DS-22 overrun detection by per-wakeup counting with a pending bound, because message subscribers give no queue-full signal and pool exhaustion faults. DS-23 protected entries. DS-25 64-bit uptime. DS-43 disable via the frame manager, protected apps, per-app re-enable policy |
+| 2026-10-01 | DS-07 pool size adds one buffer per publishing thread and is enforced by a build check against Kconfig; buffers sized for the largest message on any channel. DS-22 corrected: a failed delivery copy returns an error; a publish that cannot get its own buffer faults. Both verified by `tests/unit/zbus_pool` |

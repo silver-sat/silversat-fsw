@@ -3,7 +3,29 @@
 config SS_MESSAGES
 	bool "Generated message types and zbus channels"
 	select ZBUS
+	select ZBUS_MSG_SUBSCRIBER
 	help
 	  Run the message generator on messages/*.yaml at build time and
 	  compile the zbus channels it defines. Apps include msg/<app>.h
 	  and msg/common.h from the generated output.
+
+if SS_MESSAGES
+
+# No dynamic allocation after init: zbus takes message buffers from a
+# fixed pool, not the heap.
+configdefault ZBUS_PREFER_DYNAMIC_ALLOCATION
+	default n
+
+# Every publish on every channel takes one buffer, so each buffer must
+# hold the largest message on any channel. The generated channel files
+# fail the build if a message is larger.
+configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE
+	default 32
+
+# The pool must hold every queued copy plus one buffer per thread that
+# publishes. include/silversat/resource_map.h computes the number and
+# fails the build, saying what to set here, if this is too small (DS-07).
+configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE
+	default 16
+
+endif # SS_MESSAGES

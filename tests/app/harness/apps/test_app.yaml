@@ -1,0 +1,29 @@
+# A test-only app for the app test harness. It is generated exactly like a
+# flight app, but only into this test's build (SS_MESSAGES_EXTRA_APPS in
+# CMakeLists.txt). The id is far from the flight apps' ids.
+
+app: test_app
+id: 200
+description: Stand-in app used to test the app test harness.
+wakeup: true
+
+commands:
+  - name: set_value
+    id: 1
+    description: Set the value reported in housekeeping. Rejected if negative.
+    fields:
+      - name: value
+        type: int32
+
+housekeeping:
+  description: Test app state, published after every message it handles.
+  fields:
+    - name: value
+      type: int32
+      description: Last value accepted by set_value.
+    - name: last_count
+      type: uint32
+      description: Count from the last tick handled.
+    - name: last_uptime_ms
+      type: int64
+      description: Uptime from the last tick handled.

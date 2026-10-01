@@ -1,5 +1,5 @@
 {% import "_macros.j2" as m %}
-{{ m.banner("common.yaml and apps/") }}
+{{ m.banner("messages/common.yaml and the app definitions") }}
 
 #ifndef SILVERSAT_MSG_COMMON_H_
 #define SILVERSAT_MSG_COMMON_H_
@@ -15,6 +15,15 @@ enum app_id {
 	{{ app.id_constant }} = {{ app.id }},
 {% endfor %}
 };
+
+/*
+ * How many apps are defined, how many of them the frame manager drives, and
+ * the largest app id. The resource map sizes the zbus buffer pool and the
+ * per-app attribute table from these (DS-07).
+ */
+#define APP_COUNT {{ defs.apps | length }}
+#define APP_WAKEUP_COUNT {{ defs.wakeup_apps | length }}
+#define APP_ID_MAX {{ defs.apps | map(attribute="id") | max }}
 {% for e in defs.enums %}
 
 {{ e.description | comment }}
