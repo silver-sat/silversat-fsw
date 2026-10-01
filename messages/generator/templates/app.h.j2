@@ -68,7 +68,14 @@ ZBUS_CHAN_DECLARE({{ app.cmd_chan }});
 ZBUS_CHAN_DECLARE({{ app.hk_chan }});
 
 /*
- * {{ app.status_chan }}{% if app.wakeup %} and {{ app.wakeup_chan }} are{% else %} is{% endif %} declared in msg/common.h.
+ * Also owned by {{ app.name }}, and declared in msg/common.h:
+ *   {{ app.status_chan }}
+{% if app.wakeup %}
+ *   {{ app.wakeup_chan }}
+{% endif %}
+{% for d in app.data_channels %}
+ *   {{ d.name }}
+{% endfor %}
  */
 
 #endif /* {{ guard }} */

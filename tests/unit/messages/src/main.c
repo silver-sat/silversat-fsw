@@ -65,11 +65,11 @@ ZTEST(messages, test_commands_are_queued_not_overwritten)
 	 */
 	const struct frame_manager_cmd first = {
 		.id = FRAME_MANAGER_CMD_SET_ENTRY_ENABLED,
-		.args.set_entry_enabled = {.table = 0, .entry = 3, .enabled = false},
+		.args.set_entry_enabled = {.mode = MODE_SAFE, .entry = 3, .enabled = false},
 	};
 	const struct frame_manager_cmd second = {
 		.id = FRAME_MANAGER_CMD_SET_ENTRY_ENABLED,
-		.args.set_entry_enabled = {.table = 1, .entry = 4, .enabled = true},
+		.args.set_entry_enabled = {.mode = MODE_NOMINAL, .entry = 4, .enabled = true},
 	};
 	const struct zbus_channel *chan;
 	union frame_manager_msg msg;
@@ -80,13 +80,13 @@ ZTEST(messages, test_commands_are_queued_not_overwritten)
 	zassert_ok(zbus_sub_wait_msg(&test_sub, &chan, &msg, K_NO_WAIT));
 	zassert_equal_ptr(chan, &frame_manager_cmd_chan);
 	zassert_equal(msg.cmd.id, FRAME_MANAGER_CMD_SET_ENTRY_ENABLED);
-	zassert_equal(msg.cmd.args.set_entry_enabled.table, 0);
+	zassert_equal(msg.cmd.args.set_entry_enabled.mode, MODE_SAFE);
 	zassert_equal(msg.cmd.args.set_entry_enabled.entry, 3);
 	zassert_false(msg.cmd.args.set_entry_enabled.enabled);
 
 	zassert_ok(zbus_sub_wait_msg(&test_sub, &chan, &msg, K_NO_WAIT));
 	zassert_equal_ptr(chan, &frame_manager_cmd_chan);
-	zassert_equal(msg.cmd.args.set_entry_enabled.table, 1);
+	zassert_equal(msg.cmd.args.set_entry_enabled.mode, MODE_NOMINAL);
 	zassert_equal(msg.cmd.args.set_entry_enabled.entry, 4);
 	zassert_true(msg.cmd.args.set_entry_enabled.enabled);
 
@@ -110,13 +110,13 @@ ZTEST(messages, test_status_channel_round_trip)
 ZTEST(messages, test_housekeeping_channel_is_last_value)
 {
 	/* Telemetry channels keep only the newest value (DS-11). */
-	const struct frame_manager_hk older = {.frame_count = 10, .active_table = 0};
-	const struct frame_manager_hk newer = {.frame_count = 20, .active_table = 1};
+	const struct frame_manager_hk older = {.frame_count = 10, .mode = MODE_SAFE};
+	const struct frame_manager_hk newer = {.frame_count = 20, .mode = MODE_NOMINAL};
 	struct frame_manager_hk got;
 
 	zassert_ok(zbus_chan_pub(&frame_manager_hk_chan, &older, K_NO_WAIT));
 	zassert_ok(zbus_chan_pub(&frame_manager_hk_chan, &newer, K_NO_WAIT));
 	zassert_ok(zbus_chan_read(&frame_manager_hk_chan, &got, K_NO_WAIT));
 	zassert_equal(got.frame_count, 20);
-	zassert_equal(got.active_table, 1);
+	zassert_equal(got.mode, MODE_NOMINAL);
 }

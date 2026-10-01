@@ -6,6 +6,8 @@
 #
 #   add_subdirectory_ifdef(CONFIG_SS_* <app>)   (the app's own symbol)
 
+add_subdirectory_ifdef(CONFIG_SS_FRAME_MANAGER frame_manager)
+
 if(CONFIG_SS_MESSAGES)
   # Compiles the resource map's build checks in every build that has
   # messages, even one with no app enabled.

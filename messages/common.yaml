@@ -2,8 +2,9 @@
 #
 # Everything here is emitted into msg/common.h, which every app may include.
 # Keep this file small: a type belongs here only if the framework itself
-# depends on it (the frame tick, app status, events). An app's own messages
-# go in apps/<app>.yaml.
+# depends on it (the frame tick, app status, events, the mode), or if it is
+# carried on a data channel that other apps read. An app's own messages go
+# in apps/<app>.yaml.
 #
 # The generator requires frame_tick and app_status: every app's wakeup and
 # status channels carry them (DS-14, DS-25).
@@ -28,6 +29,40 @@ enums:
       - name: critical
         value: 4
         description: A fault that triggers recovery (disable, reset, or safe mode).
+
+  - name: mode
+    type: uint8
+    description: >
+      Spacecraft mode (DS-40, DS-41). Each mode has its own frame table
+      (DS-23). Safe is zero, so a mode channel that has never been published
+      reads as safe.
+    values:
+      - name: safe
+        value: 0
+        description: Trusted apps only. Any source may enter it; only a ground command leaves it.
+      - name: nominal
+        value: 1
+        description: Normal operations.
+
+  - name: mode_reason
+    type: uint8
+    description: Why the spacecraft entered its current mode (DS-41). Carried in the beacon (DS-69).
+    values:
+      - name: boot
+        value: 0
+        description: The mode in effect at boot, before the mode manager has decided.
+      - name: ground_command
+        value: 1
+      - name: low_battery
+        value: 2
+      - name: reset_loop
+        value: 3
+      - name: app_failure
+        value: 4
+        description: A critical app failed (DS-43).
+      - name: command_loss
+        value: 5
+        description: No ground command accepted within the timeout (DS-46).
 
 structs:
   - name: frame_tick
@@ -65,6 +100,19 @@ structs:
       - name: cmd_rejected
         type: uint32
         description: Commands rejected.
+
+  - name: mode_state
+    description: >
+      The current mode, published only by the mode manager on mode_chan
+      (DS-40). The frame manager reads it to choose its frame table.
+    fields:
+      - name: mode
+        type: mode
+      - name: reason
+        type: mode_reason
+      - name: since_met_ms
+        type: int64
+        description: Mission elapsed time when this mode was entered.
 
   - name: event
     description: >

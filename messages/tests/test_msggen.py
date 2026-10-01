@@ -191,6 +191,25 @@ def test_main_accepts_extra_apps(tmp_path):
     assert (out / "include/msg/sensor.h").exists()
 
 
+def test_enum_max(tmp_path):
+    common = generate(write_defs(tmp_path))["include/msg/common.h"]
+    assert "#define SEVERITY_MAX 3" in common
+
+
+DATA = [{"name": "sensor_data_chan", "type": "event", "description": "Sensor data."}]
+
+
+def test_data_channel(tmp_path):
+    outputs = generate(write_defs(tmp_path, apps=[app_with(data_channels=DATA), QUIET]))
+    # Declared where every reader can see it, defined in the owner's file.
+    assert "ZBUS_CHAN_DECLARE(sensor_data_chan); /* owned by sensor */" \
+        in outputs["include/msg/common.h"]
+    source = outputs["src/msg_sensor.c"]
+    assert "ZBUS_CHAN_DEFINE(sensor_data_chan, struct event," in source
+    assert "BUILD_ASSERT(sizeof(struct event) <=" in source
+    assert " *   sensor_data_chan" in outputs["include/msg/sensor.h"]
+
+
 def test_app_header(tmp_path):
     header = generate(write_defs(tmp_path))["include/msg/sensor.h"]
     assert '#include "msg/common.h"' in header
@@ -363,6 +382,13 @@ APP_ERRORS = [
     ("reserved command name", {"commands": [{"name": "hk", "id": 1, "description": "d"}]},
      "reserved"),
     ("empty description", {"description": "  "}, "non-empty text"),
+    ("data channel type not shared", {"data_channels": [
+        {"name": "sensor_data_chan", "type": "sensor_hk", "description": "d"}]},
+     "not a struct in common.yaml"),
+    ("data channel name", {"data_channels": [
+        {"name": "sensor_data", "type": "event", "description": "d"}]}, "must end in _chan"),
+    ("duplicate data channel", {"data_channels": DATA + DATA},
+     "duplicate data channel 'sensor_data_chan'"),
 ]
 
 
@@ -397,6 +423,8 @@ COMMON_ERRORS = [
     ("signed enum storage", {"enums": enum([{"name": "a", "value": 1}], type="int8")},
      "stored as one of"),
     ("enum with no values", {"enums": enum([])}, "at least one value"),
+    ("enum value named max", {"enums": enum([{"name": "max", "value": 1}])},
+     "emits SEVERITY_MAX"),
     ("duplicate struct", {"structs": COMMON["structs"] + [COMMON["structs"][0]]},
      "duplicate struct 'frame_tick'"),
 ]
@@ -453,6 +481,13 @@ def test_generated_name_collides_with_common(tmp_path):
     root = write_defs(tmp_path, common=common)
     with pytest.raises(msggen.DefinitionError, match="generated name 'sensor_hk'"):
         msggen.load_definitions(root)
+
+
+def test_data_channel_collides_with_generated_name(tmp_path):
+    app = app_with(data_channels=[
+        {"name": "sensor_hk_chan", "type": "event", "description": "d"}])
+    with pytest.raises(msggen.DefinitionError, match="generated name 'sensor_hk_chan'"):
+        msggen.load_definitions(write_defs(tmp_path, apps=[app]))
 
 
 def test_no_apps(tmp_path):

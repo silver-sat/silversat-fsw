@@ -1,0 +1,25 @@
+# Mode manager messages (DS-40, DS-41).
+#
+# Only what other apps need so far: mode_chan, which the frame manager reads
+# to choose its frame table. The app itself, its commands, and its full
+# housekeeping arrive in a later step. Until then, tests stand in for it by
+# publishing mode_chan themselves.
+
+app: mode_manager
+id: 2
+description: Sole publisher of the spacecraft mode.
+# Frame-driven: it checks its safe-mode triggers (low battery, command-loss
+# timer) every major frame (DS-41, DS-46).
+wakeup: true
+
+data_channels:
+  - name: mode_chan
+    type: mode_state
+    description: The current mode. Published only by the mode manager (DS-40).
+
+housekeeping:
+  description: Mode manager state.
+  fields:
+    - name: transitions
+      type: uint32
+      description: Mode transitions since boot.

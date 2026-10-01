@@ -35,6 +35,9 @@ enum {{ e.name }} {
 	{{ v.constant }} = {{ v.value }},
 {% endfor %}
 };
+
+/** The largest enum {{ e.name }} value, for sizing arrays indexed by it. */
+#define {{ e.max_constant }} {{ e.max_value }}
 {% endfor %}
 {% for s in defs.structs %}
 
@@ -45,16 +48,19 @@ struct {{ s.name }} {
 {% endfor %}
 
 /*
- * Every app's status channel, and the wakeup channel of every app the frame
- * manager drives. They carry only the common types above, so they are
- * declared here: the frame manager and health reach them without including
- * another app's header (DS-68).
+ * Every app's status channel, the wakeup channel of every app the frame
+ * manager drives, and every data channel. They carry only the common types
+ * above, so they are declared here: other apps reach them without including
+ * the owner's header (DS-68). Only the owner publishes them.
  */
 {% for app in defs.apps %}
 ZBUS_CHAN_DECLARE({{ app.status_chan }});
 {% if app.wakeup %}
 ZBUS_CHAN_DECLARE({{ app.wakeup_chan }});
 {% endif %}
+{% for d in app.data_channels %}
+ZBUS_CHAN_DECLARE({{ d.name }}); /* owned by {{ app.name }} */
+{% endfor %}
 {% endfor %}
 
 #endif /* SILVERSAT_MSG_COMMON_H_ */

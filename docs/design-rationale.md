@@ -271,54 +271,14 @@ K_THREAD_DEFINE(adcs_tid, ADCS_STACK_SIZE, adcs_main, NULL, NULL, NULL,
 
 ### Frame manager loop
 
-```c
-struct frame_entry {
-    uint8_t slot;
-    uint8_t app;                             /* index into the resource map's app rows */
-    const struct zbus_channel *chan;         /* the app's wakeup channel */
-    const struct zbus_channel *status_chan;  /* the app's status: steps */
-};
+The frame manager is in `apps/frame_manager/frame_manager.c`; read it there rather than as a sketch. Each minor frame it:
 
-static void frame_main(void *a, void *b, void *c)
-{
-    struct frame_tick tick = {0};
-
-    k_timer_start(&minor_frame_timer, K_MSEC(FRAME_MINOR_MS), K_MSEC(FRAME_MINOR_MS));
-    for (;;) {
-        k_timer_status_sync(&minor_frame_timer);   /* drift-free periodic wake */
-        tick.slot      = tick.count % FRAME_SLOTS;
-        tick.met       = time_get_met();
-        tick.uptime_ms = k_uptime_get();           /* 64-bit: never wraps */
-
-        for (size_t i = 0; i < active_table_len; i++) {
-            const struct frame_entry *e = &active_table[i];
-            struct app_status st;
-
-            if (!entry_enabled[i] || e->slot != tick.slot) {
-                continue;
-            }
-            /* Never publish a copy the app can't consume (DS-22). If the
-             * status can't be read without waiting, skip rather than guess. */
-            if (zbus_chan_read(e->status_chan, &st, K_NO_WAIT) != 0) {
-                frame_hk.overruns[e->app]++;
-                continue;
-            }
-            /* Counted per app: a 10 Hz app has ten entries but one step counter. */
-            if (frame_hk.delivered[e->app] - st.steps >= FRAME_MAX_PENDING) {
-                frame_hk.overruns[e->app]++;
-                continue;
-            }
-            if (zbus_chan_pub(e->chan, &tick, K_NO_WAIT) == 0) {
-                frame_hk.delivered[e->app]++;      /* health compares against steps */
-            }
-        }
-        if (tick.slot == FRAME_SLOTS - 1) {
-            frame_apply_pending_table();           /* mode changes at major-frame boundary */
-        }
-        tick.count++;
-    }
-}
-```
+1. waits on its timer, skipping any minor frames it fell behind on (DS-22);
+2. builds the tick: count, slot, 64-bit uptime, and MET (DS-25);
+3. handles any commands waiting for it, without waiting for more;
+4. reads `mode_chan`, switching tables at once for safe mode and at the next major frame otherwise (DS-23, DS-40);
+5. for each enabled entry in this slot, publishes the tick, unless the app already has `FRAME_MAX_PENDING` wakeups it hasn't stepped through, in which case it counts an overrun (DS-22);
+6. publishes its status, and its housekeeping at the start of each major frame.
 
 ### Device app step
 

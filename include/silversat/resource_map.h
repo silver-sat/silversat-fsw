@@ -30,6 +30,9 @@
 
 BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (DS-21)");
 
+/* The most entries one frame table may have. Sizes the enable flags. */
+#define FRAME_ENTRIES_MAX 32
+
 /* ---- Thread priorities (DS-24) ----------------------------------------- */
 
 /*
@@ -149,6 +152,17 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 	 */
 	[APP_ID_FRAME_MANAGER] = {
 		.protected = false,
+		.stall_threshold = 0,
+		.reenable = REENABLE_NEVER,
+		.auto_retry_cap = 0,
+	},
+	/*
+	 * Protected (DS-43): its frame entries cannot be disabled. The stall
+	 * threshold is set when health is written; until then health does not
+	 * exist to watch it.
+	 */
+	[APP_ID_MODE_MANAGER] = {
+		.protected = true,
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,

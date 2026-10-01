@@ -1,0 +1,16 @@
+# Frame manager (DS-20 to DS-25).
+
+config SS_FRAME_MANAGER
+	bool "Frame manager"
+	depends on SS_MESSAGES
+	help
+	  Wakes each frame-driven app in its slots of the frame table for the
+	  current mode.
+
+config SS_FRAME_MANAGER_FLIGHT_TABLES
+	bool "Use the flight frame tables"
+	default y
+	depends on SS_FRAME_MANAGER
+	help
+	  Compile apps/frame_manager/frame_tables.c. A test that needs its own
+	  tables turns this off and defines frame_tables[] itself.
