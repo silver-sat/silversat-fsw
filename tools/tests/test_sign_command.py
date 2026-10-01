@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for tools/sign_command.py. Run with `make test-python`."""
+
+import hashlib
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import sign_command as sc  # noqa: E402
+
+KEY = bytes(range(32))
+SALT = bytes(range(1, 9))
+
+
+def test_blake2s_known_answers():
+    # RFC 7693 Appendix B: BLAKE2s-256("abc").
+    assert hashlib.blake2s(b"abc").hexdigest() == (
+        "508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982")
+    # BLAKE2 reference KAT (blake2s-kat.txt): keyed, key 00..1f, empty input.
+    assert hashlib.blake2s(b"", key=KEY).hexdigest() == (
+        "48a8997da407876b3d79c0d92325ad3b89cbb754d86ab71aee047ad345fd2c49")
+
+
+def test_packet_layout():
+    packet = sc.sign("noop", KEY, 0x0102030405060708, SALT)
+    assert len(packet) == sc.HEADER_CHARS + 4
+    assert packet[64:80] == "0102030405060708"           # salt
+    assert packet[80:96] == "0102030405060708"           # counter, most significant first
+    assert packet[96:] == "noop"
+    assert all(c in "0123456789abcdef" for c in packet[:96])   # lowercase hex
+
+
+def test_tag_covers_everything_after_it():
+    packet = sc.sign("noop", KEY, 7, SALT)
+    expected = hashlib.blake2s(packet[64:].encode(), key=KEY).hexdigest()
+    assert packet[:64] == expected
+
+
+def test_each_field_changes_the_tag():
+    base = sc.sign("noop", KEY, 7, SALT)[:64]
+    assert sc.sign("noop", KEY, 8, SALT)[:64] != base
+    assert sc.sign("noop", KEY, 7, bytes(8))[:64] != base
+    assert sc.sign("nooq", KEY, 7, SALT)[:64] != base
+    assert sc.sign("noop", bytes(32), 7, SALT)[:64] != base
+
+
+def test_random_salt_by_default():
+    assert sc.sign("noop", KEY, 7)[64:80] != sc.sign("noop", KEY, 7)[64:80]
+
+
+def test_limits():
+    assert len(sc.sign("x" * sc.TEXT_MAX, KEY, sc.COUNTER_MAX, SALT)) == sc.PACKET_MAX
+    with pytest.raises(ValueError, match="1 to 159"):
+        sc.sign("x" * (sc.TEXT_MAX + 1), KEY, 1)
+    with pytest.raises(ValueError, match="1 to 159"):
+        sc.sign("", KEY, 1)
+    with pytest.raises(ValueError, match="printable"):
+        sc.sign("tab\there", KEY, 1)
+    with pytest.raises(ValueError, match="64 bits"):
+        sc.sign("noop", KEY, sc.COUNTER_MAX + 1)
+    with pytest.raises(ValueError, match="salt"):
+        sc.sign("noop", KEY, 1, b"short")
+
+
+def test_default_counter_is_increasing():
+    now = sc.default_counter()
+    assert sc.default_counter(last=now + 1000) == now + 1001
+
+
+def test_load_key(tmp_path):
+    assert len(sc.load_key(sc.TEST_KEY_FILE)) == sc.KEY_LEN
+    bad = tmp_path / "short.txt"
+    bad.write_text("# comment\n0011\n")
+    with pytest.raises(ValueError, match="32 bytes"):
+        sc.load_key(bad)
+
+
+def test_c_vectors_are_deterministic():
+    assert sc.c_vectors(KEY) == sc.c_vectors(KEY)
+    assert '"counter_max"' in sc.c_vectors(KEY)
+
+
+def test_main(tmp_path, capsys):
+    assert sc.main(["--counter", "5", "noop"]) == 0
+    packet = capsys.readouterr().out.strip()
+    assert packet[80:96] == "0000000000000005"
+    assert packet[:64] == sc.sign("noop", sc.load_key(sc.TEST_KEY_FILE), 5,
+                                  bytes.fromhex(packet[64:80]))[:64]
+
+    out = tmp_path / "v" / "vectors.h"
+    assert sc.main(["--c-vectors", str(out)]) == 0
+    assert out.read_text().startswith("/* GENERATED")
+
+    assert sc.main(["--counter", "-1", "noop"]) == 1
+    assert "sign_command: error" in capsys.readouterr().err

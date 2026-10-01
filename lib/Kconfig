@@ -1,0 +1,18 @@
+# Kconfig for libraries shared by apps.
+
+menu "SilverSat libraries"
+
+config SS_BLAKE2S
+	bool "BLAKE2s (vendored reference implementation)"
+	help
+	  The BLAKE2 reference implementation of BLAKE2s, used for command
+	  signatures (DS-52).
+
+config SS_CMD_AUTH
+	bool "Command authentication"
+	select SS_BLAKE2S
+	help
+	  Shape check and signature check for signed ground commands
+	  (DS-50 stages 1 and 2, DS-52).
+
+endmenu
