@@ -75,6 +75,9 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # so a command cannot use those names.
 RESERVED_COMMAND_NAMES = {"cmd", "hk", "msg"}
 
+# The generator emits <ENUM>_MAX for each enum, so no value may be named max.
+RESERVED_ENUM_VALUE_NAMES = {"max"}
+
 # "common" would collide with msg/common.h.
 RESERVED_APP_NAMES = {"common"}
 
@@ -116,6 +119,14 @@ class Enum:
     description: str
     values: list[EnumValue]
 
+    @property
+    def max_constant(self):
+        return f"{self.name}_max".upper()
+
+    @property
+    def max_value(self):
+        return max(v.value for v in self.values)
+
 
 @dataclass
 class Struct:
@@ -135,6 +146,14 @@ class Command:
 
 
 @dataclass
+class DataChannel:
+    """A last-value channel an app owns besides the four every app has."""
+    name: str
+    struct: str               # a struct from common.yaml
+    description: str
+
+
+@dataclass
 class App:
     """One app, and every C name the generator derives from it (DS-14)."""
 
@@ -144,6 +163,7 @@ class App:
     wakeup: bool
     commands: list[Command]
     housekeeping: Struct
+    data_channels: list[DataChannel]
     source: str               # the YAML file, for the generated banner and errors
 
     @property
@@ -190,6 +210,7 @@ class App:
                  (self.status_chan, "struct app_status")]
         if self.wakeup:
             pairs.append((self.wakeup_chan, "struct frame_tick"))
+        pairs += [(d.name, f"struct {d.struct}") for d in self.data_channels]
         return pairs
 
     @property
@@ -203,6 +224,7 @@ class App:
                  self.status_chan]
         if self.wakeup:
             names.append(self.wakeup_chan)
+        names += [d.name for d in self.data_channels]
         for c in self.commands:
             names.append(c.constant)
             if c.fields:
@@ -340,6 +362,10 @@ def _parse_enum(node, where):
         vwhere = f"{where}.values[{i}]"
         _check_keys(v, vwhere, ("name", "value"), ("description",))
         vname = _name(v["name"], f"{vwhere}.name")
+        if vname in RESERVED_ENUM_VALUE_NAMES:
+            raise DefinitionError(
+                f"{vwhere}.name: {vname!r} is reserved; the generator emits "
+                f"{name.upper()}_MAX")
         value = _integer(v["value"], f"{vwhere}.value", 0, highest)
         description = _text(v["description"], f"{vwhere}.description") \
             if "description" in v else ""
@@ -396,6 +422,19 @@ def _parse_command(node, where, app_name, enums):
     )
 
 
+def _parse_data_channel(node, where, structs):
+    _check_keys(node, where, ("name", "type", "description"))
+    name = _name(node["name"], f"{where}.name")
+    if not name.endswith("_chan"):
+        raise DefinitionError(f"{where}.name: a channel name must end in _chan")
+    if node["type"] not in structs:
+        raise DefinitionError(
+            f"{where}.type: {node['type']!r} is not a struct in common.yaml. Other apps "
+            "read a data channel, and an app includes only its own header and "
+            "msg/common.h (DS-68), so the type must be shared")
+    return DataChannel(name, node["type"], _text(node["description"], f"{where}.description"))
+
+
 def _source_label(path, root):
     """path relative to root (the repository, in practice) if it is inside it."""
     try:
@@ -404,11 +443,11 @@ def _source_label(path, root):
         return str(path)
 
 
-def _parse_app(path, enums, root):
+def _parse_app(path, enums, structs, root):
     data = _load_yaml(path)
     where = str(path)
     _check_keys(data, where, ("app", "id", "description", "wakeup", "housekeeping"),
-                ("commands",))
+                ("commands", "data_channels"))
 
     name = _name(data["app"], f"{where}: app")
     if name != path.stem:
@@ -430,6 +469,10 @@ def _parse_app(path, enums, root):
     _check_keys(hk, hk_where, ("description", "fields"))
     housekeeping = _parse_struct({"name": f"{name}_hk", **hk}, hk_where, enums)
 
+    data_channels = [_parse_data_channel(n, f"{where}: data_channels[{i}]", structs)
+                     for i, n in enumerate(_sequence(data, "data_channels", where))]
+    _check_unique(data_channels, "name", "data channel", f"{where}: data_channels")
+
     return App(
         name=name,
         id=_integer(data["id"], f"{where}: id", 1, APP_ID_MAX),
@@ -437,6 +480,7 @@ def _parse_app(path, enums, root):
         wakeup=data["wakeup"],
         commands=commands,
         housekeeping=housekeeping,
+        data_channels=data_channels,
         source=_source_label(path, root),
     )
 
@@ -460,7 +504,8 @@ def load_definitions(defs_dir, extra_app_dirs=()):
             raise DefinitionError(f"{extra}: extra app directory not found")
         app_paths += sorted(extra.glob("*.yaml"))
     root = defs_dir.parent
-    apps = [_parse_app(p, by_name, root) for p in app_paths]
+    struct_names = {s.name for s in structs}
+    apps = [_parse_app(p, by_name, struct_names, root) for p in app_paths]
 
     names = {}
     for app in apps:
@@ -481,7 +526,7 @@ def load_definitions(defs_dir, extra_app_dirs=()):
     # are both foo_bar_baz. C would reject that with a confusing error.
     defined = {}
     common_names = [s.name for s in structs] + [e.name for e in enums] + \
-        [v.constant for e in enums for v in e.values] + \
+        [v.constant for e in enums for v in e.values] + [e.max_constant for e in enums] + \
         ["app_id", "APP_COUNT", "APP_WAKEUP_COUNT", "APP_ID_MAX"]
     for source, names in [("common.yaml", common_names)] + \
             [(a.source, a.generated_names()) for a in apps]:

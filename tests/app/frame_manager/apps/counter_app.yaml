@@ -1,0 +1,13 @@
+# Test-only app for the frame manager tests: records every tick it gets.
+
+app: counter_app
+id: 100
+description: Records the ticks it receives, so tests can check which slots it ran in.
+wakeup: true
+
+housekeeping:
+  description: Counter app state.
+  fields:
+    - name: ticks
+      type: uint32
+      description: Ticks handled.

@@ -1,0 +1,15 @@
+# Test-only app for the frame manager tests: can be made to stall inside
+# its step, the way a stuck app would, so tests can check the pending bound
+# and overrun counting (DS-22).
+
+app: stuck_app
+id: 101
+description: Stalls inside its step on request.
+wakeup: true
+
+housekeeping:
+  description: Stuck app state.
+  fields:
+    - name: ticks
+      type: uint32
+      description: Ticks handled.

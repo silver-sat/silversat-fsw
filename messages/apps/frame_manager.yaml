@@ -19,12 +19,12 @@ commands:
     id: 1
     description: >
       Enable or disable one entry in a frame table. Sets the state rather
-      than toggling it (DS-35). Rejected for an entry that belongs to a
-      protected app (DS-23).
+      than toggling it (DS-35). Disabling an entry that belongs to a
+      protected app is rejected (DS-23).
     fields:
-      - name: table
-        type: uint8
-        description: Frame table index (one table per mode).
+      - name: mode
+        type: mode
+        description: The mode whose frame table holds the entry.
       - name: entry
         type: uint8
         description: Entry index within that table.
@@ -33,17 +33,29 @@ commands:
         description: True to deliver the entry's wakeups, false to stop.
 
 housekeeping:
-  description: Frame manager state, published when housekeeping is requested.
+  description: Frame manager state, published at the start of every major frame.
   fields:
     - name: frame_count
       type: uint32
       description: Minor frames since boot (the tick count).
-    - name: active_table
-      type: uint8
-      description: Index of the frame table in use.
+    - name: mode
+      type: mode
+      description: The mode whose frame table is in use.
     - name: overruns
       type: uint32
-      description: Wakeups skipped because an app had too many pending (DS-22).
-    - name: idle_percent
-      type: uint8
-      description: CPU idle time over the last major frame (DS-26).
+      description: Wakeups skipped because an app already had too many pending (DS-22).
+    - name: missed_frames
+      type: uint32
+      description: Minor frames skipped because the frame manager itself fell behind.
+    - name: publish_errors
+      type: uint32
+      description: Wakeups whose publish failed. Nonzero means the zbus pool is too small (DS-07).
+    - name: rejected_bad_command
+      type: uint32
+      description: Commands rejected for an unknown command id.
+    - name: rejected_bad_index
+      type: uint32
+      description: Commands rejected for a mode or entry outside the tables.
+    - name: rejected_protected
+      type: uint32
+      description: Commands rejected for disabling a protected app's entry (DS-23).

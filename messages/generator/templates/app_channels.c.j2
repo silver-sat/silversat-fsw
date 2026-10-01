@@ -24,6 +24,12 @@ ZBUS_CHAN_DEFINE({{ app.status_chan }}, struct app_status,
 ZBUS_CHAN_DEFINE({{ app.wakeup_chan }}, struct frame_tick,
 		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
 {% endif %}
+{% for d in app.data_channels %}
+
+{{ d.description | comment }}
+ZBUS_CHAN_DEFINE({{ d.name }}, struct {{ d.struct }},
+		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
+{% endfor %}
 
 #if defined(CONFIG_ZBUS_MSG_SUBSCRIBER_BUF_ALLOC_STATIC)
 /*

@@ -2,7 +2,7 @@
 
 > **Temporary working document.** Delete it once the frame manager lands. Settled decisions live in the specification and rationale; this file records the build order and the review that produced them.
 >
-> **Status:** steps 1 and 2 are merged. Step 3, the resource map and app scaffolding, is on branch `feat/resource-map` for review. Next is step 4, the frame manager.
+> **Status:** steps 1 to 3 are merged. Steps 4 and 5, the frame manager and its tests, are on branch `feat/frame-manager` for review. This plan is deleted once they merge.
 
 ## Context
 Lee wants to build the mentor-owned flight software (frame manager, command ingest, health, mode manager, telemetry output; §11 of the spec) incrementally with Claude Code, reviewing each piece and its tests before the next. Students first do six Basilisk exercises (basilisk-sim), then write device apps in this repo. This plan answers the environment question, records what the review of the docs and existing code turned up, and proposes the first few steps. No code gets written until we've talked it through.
@@ -128,5 +128,11 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
   - The DS-07, DS-22, and rationale §2 corrections land in the step 3 PR, with `tests/unit/zbus_pool` as the regression test.
   - Scaffolding is wiring plus a test harness only; the frame manager is the first real app.
 
+- **Step 4 decisions (2026-10-01):**
+  - The frame manager reads `mode_chan` each minor frame (DS-40). The mode types live in `common.yaml`; a minimal `mode_manager.yaml` owns `mode_chan`, declared in `msg/common.h` because its type is shared. Tests stand in for the mode manager.
+  - Per-app delivered and overrun counts stay inside the frame manager; how health gets them is decided with health, because large housekeeping messages enlarge every zbus buffer.
+  - Rejected commands are counted (status, plus per-reason counts in housekeeping). Events wait for the events channel design with telemetry output.
+  - Steps 4 and 5 are one PR, because every change needs its tests.
+
 ## Next action
-Review step 3 (`feat/resource-map`). Then step 4: the frame manager.
+Review steps 4 and 5 (`feat/frame-manager`). After they merge, delete this plan and pick the next mentor app (command ingest, step 6).

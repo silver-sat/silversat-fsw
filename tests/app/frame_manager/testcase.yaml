@@ -1,0 +1,10 @@
+common:
+  tags:
+    - app
+    - frame_manager
+
+tests:
+  app.frame_manager:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64

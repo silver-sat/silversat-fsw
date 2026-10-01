@@ -1,11 +1,10 @@
 # Kconfig for flight software apps (DS-10).
 #
 # Each app lives in its own subdirectory with its own Kconfig symbol, so a
-# test can enable one app on its own. Add one `rsource` line per app as
-# they are written, starting with the frame manager.
-#
-# An empty menu keeps this file valid until the first app lands.
+# test can enable one app on its own. Add one `rsource` line per app.
 
 menu "SilverSat apps"
+
+rsource "frame_manager/Kconfig"
 
 endmenu
