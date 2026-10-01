@@ -145,7 +145,7 @@ If a command executes but its ACK is lost, the operator resends with a new count
 
 ### Signing details
 
-Keyed BLAKE2s (the key initializes the hash; not a hash of secret-plus-message). Tags travel as hex so commands stay printable. Compare tags in constant time; not a realistic threat here, but a free habit and a good lesson.
+Keyed BLAKE2s: the secret is BLAKE2s's key, so the MAC takes one pass. It is not a hash of secret-plus-message, which is unsafe for many hashes, and not HMAC, which SilverSat 1 flew and which BLAKE2 doesn't need. Tags travel as hex so commands stay printable. The tag covers the received characters exactly, so the satellite never re-encodes anything before checking it. Compare tags in constant time; not a realistic threat here, but a free habit and a good lesson.
 
 ---
 

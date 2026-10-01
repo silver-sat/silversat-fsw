@@ -60,6 +60,7 @@ zbus channels replace the software bus. Each app is one thread with one pending 
 **DS-11 Channel semantics: Specified.** zbus channels are last-value, not queues.
 - Commands use message subscribers, because commands must not be lost.
 - Telemetry and sensor data use plain subscribers or reads, where last-value is the desired behavior.
+- zbus messages stay small. Every buffer in the shared pool is sized for the largest message on any channel (DS-07), so one large message would enlarge them all. Raw link frames (uplink and downlink, up to 255 bytes, DS-66) travel between a link app and the app that uses them through a static `k_msgq` sized in the resource map, not through zbus.
 
 **DS-12 Data sharing: Proposed.** Apps share data only through channels, never through globals or each other's structs. Any `extern` reaching into another app's directory is a review flag.
 
@@ -178,16 +179,17 @@ Mode gating lives in the routing table. Parameter validation is done by the targ
 - The flatsat runs in two modes: development mode (direct flash plus GDB) and update mode (signed image uplinked through the flight path).
 - **Open:** the F446 sector layout limits the image to about 128 KB with swap. Options are a secondary slot in external SPI flash, or weighing update support in the flight MCU choice. Measure the image size early.
 
-**DS-52 Signing: Specified.** Keyed BLAKE2, continuing from SilverSat 1:
-- A shared secret initializes the MAC.
-- The tag covers salt, sequence, and command.
+**DS-52 Signing: Specified.** Keyed BLAKE2s, continuing the SilverSat 1 approach:
+- The shared secret is the BLAKE2s key: BLAKE2's built-in MAC mode, giving a 32-byte tag (in Python, `hashlib.blake2s(data, key=secret)`). SilverSat 1 flew HMAC-BLAKE2s instead; SilverSat 2 uses the keyed mode, which takes one pass and is what BLAKE2 was designed for.
 - Commands are signed, not encrypted.
-- Commands and tags are printable ASCII, with tags as hex.
-- Use BLAKE2s on the MCU, from the reference implementation or Monocypher, since Zephyr's crypto stack doesn't include it.
+- Commands are printable ASCII. Binary fields travel as lowercase hex.
+- Wire format, in SilverSat 1's order: `<tag: 64 hex><salt: 16 hex><counter: 16 hex><command text>`. The salt is 8 random bytes per command. The counter is DS-53's 64-bit counter. The command text is at most 159 characters, so a whole packet stays under 256 bytes (DS-66).
+- The tag covers everything after it, exactly as received: the salt, counter, and command text as ASCII characters (DS-50).
+- On the MCU, use the BLAKE2 reference implementation (CC0), vendored into this repository, since Zephyr's crypto stack doesn't include BLAKE2s. (Monocypher implements only BLAKE2b.)
 
 **DS-53 Replay protection: Specified / Proposed.**
 - *Specified:* a 64-bit monotonic counter, accepted if strictly greater than the floor, with gaps allowed. After a loss, the ground jumping ahead re-establishes the floor, as in SilverSat 1. The ACK is sent on acceptance, with no retry mechanism.
-- *Proposed:* the floor is persisted in FRAM before execution. The counter is epoch milliseconds, and the ground sends the larger of the current time and the last value plus one.
+- *Proposed:* the floor is persisted in FRAM before execution. The counter is epoch milliseconds, and the ground sends the larger of the current time and the last value plus one. Command ingest stores the floor through a small floor-store interface. Until the FRAM service exists (DS-70), that interface keeps the floor in RAM, which is the degraded behavior DS-75 already defines.
 - *Proposed:* the counter never wraps. Comparison is plain unsigned 64-bit (not the serial-number arithmetic used for FRAM generations), and code must never compute `floor + 1` where it could overflow; a unit test covers the maximum value. A command carrying the maximum value is accepted once and sets the floor to the maximum, after which all commands are rejected. Wrapping to zero would make every previously recorded command valid again.
 - *Proposed:* guard against an erroneous large counter in two places. The ground software refuses to send a counter more than a set margin (for example, one day) ahead of its clock. The spacecraft rejects any counter more than a maximum jump (for example, one year in milliseconds) above the floor, with an event, which still allows the SilverSat 1 style jump-ahead recovery.
 - *Proposed:* the floor is stored per key slot. Rotating to the other key (DS-54) resets that slot's floor to zero, because commands recorded under the old key no longer verify. This is the recovery if the floor is ever set too high.
@@ -393,6 +395,12 @@ The dictionary version and hash are included in the beacon.
 | — | Minor frame rate once ADCS requirements are known |
 | — | Pin mux check for five UARTs on the Nucleo-F446RE |
 | — | Driver and emulator support for the selected IMU and FRAM parts in the pinned Zephyr version |
+| DS-43 | How health gets each app's delivered and overrun counts from the frame manager, without large housekeeping messages (DS-07, DS-11) |
+| DS-10 | The events channel: owner, how its queued copies are bounded, and its effect on the zbus pool. Until then, apps count rejections in housekeeping |
+| DS-07 | A separate zbus pool for command channels (`CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_ISOLATION`), so telemetry can never starve commands |
+| DS-68 | Data channel types that only some apps read. For now a data channel's type must be in `common.yaml` |
+| DS-25 | MET at boot: health publishes mission time from FRAM. Until then each boot's MET starts at zero |
+| DS-26 | Measure idle time for the frame manager's housekeeping |
 
 ---
 
@@ -408,3 +416,4 @@ The dictionary version and hash are included in the beacon.
 | 2026-09-30 | Moved to `docs/`. DS-07 gains per-app attribute rows and pool sizing. DS-22 overrun detection by per-wakeup counting with a pending bound, because message subscribers give no queue-full signal and pool exhaustion faults. DS-23 protected entries. DS-25 64-bit uptime. DS-43 disable via the frame manager, protected apps, per-app re-enable policy |
 | 2026-10-01 | DS-07 pool size adds one buffer per publishing thread and is enforced by a build check against Kconfig; buffers sized for the largest message on any channel. DS-22 corrected: a failed delivery copy returns an error; a publish that cannot get its own buffer faults. Both verified by `tests/unit/zbus_pool` |
 | 2026-10-01 | DS-22: delivered and overrun counts are per app, not per entry; a frame manager that falls behind skips and counts the missed minor frames. Frame manager implemented in `apps/frame_manager` |
+| 2026-10-01 | DS-11 adds the small-message rule: raw link frames use a static `k_msgq`, not zbus. DS-52 states the keyed-BLAKE2s MAC (SilverSat 1 flew HMAC-BLAKE2s), the wire format, and the vendored reference implementation (Monocypher has no BLAKE2s). DS-53 floor store with a RAM stand-in until the FRAM service. Open items gain the decisions deferred while building the frame manager |
