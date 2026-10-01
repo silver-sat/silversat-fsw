@@ -2,7 +2,7 @@
 
 > **Temporary working document.** Delete it once the frame manager lands. Settled decisions live in the specification and rationale; this file records the build order and the review that produced them.
 >
-> **Status:** step 1 (docs PR) is done. Next is step 2, the minimal message generator, done in a Codespace with Claude Code.
+> **Status:** step 1 (docs PR) is done. Step 2, the minimal message generator, is on branch `feat/message-generator` for review. Next is step 3.
 
 ## Context
 Lee wants to build the mentor-owned flight software (frame manager, command ingest, health, mode manager, telemetry output; §11 of the spec) incrementally with Claude Code, reviewing each piece and its tests before the next. Students first do six Basilisk exercises (basilisk-sim), then write device apps in this repo. This plan answers the environment question, records what the review of the docs and existing code turned up, and proposes the first few steps. No code gets written until we've talked it through.
@@ -124,4 +124,4 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
 - **Protected apps:** health, mode manager, command ingest, and telemetry output. This is recorded in DS-43 in the docs PR.
 
 ## Next action
-Step 2, in the Codespace: the minimal message generator (see "Decisions so far"). Before starting, run `make test` to confirm the environment is working.
+Review step 2 (`feat/message-generator`). Then step 3: the resource map and app scaffolding.

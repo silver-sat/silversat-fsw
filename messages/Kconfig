@@ -1,0 +1,9 @@
+# Generated message definitions (DS-60, DS-61, DS-68).
+
+config SS_MESSAGES
+	bool "Generated message types and zbus channels"
+	select ZBUS
+	help
+	  Run the message generator on messages/*.yaml at build time and
+	  compile the zbus channels it defines. Apps include msg/<app>.h
+	  and msg/common.h from the generated output.

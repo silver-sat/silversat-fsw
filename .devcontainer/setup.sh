@@ -41,6 +41,10 @@ echo "==> installing Zephyr python requirements"
 pip3 install --break-system-packages --no-cache-dir \
 	-r zephyr/scripts/requirements.txt
 
+echo "==> installing message generator requirements"
+pip3 install --break-system-packages --no-cache-dir \
+	-r "$REPO_DIR/messages/requirements.txt"
+
 cat <<BANNER
 
 ==============================================================

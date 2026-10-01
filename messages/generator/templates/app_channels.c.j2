@@ -1,0 +1,25 @@
+{% import "_macros.j2" as m %}
+{{ m.banner(app.source) }}
+
+#include <zephyr/zbus/zbus.h>
+
+#include "msg/{{ app.name }}.h"
+
+/*
+ * The channels {{ app.name }} owns (DS-14, DS-68). Each is defined with no
+ * observers; the app adds itself with ZBUS_CHAN_ADD_OBS.
+ */
+
+ZBUS_CHAN_DEFINE({{ app.cmd_chan }}, struct {{ app.cmd_struct }},
+		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
+
+ZBUS_CHAN_DEFINE({{ app.hk_chan }}, struct {{ app.hk_struct }},
+		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
+
+ZBUS_CHAN_DEFINE({{ app.status_chan }}, struct app_status,
+		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
+{% if app.wakeup %}
+
+ZBUS_CHAN_DEFINE({{ app.wakeup_chan }}, struct frame_tick,
+		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
+{% endif %}

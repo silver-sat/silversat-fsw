@@ -22,23 +22,26 @@ FLATSAT    ?= flatsat
 GDB_PORT   ?= 2331
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-quick coverage run build flash clean
+.PHONY: help test test-quick test-messages coverage run build flash clean
 
 help:  ## Show this list
 	@echo ''
 	@echo 'SilverSat flight software'
 	@echo ''
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z][a-z-]*:.*## / \
-	  { printf "  make %-11s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	  { printf "  make %-14s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo ''
 
-test:  ## Run the emulated test suite
+test: test-messages  ## Run the emulated test suite
 	west twister -p $(SIM) -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
 	  $(VERBOSITY) $(SANITIZERS)
 
-test-quick:  ## Run only the 64-bit tests (faster while iterating)
+test-quick: test-messages  ## Run only the 64-bit tests (faster while iterating)
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
 	  $(VERBOSITY) $(SANITIZERS)
+
+test-messages:  ## Run the message generator's own tests (a second or two)
+	python3 -m pytest messages/tests -q
 
 coverage:  ## Run the tests and write a coverage report
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
