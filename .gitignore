@@ -26,3 +26,6 @@ Thumbs.db
 # NOTE: do NOT add zephyr/ here. That directory belongs to this repository
 # (it holds module.yml). The Zephyr source tree that west fetches lives
 # OUTSIDE this repo, as a sibling directory.
+
+# Claude
+.claude/
