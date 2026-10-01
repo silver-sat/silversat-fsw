@@ -66,9 +66,27 @@ def sign(command, key, counter, salt=None):
     return tag.hexdigest() + signed
 
 
+# The ground refuses to send a counter further ahead of its own clock than
+# this (DS-53), so a mistake can't push the satellite's floor far ahead.
+FUTURE_MARGIN_MS = 24 * 60 * 60 * 1000
+
+
+def now_ms():
+    return time.time_ns() // 1_000_000
+
+
 def default_counter(last=0):
     """The larger of now in epoch milliseconds and last + 1 (DS-53)."""
-    return max(time.time_ns() // 1_000_000, last + 1)
+    return max(now_ms(), last + 1)
+
+
+def check_not_too_far_ahead(counter, now=None):
+    """Raise ValueError if counter is more than a day ahead of the clock."""
+    now = now_ms() if now is None else now
+    if counter > now + FUTURE_MARGIN_MS:
+        raise ValueError(
+            f"counter {counter} is more than a day ahead of this clock ({now}); "
+            "check its units, or use --allow-future if it is deliberate")
 
 
 # --- C test vectors --------------------------------------------------------
@@ -126,6 +144,8 @@ def main(argv=None):
     parser.add_argument("--key-file", type=Path, default=TEST_KEY_FILE,
                         help="file of 64 hex digits (default: the published test key)")
     parser.add_argument("--counter", type=int, help="counter (default: epoch milliseconds)")
+    parser.add_argument("--allow-future", action="store_true",
+                        help="allow a counter more than a day ahead of this clock")
     parser.add_argument("--c-vectors", type=Path, metavar="FILE",
                         help="write C test vectors to FILE instead of signing")
     args = parser.parse_args(argv)
@@ -139,6 +159,8 @@ def main(argv=None):
         if args.command is None:
             parser.error("give the command text to sign")
         counter = default_counter() if args.counter is None else args.counter
+        if not args.allow_future:
+            check_not_too_far_ahead(counter)
         print(sign(args.command, key, counter))
     except ValueError as e:
         print(f"sign_command: error: {e}", file=sys.stderr)

@@ -190,9 +190,10 @@ Mode gating lives in the routing table. Parameter validation is done by the targ
 **DS-53 Replay protection: Specified / Proposed.**
 - *Specified:* a 64-bit monotonic counter, accepted if strictly greater than the floor, with gaps allowed. After a loss, the ground jumping ahead re-establishes the floor, as in SilverSat 1. The ACK is sent on acceptance, with no retry mechanism.
 - *Proposed:* the floor is persisted in FRAM before execution. The counter is epoch milliseconds, and the ground sends the larger of the current time and the last value plus one. Command ingest stores the floor through a small floor-store interface. Until the FRAM service exists (DS-70), that interface keeps the floor in RAM, which is the degraded behavior DS-75 already defines.
-- *Proposed:* the counter never wraps. Comparison is plain unsigned 64-bit (not the serial-number arithmetic used for FRAM generations), and code must never compute `floor + 1` where it could overflow; a unit test covers the maximum value. A command carrying the maximum value is accepted once and sets the floor to the maximum, after which all commands are rejected. Wrapping to zero would make every previously recorded command valid again.
-- *Proposed:* guard against an erroneous large counter in two places. The ground software refuses to send a counter more than a set margin (for example, one day) ahead of its clock. The spacecraft rejects any counter more than a maximum jump (for example, one year in milliseconds) above the floor, with an event, which still allows the SilverSat 1 style jump-ahead recovery.
-- *Proposed:* the floor is stored per key slot. Rotating to the other key (DS-54) resets that slot's floor to zero, because commands recorded under the old key no longer verify. This is the recovery if the floor is ever set too high.
+- *Proposed:* the counter never wraps. Comparison is plain unsigned 64-bit (not the serial-number arithmetic used for FRAM generations), and code must never compute `floor + 1` where it could overflow; a unit test covers the maximum value. A command carrying the maximum value is accepted once, if it is within the maximum jump of the floor, and sets the floor to the maximum, after which all commands are rejected. Wrapping to zero would make every previously recorded command valid again.
+- *Proposed:* guard against an erroneous large counter in two places. The ground software refuses to send a counter more than one day ahead of its clock. The spacecraft rejects any counter more than 10 years above the floor. That catches a counter sent in the wrong units (microseconds are thousands of times too large) while still allowing the SilverSat 1 style jump-ahead recovery, even after years without a command.
+- *Proposed:* the floor's default, used when nothing is stored and after a key rotation, is the mission epoch, 2026-01-01T00:00:00Z in epoch milliseconds, not zero. From zero, today's epoch-millisecond counter would be more than 50 years above the floor, and the jump guard would reject every command.
+- *Proposed:* the floor is stored per key slot. Rotating to the other key (DS-54) resets that slot's floor to the mission epoch, because commands recorded under the old key no longer verify. This is the recovery if the floor is ever set too high.
 
 **DS-54 Keys: Specified / Proposed.**
 - *Specified:* the flight key is kept outside Git. This is not a high-security environment, and the realistic risk is accidental commanding, not a sophisticated adversary.
@@ -200,6 +201,8 @@ Mode gating lives in the routing table. Parameter validation is done by the targ
 - *Proposed:* flight builds get the key from a CI secret.
 - *Proposed:* two key slots allow rotation as people leave, and provide recovery from a maxed counter floor (DS-53). Rotation is signed by the other slot and uses arm-then-fire.
 - *Proposed:* keys are compiled into flash; FRAM holds only which slot is active and the per-slot floors, so a FRAM failure cannot lose the keys (DS-75).
+- *Proposed:* rotation switches between the two compiled-in keys; it cannot load a new one. Commands are signed, not encrypted (DS-52), so a key sent in a command could be read by anyone listening. Installing new keys takes a new flight image (DS-51). Two slots therefore give one spare key, for a key that has left with someone or for a maxed-out floor.
+- *Proposed:* while the active slot's floor is maxed out, every command signed with the active key fails the counter check. Command ingest therefore also accepts a rotation command signed with the other slot's key, checked against that slot's floor.
 - *Proposed:* tags are compared in constant time, mainly as a lesson.
 
 ## 7. Messages and links
@@ -287,7 +290,7 @@ The dictionary version and hash are included in the beacon.
 - A fixed region map, with no filesystem.
 - Two-slot records with magic, version, generation, and CRC; the valid slot with the newest generation wins, using serial-number arithmetic.
 - The boot log is a headless ring: each entry is written once, placed at `boot_num % N`, and carries the previous run's duration from the checkpoint record.
-- Hardware write-protect on the key and configuration region.
+- Hardware write-protect on the configuration region. Keys are not stored in FRAM; they are compiled into flash (DS-54).
 
 **DS-72 Time: Specified.**
 - Record RTC time (via Zephyr's RTC API), most recent elapsed boot time, and total mission time, which is persisted in FRAM.
@@ -305,13 +308,14 @@ The dictionary version and hash are included in the beacon.
 | Region | Owner |
 |---|---|
 | Boot log, run checkpoint, mission time | Health |
-| Command counter floor, last-accepted MET | Command ingest |
+| Command counter floor per key slot, active key slot, last-accepted MET | Command ingest |
 | Current mode and reason | Mode manager |
 | Launch/deployment timers | Mode manager |
 | Antenna deploy attempts and arm state | Antenna app |
 | Persistent subsystem state (for example, payload job ID) | The owning subsystem app |
 | Calibration tables | The owning device app, loaded by command |
-| Keys | Command ingest (read-only; write-protected) |
+
+Keys are not in FRAM: they are compiled into flash (DS-54).
 
 - Peer boards (payload, power, antenna, radio) never access avionics FRAM; their persistent state lives on their own hardware, and bulk data goes to store-and-forward (DS-73), not FRAM.
 - The ground reads FRAM through housekeeping and a read-only memory-dump command against the fixed map. Ground writes go through the owning app's commands (for example, calibration load), never raw writes.
@@ -417,3 +421,5 @@ The dictionary version and hash are included in the beacon.
 | 2026-10-01 | DS-07 pool size adds one buffer per publishing thread and is enforced by a build check against Kconfig; buffers sized for the largest message on any channel. DS-22 corrected: a failed delivery copy returns an error; a publish that cannot get its own buffer faults. Both verified by `tests/unit/zbus_pool` |
 | 2026-10-01 | DS-22: delivered and overrun counts are per app, not per entry; a frame manager that falls behind skips and counts the missed minor frames. Frame manager implemented in `apps/frame_manager` |
 | 2026-10-01 | DS-11 adds the small-message rule: raw link frames use a static `k_msgq`, not zbus. DS-52 states the keyed-BLAKE2s MAC (SilverSat 1 flew HMAC-BLAKE2s), the wire format, and the vendored reference implementation (Monocypher has no BLAKE2s). DS-53 floor store with a RAM stand-in until the FRAM service. Open items gain the decisions deferred while building the frame manager |
+| 2026-10-01 | DS-53: the floor defaults to the mission epoch (2026-01-01) rather than zero, and the spacecraft's maximum jump is 10 years, because a floor of zero with a one-year guard would reject every command (first command, after a long silence, after key rotation). The counter-at-maximum rule applies within the jump |
+| 2026-10-01 | DS-54: rotation switches between the two compiled-in keys and cannot load new ones (one spare key); a rotation command signed by the other slot is checked against that slot's floor. DS-71 and DS-74 no longer place keys in FRAM, matching DS-54 and DS-75 |

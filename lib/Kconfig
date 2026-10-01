@@ -15,4 +15,11 @@ config SS_CMD_AUTH
 	  Shape check and signature check for signed ground commands
 	  (DS-50 stages 1 and 2, DS-52).
 
+config SS_CMD_COUNTER
+	bool "Command counter"
+	help
+	  Replay protection for signed ground commands: the counter check
+	  and the per-key-slot floor (DS-50 stage 3, DS-53). The floor is
+	  held in RAM until the FRAM service exists.
+
 endmenu
