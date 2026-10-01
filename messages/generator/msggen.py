@@ -15,6 +15,9 @@ Input:
 
 Leave out --out to check the definitions without writing anything.
 
+A test can add apps of its own with --extra-apps <dir>, a directory of
+<app>.yaml files. They are generated exactly like the flight apps.
+
 This version emits C declarations and channel definitions only. Encode and
 decode functions, Python classes, the interface document, and golden vectors
 come later, with command ingest.
@@ -141,7 +144,7 @@ class App:
     wakeup: bool
     commands: list[Command]
     housekeeping: Struct
-    source: str               # the YAML file, for the generated banner
+    source: str               # the YAML file, for the generated banner and errors
 
     @property
     def id_constant(self):
@@ -180,6 +183,16 @@ class App:
         return f"{self.name}_wakeup_chan" if self.wakeup else None
 
     @property
+    def channels(self):
+        """(channel, C type) for every channel this app owns."""
+        pairs = [(self.cmd_chan, f"struct {self.cmd_struct}"),
+                 (self.hk_chan, f"struct {self.hk_struct}"),
+                 (self.status_chan, "struct app_status")]
+        if self.wakeup:
+            pairs.append((self.wakeup_chan, "struct frame_tick"))
+        return pairs
+
+    @property
     def commands_with_args(self):
         return [c for c in self.commands if c.fields]
 
@@ -202,6 +215,10 @@ class Definitions:
     enums: list[Enum]
     structs: list[Struct]
     apps: list[App]
+
+    @property
+    def wakeup_apps(self):
+        return [a for a in self.apps if a.wakeup]
 
 
 # --- Checking helpers -----------------------------------------------------
@@ -379,7 +396,15 @@ def _parse_command(node, where, app_name, enums):
     )
 
 
-def _parse_app(path, enums):
+def _source_label(path, root):
+    """path relative to root (the repository, in practice) if it is inside it."""
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _parse_app(path, enums, root):
     data = _load_yaml(path)
     where = str(path)
     _check_keys(data, where, ("app", "id", "description", "wakeup", "housekeeping"),
@@ -412,12 +437,13 @@ def _parse_app(path, enums):
         wakeup=data["wakeup"],
         commands=commands,
         housekeeping=housekeeping,
-        source=f"apps/{path.name}",
+        source=_source_label(path, root),
     )
 
 
-def load_definitions(defs_dir):
-    """Read and check every definition under defs_dir. Raises DefinitionError."""
+def load_definitions(defs_dir, extra_app_dirs=()):
+    """Read and check every definition under defs_dir, plus the app files in
+    each of extra_app_dirs. Raises DefinitionError."""
     defs_dir = Path(defs_dir)
     common_path = defs_dir / "common.yaml"
     if not common_path.is_file():
@@ -428,7 +454,20 @@ def load_definitions(defs_dir):
     app_paths = sorted((defs_dir / "apps").glob("*.yaml"))
     if not app_paths:
         raise DefinitionError(f"{defs_dir / 'apps'}: no app definitions (*.yaml) found")
-    apps = [_parse_app(p, by_name) for p in app_paths]
+    for extra in extra_app_dirs:
+        extra = Path(extra)
+        if not extra.is_dir():
+            raise DefinitionError(f"{extra}: extra app directory not found")
+        app_paths += sorted(extra.glob("*.yaml"))
+    root = defs_dir.parent
+    apps = [_parse_app(p, by_name, root) for p in app_paths]
+
+    names = {}
+    for app in apps:
+        if app.name in names:
+            raise DefinitionError(
+                f"app {app.name!r} is defined in both {names[app.name]} and {app.source}")
+        names[app.name] = app.source
 
     owners = {}
     for app in apps:
@@ -442,7 +481,8 @@ def load_definitions(defs_dir):
     # are both foo_bar_baz. C would reject that with a confusing error.
     defined = {}
     common_names = [s.name for s in structs] + [e.name for e in enums] + \
-        [v.constant for e in enums for v in e.values] + ["app_id"]
+        [v.constant for e in enums for v in e.values] + \
+        ["app_id", "APP_COUNT", "APP_WAKEUP_COUNT", "APP_ID_MAX"]
     for source, names in [("common.yaml", common_names)] + \
             [(a.source, a.generated_names()) for a in apps]:
         for n in names:
@@ -507,10 +547,12 @@ def main(argv=None):
                         help="directory holding common.yaml and apps/")
     parser.add_argument("--out", type=Path,
                         help="output directory; leave out to only check the definitions")
+    parser.add_argument("--extra-apps", type=Path, action="append", default=[],
+                        metavar="DIR", help="a directory of test-only <app>.yaml files")
     args = parser.parse_args(argv)
 
     try:
-        defs = load_definitions(args.defs)
+        defs = load_definitions(args.defs, args.extra_apps)
     except DefinitionError as e:
         print(f"msggen: error: {e}", file=sys.stderr)
         return 1

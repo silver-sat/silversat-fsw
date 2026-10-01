@@ -5,3 +5,4 @@
 
 rsource "drivers/Kconfig"
 rsource "messages/Kconfig"
+rsource "apps/Kconfig"

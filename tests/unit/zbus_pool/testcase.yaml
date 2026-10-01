@@ -1,0 +1,11 @@
+common:
+  tags:
+    - zbus
+    # The test triggers a zbus assert on purpose.
+    - ignore_faults
+
+tests:
+  unit.zbus_pool:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64

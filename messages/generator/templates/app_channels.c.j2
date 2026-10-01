@@ -1,6 +1,7 @@
 {% import "_macros.j2" as m %}
 {{ m.banner(app.source) }}
 
+#include <zephyr/sys/util.h>
 #include <zephyr/zbus/zbus.h>
 
 #include "msg/{{ app.name }}.h"
@@ -23,3 +24,15 @@ ZBUS_CHAN_DEFINE({{ app.status_chan }}, struct app_status,
 ZBUS_CHAN_DEFINE({{ app.wakeup_chan }}, struct frame_tick,
 		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
 {% endif %}
+
+#if defined(CONFIG_ZBUS_MSG_SUBSCRIBER_BUF_ALLOC_STATIC)
+/*
+ * Every publish takes a buffer from the zbus pool, whether or not anyone
+ * observes the channel, and zbus asserts if the message does not fit.
+ * Catch that here instead of at run time.
+ */
+{% for chan, ctype in app.channels %}
+BUILD_ASSERT(sizeof({{ ctype }}) <= CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE,
+	     "{{ chan }}: raise CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE");
+{% endfor %}
+#endif

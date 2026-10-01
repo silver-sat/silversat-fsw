@@ -56,12 +56,13 @@ The channel itself is always last-value: `zbus_chan_read` returns the newest pub
 - With a plain subscriber, two commands published back to back would collapse into one read of the newest value. A command would be lost.
 - So every app uses a message subscriber, and **every** channel it observes, including its frame wakeup, arrives as a queued copy. Nothing is overwritten.
 
-Two consequences, both checked against the Zephyr v4.4.0 source (`subsys/zbus/zbus.c`):
+Three consequences, checked against the Zephyr v4.4.0 source (`subsys/zbus/zbus.c`) and pinned down by `tests/unit/zbus_pool`:
 
-1. A message subscriber's queue is an unbounded `k_fifo`. A stuck app gives the publisher no queue-full error; its wakeups just pile up, each holding a buffer from the shared pool.
-2. When the pool is empty, `zbus_chan_pub` does not return an error. The allocation failure hits an assert: a development build panics, and a flight build dereferences NULL. One stuck app could crash the spacecraft.
+1. Every publish on every channel, observed or not, takes one buffer from a pool that all channels share, and holds it until the publish returns. Each message subscriber's copy takes one more buffer, held until the app reads it.
+2. A message subscriber's queue is an unbounded `k_fifo`. A stuck app gives the publisher no error while the pool lasts; its wakeups just pile up, each holding a buffer.
+3. When the pool runs out, the result depends on which buffer could not be allocated. If it is a subscriber's copy, `zbus_chan_pub` returns `-ENOMEM`. If it is the publish's own buffer, zbus asserts: a development build panics, and a flight build dereferences NULL. That happens when another publish is in flight at the same moment, for example a low-priority app preempted part-way through publishing its status. So one stuck app could crash the spacecraft through some other app's publish.
 
-The fix is to never publish a copy the app can't consume. The frame manager counts wakeups delivered to each app and compares them with the app's step counter; once `FRAME_MAX_PENDING` are outstanding it skips the publish and counts an overrun (DS-22). With every app bounded, the pool size is simple arithmetic in the resource map (DS-07).
+The `-ENOMEM` is not a usable queue-full signal: by the time it appears, the shared pool is nearly empty for everyone. The fix is to never publish a copy the app can't consume. The frame manager counts wakeups delivered to each app and compares them with the app's step counter; once `FRAME_MAX_PENDING` are outstanding it skips the publish and counts an overrun (DS-22). With every app bounded, the pool size is simple arithmetic in the resource map (DS-07): every copy that can be queued, plus one buffer for each thread that publishes.
 
 Channel validators run at publish time in the publisher's context. That is how parameter validation reaches command ingest: the target app owns the rules, and command ingest learns immediately if the publish was rejected.
 
@@ -221,7 +222,7 @@ These are sketches of the shape, not final code. Real message types, channel nam
 /* Channels and structs come from the generated header for this app. */
 #include "msg/adcs.h"
 #include "msg/common.h"
-#include "resource_map.h"
+#include "silversat/resource_map.h"
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(adcs_sub);
 ZBUS_CHAN_ADD_OBS(adcs_wakeup_chan, adcs_sub, 3);

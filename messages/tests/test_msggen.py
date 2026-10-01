@@ -144,6 +144,53 @@ def test_common_header(tmp_path):
     assert "quiet_wakeup_chan" not in common
 
 
+def test_app_counts(tmp_path):
+    common = generate(write_defs(tmp_path))["include/msg/common.h"]
+    assert "#define APP_COUNT 2" in common
+    assert "#define APP_WAKEUP_COUNT 1" in common
+    assert "#define APP_ID_MAX 3" in common
+
+
+def test_extra_app_dirs_add_test_apps(tmp_path):
+    root = write_defs(tmp_path / "messages", apps=[QUIET])
+    extra = tmp_path / "tests" / "apps"
+    extra.mkdir(parents=True)
+    (extra / "sensor.yaml").write_text(yaml.safe_dump(SENSOR))
+
+    outputs = {str(k): v for k, v in
+               msggen.render(msggen.load_definitions(root, [extra])).items()}
+    assert "include/msg/sensor.h" in outputs
+    assert "#define APP_COUNT 2" in outputs["include/msg/common.h"]
+    # The banner names the file relative to the repository.
+    assert "from tests/apps/sensor.yaml" in outputs["src/msg_sensor.c"]
+
+
+def test_extra_app_dir_must_exist(tmp_path):
+    root = write_defs(tmp_path)
+    with pytest.raises(msggen.DefinitionError, match="extra app directory not found"):
+        msggen.load_definitions(root, [tmp_path / "missing"])
+
+
+def test_app_defined_twice(tmp_path):
+    root = write_defs(tmp_path / "messages")
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    (extra / "sensor.yaml").write_text(yaml.safe_dump({**SENSOR, "id": 9}))
+    with pytest.raises(msggen.DefinitionError, match="app 'sensor' is defined in both"):
+        msggen.load_definitions(root, [extra])
+
+
+def test_main_accepts_extra_apps(tmp_path):
+    root = write_defs(tmp_path / "messages", apps=[QUIET])
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    (extra / "sensor.yaml").write_text(yaml.safe_dump(SENSOR))
+    out = tmp_path / "out"
+    assert msggen.main(["--defs", str(root), "--extra-apps", str(extra),
+                        "--out", str(out)]) == 0
+    assert (out / "include/msg/sensor.h").exists()
+
+
 def test_app_header(tmp_path):
     header = generate(write_defs(tmp_path))["include/msg/sensor.h"]
     assert '#include "msg/common.h"' in header
@@ -198,29 +245,53 @@ def test_multiline_description_becomes_one_comment(tmp_path):
     assert "/** First line second line. */" in header
 
 
-@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a host C compiler")
-def test_generated_c_compiles(tmp_path):
-    """Compile the output with strict warnings against a stand-in zbus.h.
+def compile_generated(tmp_path, data_size):
+    """Generate the test definitions and compile each channel source with
+    strict warnings against stand-in Zephyr headers. Returns the gcc results.
 
-    The stand-in checks only that the declarations are valid C (for example,
-    no empty enum or union when an app has no commands). The native_sim test
-    in tests/unit/messages checks them against real zbus.
+    The stand-ins check only that the output is valid C (for example, no
+    empty enum or union when an app has no commands) and that the size
+    checks work. The native_sim test in tests/unit/messages checks the
+    output against real zbus.
     """
     out = tmp_path / "out"
     msggen.write_outputs(generate_paths(write_defs(tmp_path / "defs")), out)
-    stub = out / "include" / "zephyr" / "zbus"
-    stub.mkdir(parents=True)
-    (stub / "zbus.h").write_text(
+    stub = out / "include" / "zephyr"
+    (stub / "zbus").mkdir(parents=True)
+    (stub / "sys").mkdir()
+    (stub / "zbus" / "zbus.h").write_text(
         "#define ZBUS_CHAN_DECLARE(name) extern const int name\n"
         "#define ZBUS_OBSERVERS_EMPTY\n"
         "#define ZBUS_MSG_INIT(val, ...) {val, ##__VA_ARGS__}\n"
         "#define ZBUS_CHAN_DEFINE(name, type, v, u, o, init) type name##_msg = init\n")
-    for source in sorted((out / "src").glob("*.c")):
-        result = subprocess.run(
-            ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
-             "-fsyntax-only", "-I", str(out / "include"), str(source)],
-            capture_output=True, text=True)
+    (stub / "sys" / "util.h").write_text(
+        "#define BUILD_ASSERT(cond, msg) _Static_assert(cond, msg)\n")
+    return [subprocess.run(
+        ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-fsyntax-only",
+         "-DCONFIG_ZBUS_MSG_SUBSCRIBER_BUF_ALLOC_STATIC=1",
+         f"-DCONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE={data_size}",
+         "-I", str(out / "include"), str(source)],
+        capture_output=True, text=True)
+        for source in sorted((out / "src").glob("*.c"))]
+
+
+needs_gcc = pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a host C compiler")
+
+
+@needs_gcc
+def test_generated_c_compiles(tmp_path):
+    for result in compile_generated(tmp_path, data_size=64):
         assert result.returncode == 0, result.stderr
+
+
+@needs_gcc
+def test_message_too_big_for_zbus_buffer_fails_the_build(tmp_path):
+    # sensor's frame_tick channel needs 8 bytes; quiet's messages fit in 4.
+    quiet, sensor = compile_generated(tmp_path, data_size=4)
+    assert quiet.returncode == 0, quiet.stderr
+    assert sensor.returncode != 0
+    assert "sensor_wakeup_chan: raise CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE" \
+        in sensor.stderr
 
 
 # --- Writing and the command line -----------------------------------------

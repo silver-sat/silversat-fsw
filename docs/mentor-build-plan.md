@@ -2,7 +2,7 @@
 
 > **Temporary working document.** Delete it once the frame manager lands. Settled decisions live in the specification and rationale; this file records the build order and the review that produced them.
 >
-> **Status:** step 1 (docs PR) is done. Step 2, the minimal message generator, is on branch `feat/message-generator` for review. Next is step 3.
+> **Status:** steps 1 and 2 are merged. Step 3, the resource map and app scaffolding, is on branch `feat/resource-map` for review. Next is step 4, the frame manager.
 
 ## Context
 Lee wants to build the mentor-owned flight software (frame manager, command ingest, health, mode manager, telemetry output; §11 of the spec) incrementally with Claude Code, reviewing each piece and its tests before the next. Students first do six Basilisk exercises (basilisk-sim), then write device apps in this repo. This plan answers the environment question, records what the review of the docs and existing code turned up, and proposes the first few steps. No code gets written until we've talked it through.
@@ -40,7 +40,7 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
   - A *message subscriber* gets its own `net_buf` copy of every publish, queued in an unbounded `k_fifo`. Nothing is overwritten.
 - **One pending point forces one observer type per app.** With a plain subscriber, two commands published back to back would collapse into one, so commands would be lost. That's why the skeleton uses a message subscriber, and it means **wakeups and housekeeping requests are also queued copies, not overwrites.** The "overwrite" behavior you remembered is true of the channel, but not of what an app with one message subscriber receives.
 - **A stuck app gets no queue-full signal.** Its wakeups pile up in the fifo, each holding one buffer from the pool shared by all channels.
-- **Pool exhaustion is fatal, not an error return.** In `_zbus_vded_exec`, a failed buffer allocation hits `_ZBUS_ASSERT(buf != NULL)`, which is plain `__ASSERT`. A development build panics; a flight build (asserts off) goes on to dereference NULL. So one stuck app could crash the spacecraft through the frame manager's publishes. With `K_NO_WAIT`, the publish does not return an error in this case; it faults.
+- **Pool exhaustion faults, but not always.** (Corrected in step 3, after a test on native_sim.) Every publish on every channel takes one buffer for the length of the publish, and each message subscriber's copy takes another. A copy that cannot be allocated makes the publish return `-ENOMEM`. A publish that cannot get its own buffer hits `_ZBUS_ASSERT(buf != NULL)`: a development build panics, and a flight build dereferences NULL. That happens when another publish is in flight while a stuck app holds the rest of the pool. `tests/unit/zbus_pool` pins this down.
 
 **Design (updates DS-22 and DS-43; both are Proposed):**
 - **Per-wakeup counting.** The frame manager counts `delivered[i]` per table entry. It reads the target app's status channel (last-value, which is legitimate channel sharing under DS-12) for `steps`. If `delivered - steps` reaches `FRAME_MAX_PENDING` (from the resource map; 2 is likely), it skips the publish and counts an overrun for that entry. The frame manager never allocates a buffer the app can't consume. This check is the hard guard that keeps the pool bounded.
@@ -53,7 +53,7 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
 **The message-type alias (finding 5).** Each app declares an aligned union of the message types it receives, and `zbus_sub_wait_msg` reads into it. The generator can emit that union per app, since it knows which channels each app observes.
 
 ## 3. Proposed structure for apps (for discussion)
-- Apps live in the module, as `apps/<name>/` with a `Kconfig` symbol each (for example `CONFIG_SS_FRAME_MANAGER`). The module `CMakeLists.txt` adds them, the same way `drivers/` works.
+- Apps live in the module, as `apps/<name>/` with a `Kconfig` symbol each (`CONFIG_SS_*`, one per app). The module `CMakeLists.txt` adds them, the same way `drivers/` works.
 - This lets `tests/app/<name>/` enable one app in isolation, and lets `app/` enable all of them. `app/src/main.c` stays boring.
 - The resource map goes at `include/silversat/resource_map.h`.
 
@@ -109,7 +109,7 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
 - **Finding 7:** `slot`.
 
 - **`apps/<name>/` layout:** agreed.
-- **`FRAME_MAX_PENDING` = 2 for every app,** so the pool size is a compile-time expression in the resource map: `2 × N_APPS` plus the command and housekeeping-request depths.
+- **`FRAME_MAX_PENDING` = 2 for every app,** so the pool size is a compile-time expression in the resource map: `2 × N_APPS` plus the command and housekeeping-request depths. (Step 3 adds one buffer per publishing thread; see below.)
 - **Protected apps.** A `protected` flag per app, meaning the same as "critical":
   - The frame manager rejects a disable command for a protected entry, with the rejected counter and an event.
   - Health escalates a stalled protected app straight to reset.
@@ -123,5 +123,10 @@ Lee wants to build the mentor-owned flight software (frame manager, command inge
 - **Per-app attribute row goes in the resource map.** Lee approved extending DS-07, which is Specified. The docs PR edits DS-07's text and adds a revision-history row. The frame manager and health both read the row.
 - **Protected apps:** health, mode manager, command ingest, and telemetry output. This is recorded in DS-43 in the docs PR.
 
+- **Step 3 decisions (2026-10-01):**
+  - The pool size is a Kconfig number, with a build check in the resource map against the required size: every queued copy plus one buffer per publishing thread. Isolated pools are still to be evaluated with command ingest.
+  - The DS-07, DS-22, and rationale §2 corrections land in the step 3 PR, with `tests/unit/zbus_pool` as the regression test.
+  - Scaffolding is wiring plus a test harness only; the frame manager is the first real app.
+
 ## Next action
-Review step 2 (`feat/message-generator`). Then step 3: the resource map and app scaffolding.
+Review step 3 (`feat/resource-map`). Then step 4: the frame manager.

@@ -42,6 +42,26 @@ Your app includes only `msg/foo.h` and `msg/common.h`.
 Field types are `bool`, `uint8` to `uint64`, `int8` to `int64`, `float32`,
 `float64`, or the name of an enum in `common.yaml`.
 
+## Build checks
+
+The generated channel files fail the build if any message is bigger than a
+zbus buffer (`CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE`, set in
+`messages/Kconfig`). Every publish takes a buffer, so this applies to every
+channel. `include/silversat/resource_map.h` uses `APP_COUNT` and
+`APP_WAKEUP_COUNT` from `msg/common.h` to check the size of the buffer pool.
+
+## Test-only apps
+
+An app test can define apps of its own, generated exactly like flight apps
+but only into that test's build. Put their YAML files in a directory in the
+test and name it in the test's `CMakeLists.txt` before `find_package(Zephyr)`:
+
+```cmake
+set(SS_MESSAGES_EXTRA_APPS ${CMAKE_CURRENT_SOURCE_DIR}/apps)
+```
+
+`tests/app/harness` is the example.
+
 ## Testing the generator
 
 ```
