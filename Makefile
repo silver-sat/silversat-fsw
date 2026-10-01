@@ -22,7 +22,7 @@ FLATSAT    ?= flatsat
 GDB_PORT   ?= 2331
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-quick test-messages coverage run build flash clean
+.PHONY: help test test-quick test-python coverage run build flash clean
 
 help:  ## Show this list
 	@echo ''
@@ -32,16 +32,16 @@ help:  ## Show this list
 	  { printf "  make %-14s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo ''
 
-test: test-messages  ## Run the emulated test suite
+test: test-python  ## Run the emulated test suite
 	west twister -p $(SIM) -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
 	  $(VERBOSITY) $(SANITIZERS)
 
-test-quick: test-messages  ## Run only the 64-bit tests (faster while iterating)
+test-quick: test-python  ## Run only the 64-bit tests (faster while iterating)
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
 	  $(VERBOSITY) $(SANITIZERS)
 
-test-messages:  ## Run the message generator's own tests (a second or two)
-	python3 -m pytest messages/tests -q
+test-python:  ## Run the Python tests: generator and tools (a second or two)
+	python3 -m pytest messages/tests tools/tests -q
 
 coverage:  ## Run the tests and write a coverage report
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \

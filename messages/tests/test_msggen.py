@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the message generator. Run with `make test-messages`.
+"""Unit tests for the message generator. Run with `make test-python`.
 
 Most tests build a small set of definitions in a temporary directory, so
 they do not change when the flight definitions change. One test checks the

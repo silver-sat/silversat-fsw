@@ -65,7 +65,8 @@ set(SS_MESSAGES_EXTRA_APPS ${CMAKE_CURRENT_SOURCE_DIR}/apps)
 ## Testing the generator
 
 ```
-make test-messages
+make test-python
 ```
 
-This runs `tests/test_msggen.py`. `make test` runs it too.
+This runs `tests/test_msggen.py`, along with the tests for `tools/`.
+`make test` runs it too.
