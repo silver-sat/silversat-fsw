@@ -36,4 +36,11 @@ config SS_LINK
 	  and the apps that use them (DS-11): uplink to command ingest, and
 	  downlink to the radio.
 
+config SS_LINK_CODEC
+	bool "Link codec"
+	select CRC
+	help
+	  Frames for the serial links to the peer boards: KISS framing,
+	  CRC-32C, and sequence numbers (DS-33, DS-65, DS-66).
+
 endmenu
