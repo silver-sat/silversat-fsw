@@ -11,6 +11,14 @@ config SS_MESSAGES
 
 if SS_MESSAGES
 
+config SS_CMD_ROUTES
+	bool "Generated command routing"
+	select SS_CMD_TEXT
+	help
+	  Compile the generated cmd_routes.c, which decodes ground command
+	  text and publishes it to the target app (DS-50 stages 6 and 7).
+	  Command ingest selects this.
+
 # No dynamic allocation after init: zbus takes message buffers from a
 # fixed pool, not the heap.
 configdefault ZBUS_PREFER_DYNAMIC_ALLOCATION

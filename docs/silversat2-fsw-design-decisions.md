@@ -174,6 +174,14 @@ Apps timestamp their data from the frame tick, not by calling the clock.
 
 Mode gating lives in the routing table. Parameter validation is done by the target channel's validator. Every rejection stage has its own counter and event. Internal commands bypass command ingest.
 
+Command text, decided 2026-10-02:
+- The text is `<app> <command> <arguments>`, using the YAML names, for example `frame_manager set_entry_enabled nominal 3 false`.
+- Words are separated by exactly one space, with none at either end. Anything else is rejected rather than tidied, so a command means exactly what was signed.
+- Integers are decimal, with no leading zeros and `-` only for negatives (never `-0`), and are range-checked against their type. Bools are `true` or `false`. Enums are the value's name.
+- Float arguments are not supported yet; they arrive with the first command that needs one.
+- Every command lists the modes it is allowed in (`modes:` in the YAML). There is no default.
+- Decoding and routing are generated from the YAML (DS-60). The ground formats and checks text from the same definitions, and a shared set of vectors keeps the two in step.
+
 **DS-51 On-orbit software update: Specified (plan).**
 - Plan for MCUboot with signed images and revert-on-failure.
 - The flatsat runs in two modes: development mode (direct flash plus GDB) and update mode (signed image uplinked through the flight path).
@@ -423,3 +431,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-01 | DS-11 adds the small-message rule: raw link frames use a static `k_msgq`, not zbus. DS-52 states the keyed-BLAKE2s MAC (SilverSat 1 flew HMAC-BLAKE2s), the wire format, and the vendored reference implementation (Monocypher has no BLAKE2s). DS-53 floor store with a RAM stand-in until the FRAM service. Open items gain the decisions deferred while building the frame manager |
 | 2026-10-01 | DS-53: the floor defaults to the mission epoch (2026-01-01) rather than zero, and the spacecraft's maximum jump is 10 years, because a floor of zero with a one-year guard would reject every command (first command, after a long silence, after key rotation). The counter-at-maximum rule applies within the jump |
 | 2026-10-01 | DS-54: rotation switches between the two compiled-in keys and cannot load new ones (one spare key); a rotation command signed by the other slot is checked against that slot's floor. DS-71 and DS-74 no longer place keys in FRAM, matching DS-54 and DS-75 |
+| 2026-10-02 | DS-50: command text syntax (`<app> <command> <arguments>`, single spaces, words for bool and enum), required `modes:` per command, floats deferred; decoding and routing generated from the YAML |

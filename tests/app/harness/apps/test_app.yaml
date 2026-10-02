@@ -10,6 +10,7 @@ wakeup: true
 commands:
   - name: set_value
     id: 1
+    modes: [safe, nominal]
     description: Set the value reported in housekeeping. Rejected if negative.
     fields:
       - name: value
