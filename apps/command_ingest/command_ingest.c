@@ -25,6 +25,14 @@
  *   ACK 0000018f2c4d5e6f ok
  *   ACK 0000018f2c4d5e6f bad_arg 2
  *   NAK 0000018f2c4d5e6f replay
+ *
+ * Key rotation (DS-54). There are two key slots, each with its own key and
+ * its own counter floor. Commands are signed with the active slot's key.
+ * The other slot's key is accepted for one purpose only: the two rotation
+ * commands, which switch to that slot. They are handled here rather than
+ * routed, because only command ingest knows which key signed a command.
+ * No floor is ever reset (DS-53, decided 2026-10-02), so switching back to
+ * a slot later cannot make its recorded commands valid again.
  */
 
 #include <stdint.h>
@@ -40,11 +48,14 @@
 #include "silversat/cmd_auth.h"
 #include "silversat/cmd_counter.h"
 #include "silversat/cmd_route.h"
+#include "silversat/cmd_text.h"
 #include "silversat/link.h"
 #include "silversat/resource_map.h"
 
-/* The key slot in use. Switching slots (DS-54) arrives with key rotation. */
-#define ACTIVE_SLOT 0
+BUILD_ASSERT(ARRAY_SIZE(cmd_keys) == CMD_COUNTER_SLOTS, "one key per counter slot");
+
+/* An armed rotation must be fired within this much mission time (DS-54). */
+#define ROTATION_ARM_WINDOW_MS (10 * 60 * 1000)
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(command_ingest_sub);
 ZBUS_CHAN_ADD_OBS(command_ingest_wakeup_chan, command_ingest_sub, 3);
@@ -55,6 +66,15 @@ static struct command_ingest_hk hk;
 
 /* Until mode_chan says otherwise, assume safe mode, the most restrictive. */
 static uint8_t mode = MODE_SAFE;
+
+/*
+ * The key slot in use, and any armed rotation. Held in RAM until the FRAM
+ * service exists, so a reboot returns to slot 0 (DS-75) and clears any arm.
+ */
+static uint8_t active_slot;
+static bool armed;
+static uint8_t armed_slot;
+static int64_t armed_at_met_ms;
 
 /* The words for each routing result. tools/command_text.py RESULTS matches. */
 static const char *const route_words[] = {
@@ -94,12 +114,89 @@ static void reply(const char *verb, uint64_t counter, const char *result, int ba
 	}
 }
 
+static uint8_t spare_slot(void)
+{
+	return active_slot == 0 ? 1 : 0;
+}
+
+/*
+ * If the text is one of the rotation commands ("command_ingest
+ * arm_key_rotation <slot>" or "command_ingest rotate_key <slot>"), return
+ * its command id; otherwise 0. The words come from the YAML.
+ */
+static uint16_t rotation_command(const struct cmd_auth_packet *packet, struct cmd_text *words)
+{
+	if (cmd_text_split(packet->text, packet->text_len, words) != 0 ||
+	    !cmd_text_word_is(words, 0, COMMAND_INGEST_APP_NAME)) {
+		return 0;
+	}
+	if (cmd_text_word_is(words, 1, COMMAND_INGEST_CMD_ARM_KEY_ROTATION_NAME)) {
+		return COMMAND_INGEST_CMD_ARM_KEY_ROTATION;
+	}
+	if (cmd_text_word_is(words, 1, COMMAND_INGEST_CMD_ROTATE_KEY_NAME)) {
+		return COMMAND_INGEST_CMD_ROTATE_KEY;
+	}
+	return 0;
+}
+
+/* Forget an arm that has not been fired in time. */
+static void expire_arm(int64_t met_ms)
+{
+	if (armed && met_ms - armed_at_met_ms > ROTATION_ARM_WINDOW_MS) {
+		armed = false;
+	}
+	hk.rotation_armed = armed;
+}
+
+/*
+ * Carry out a rotation command signed with signed_by's key. Returns the
+ * result word for the reply, setting *bad_arg for "bad_arg". The slot named
+ * must be the slot whose key signed the command, and that must be the
+ * spare slot (DS-54).
+ */
+static const char *rotate(uint16_t command, const struct cmd_text *words, uint8_t signed_by,
+			  int64_t met_ms, int *bad_arg)
+{
+	uint64_t slot;
+
+	if (words->count != 3) {
+		return "bad_arg_count";
+	}
+	if (cmd_text_unsigned(words, 2, CMD_COUNTER_SLOTS - 1, &slot) != 0) {
+		*bad_arg = 0;
+		return "bad_arg";
+	}
+	if (signed_by == active_slot || slot != signed_by) {
+		return "wrong_key";
+	}
+	if (command == COMMAND_INGEST_CMD_ARM_KEY_ROTATION) {
+		armed = true;
+		armed_slot = (uint8_t)slot;
+		armed_at_met_ms = met_ms;
+		hk.rotation_armed = true;
+		return "ok";
+	}
+	expire_arm(met_ms);
+	if (!armed || armed_slot != slot) {
+		return "not_armed";
+	}
+	active_slot = (uint8_t)slot;
+	armed = false;
+	hk.rotation_armed = false;
+	hk.active_slot = active_slot;
+	hk.rotations++;
+	return "ok";
+}
+
 /* Take one uplink frame through the pipeline. */
 static void ingest(const struct link_frame *frame, int64_t met_ms)
 {
 	struct cmd_auth_packet packet;
 	struct cmd_route_info info;
+	struct cmd_text words;
 	enum cmd_route_result routed;
+	uint16_t rotation;
+	uint8_t signed_by;
 
 	hk.received++;
 
@@ -108,13 +205,29 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 		hk.rejected_shape++;
 		return;
 	}
-	if (!cmd_auth_verify(frame->data, frame->len, &packet, cmd_keys[ACTIVE_SLOT])) {
+	if (cmd_auth_verify(frame->data, frame->len, &packet, cmd_keys[active_slot])) {
+		signed_by = active_slot;
+	} else if (cmd_auth_verify(frame->data, frame->len, &packet, cmd_keys[spare_slot()])) {
+		signed_by = spare_slot();
+	} else {
 		hk.rejected_signature++;
 		return;
 	}
 
-	/* Stages 3 and 4: the floor is stored before anything is replied. */
-	switch (cmd_counter_accept(ACTIVE_SLOT, packet.counter)) {
+	/*
+	 * The spare key may only rotate (DS-54). Anything else it signed is
+	 * refused before its counter is used, so it can't move that floor.
+	 * The text is authenticated, so reading it here is safe.
+	 */
+	rotation = rotation_command(&packet, &words);
+	if (signed_by != active_slot && rotation == 0) {
+		hk.rejected_other_key++;
+		reply("NAK", packet.counter, "wrong_key", -1);
+		return;
+	}
+
+	/* Stages 3 and 4, against the floor of the slot that signed it. */
+	switch (cmd_counter_accept(signed_by, packet.counter)) {
 	case CMD_COUNTER_OK:
 		break;
 	case CMD_COUNTER_REPLAY:
@@ -134,6 +247,14 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 	hk.last_counter = packet.counter;
 	hk.last_accepted_met_ms = met_ms;
 
+	if (rotation != 0) {
+		int bad_arg = -1;
+		const char *result = rotate(rotation, &words, signed_by, met_ms, &bad_arg);
+
+		reply("ACK", packet.counter, result, bad_arg);
+		return;
+	}
+
 	/* Stages 5 to 7: the decoder only ever sees authenticated text. */
 	routed = cmd_route(packet.text, packet.text_len, mode, &info);
 	if (routed == CMD_ROUTE_OK) {
@@ -149,17 +270,19 @@ static void step(const struct frame_tick *tick)
 {
 	struct mode_state state;
 	struct link_frame frame;
+	bool was_armed = armed;
 	bool handled = false;
 
 	/* Mode gating uses the mode right now (DS-40, DS-50). */
 	if (zbus_chan_read(&mode_chan, &state, K_NO_WAIT) == 0) {
 		mode = state.mode;
 	}
+	expire_arm(tick->met_ms);
 	while (k_msgq_get(&uplink_msgq, &frame, K_NO_WAIT) == 0) {
 		ingest(&frame, tick->met_ms);
 		handled = true;
 	}
-	if (handled) {
+	if (handled || armed != was_armed) {
 		zbus_chan_pub(&command_ingest_hk_chan, &hk, K_NO_WAIT);
 	}
 }
@@ -178,7 +301,11 @@ static void command_ingest_main(void *a, void *b, void *c)
 			step(&msg.tick);
 			status.steps++;
 		} else if (chan == &command_ingest_cmd_chan) {
-			status.cmd_rejected++; /* no commands yet; key rotation adds some */
+			/*
+			 * Rotation commands are handled in ingest(), never routed
+			 * here, and no other app may rotate keys.
+			 */
+			status.cmd_rejected++;
 		}
 		zbus_chan_pub(&command_ingest_status_chan, &status, K_NO_WAIT);
 	}

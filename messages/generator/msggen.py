@@ -209,6 +209,10 @@ class App:
         return f"APP_ID_{self.name.upper()}"
 
     @property
+    def name_constant(self):
+        return f"{self.name.upper()}_APP_NAME"
+
+    @property
     def cmd_id_enum(self):
         return f"{self.name}_cmd_id"
 
@@ -263,8 +267,10 @@ class App:
         if self.wakeup:
             names.append(self.wakeup_chan)
         names += [d.name for d in self.data_channels]
+        if self.commands:
+            names.append(self.name_constant)
         for c in self.commands:
-            names.append(c.constant)
+            names += [c.constant, f"{c.constant}_NAME"]
             if c.fields:
                 names.append(c.struct)
         return names

@@ -128,22 +128,51 @@ static struct command_ingest_hk ci_hk(void)
 	return hk;
 }
 
-static void reset(void *fixture)
+static void reset_floors(void)
 {
-	struct link_frame frame;
-
-	ARG_UNUSED(fixture);
 	for (uint8_t slot = 0; slot < CMD_COUNTER_SLOTS; slot++) {
 		zassert_ok(floor_store_set(slot, CMD_COUNTER_EPOCH_MS));
 	}
+}
+
+static void drain_queues(void)
+{
+	struct link_frame frame;
+
 	while (k_msgq_get(&uplink_msgq, &frame, K_NO_WAIT) == 0) {
 	}
 	while (k_msgq_get(&downlink_msgq, &frame, K_NO_WAIT) == 0) {
 	}
+}
+
+/*
+ * Each test starts with both floors at the epoch, key slot 0 active, no
+ * rotation armed, empty queues, target_app caught up, and safe mode.
+ */
+static void reset(void *fixture)
+{
+	ARG_UNUSED(fixture);
+	drain_queues();
 	target_catch_up();
 	set_mode(MODE_SAFE);
-	/* Let command ingest see the mode. */
+	reset_floors();
+
+	/* An earlier test may have left slot 1 active: switch back to 0. */
+	if (ci_hk().active_slot != 0) {
+		uplink(PKT_ARM_0);
+		uplink(PKT_ROTATE_0);
+		run_one_frame();
+		zassert_equal(ci_hk().active_slot, 0, "could not return to slot 0");
+		reset_floors();
+		drain_queues();
+	}
+	/* Let any arm expire. Simulated time makes this instant. */
+	if (ci_hk().rotation_armed) {
+		k_sleep(K_MINUTES(11));
+	}
+	/* Let command ingest see the mode, and expire the arm. */
 	run_one_frame();
+	zassert_false(ci_hk().rotation_armed);
 }
 
 ZTEST_SUITE(command_ingest, NULL, NULL, reset, NULL, NULL);
@@ -223,8 +252,8 @@ ZTEST(command_ingest, test_bad_signature_gets_no_reply)
 	struct target_app_cmd cmd;
 	char tampered[] = PKT_SET_LEVEL_7;
 
-	/* Signed with the other slot's key, which is not the active one. */
-	uplink(PKT_OTHER_KEY);
+	/* Signed with a key in neither slot. */
+	uplink(PKT_FORGED);
 	/* The level changed from 7 to 8 after signing. */
 	tampered[strlen(tampered) - 1] = '8';
 	uplink(tampered);
@@ -359,4 +388,160 @@ ZTEST(command_ingest, test_own_command_channel_rejects)
 					before.cmd_accepted + before.cmd_rejected + 1, WAIT,
 					&after));
 	zassert_equal(after.cmd_rejected - before.cmd_rejected, 1);
+}
+
+/* ---- Key rotation (DS-54) -------------------------------------------------- */
+
+static uint64_t floor_of(uint8_t slot)
+{
+	uint64_t floor;
+
+	zassert_ok(floor_store_get(slot, &floor));
+	return floor;
+}
+
+ZTEST(command_ingest, test_spare_key_may_only_rotate)
+{
+	struct command_ingest_hk before = ci_hk();
+	struct target_app_cmd cmd;
+
+	/* A real command, signed with slot 1's key while slot 0 is active. */
+	uplink(PKT_OTHER_KEY);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("NAK", PKT_OTHER_KEY_COUNTER, "wrong_key"));
+	zassert_false(target_next(&cmd));
+	zassert_equal(ci_hk().rejected_other_key - before.rejected_other_key, 1);
+	zassert_equal(floor_of(1), CMD_COUNTER_EPOCH_MS, "refused before its counter was used");
+}
+
+ZTEST(command_ingest, test_rotation)
+{
+	struct command_ingest_hk before = ci_hk();
+	struct target_app_cmd cmd;
+
+	uplink(PKT_ARM_1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_1_COUNTER, "ok"));
+	zassert_true(ci_hk().rotation_armed);
+	zassert_equal(ci_hk().active_slot, 0, "arming alone changes nothing");
+
+	uplink(PKT_ROTATE_1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ROTATE_1_COUNTER, "ok"));
+	zassert_equal(ci_hk().active_slot, 1);
+	zassert_false(ci_hk().rotation_armed);
+	zassert_equal(ci_hk().rotations - before.rotations, 1);
+
+	/* Slot 1's key now commands; slot 0's is the spare. */
+	uplink(PKT_LEVEL_BY_SLOT1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_LEVEL_BY_SLOT1_COUNTER, "ok"));
+	zassert_true(target_next(&cmd));
+	zassert_equal(cmd.args.set_level.level, 5);
+
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("NAK", PKT_SET_LEVEL_7_COUNTER, "wrong_key"));
+	zassert_false(target_next(&cmd));
+}
+
+ZTEST(command_ingest, test_rotation_must_be_signed_by_the_new_slot)
+{
+	/* Arming slot 1 with the active key (slot 0) is refused. */
+	uplink(PKT_ARM_1_BY_SLOT0);
+	/* So is slot 1's key arming a different slot. */
+	uplink(PKT_ARM_0_BY_SLOT1);
+	/* And the active key arming its own slot: there is nothing to switch to. */
+	uplink(PKT_ARM_0);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_1_BY_SLOT0_COUNTER, "wrong_key"));
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_0_BY_SLOT1_COUNTER, "wrong_key"));
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_0_COUNTER, "wrong_key"));
+	zassert_false(ci_hk().rotation_armed);
+	zassert_equal(ci_hk().active_slot, 0);
+}
+
+ZTEST(command_ingest, test_rotation_needs_an_arm)
+{
+	uplink(PKT_ROTATE_1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ROTATE_1_COUNTER, "not_armed"));
+	zassert_equal(ci_hk().active_slot, 0);
+}
+
+ZTEST(command_ingest, test_arm_expires)
+{
+	uplink(PKT_ARM_1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_1_COUNTER, "ok"));
+
+	/* More than 10 minutes of mission time later (DS-54). */
+	k_sleep(K_MINUTES(11));
+	run_one_frame();
+	zassert_false(ci_hk().rotation_armed, "the arm expired on its own");
+
+	uplink(PKT_ROTATE_1_LATE);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ROTATE_1_LATE_COUNTER, "not_armed"));
+	zassert_equal(ci_hk().active_slot, 0);
+}
+
+ZTEST(command_ingest, test_rotation_bad_slot)
+{
+	char want[64];
+
+	uplink(PKT_ARM_2_BY_SLOT1);
+	run_one_frame();
+	snprintk(want, sizeof(want), "%s 0", expected("ACK", PKT_ARM_2_BY_SLOT1_COUNTER, "bad_arg"));
+	zassert_str_equal(next_reply(), want);
+	zassert_false(ci_hk().rotation_armed);
+}
+
+ZTEST(command_ingest, test_recovery_from_a_maxed_out_floor)
+{
+	/*
+	 * Slot 0's floor has been set to the maximum, so nothing signed with
+	 * slot 0's key is ever accepted again (DS-53). Rotating to slot 1,
+	 * with commands signed by slot 1, recovers the spacecraft (DS-54).
+	 */
+	struct target_app_cmd cmd;
+
+	zassert_ok(floor_store_set(0, UINT64_MAX));
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("NAK", PKT_SET_LEVEL_7_COUNTER, "replay"));
+
+	uplink(PKT_ARM_1);
+	uplink(PKT_ROTATE_1);
+	uplink(PKT_LEVEL_BY_SLOT1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_1_COUNTER, "ok"));
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ROTATE_1_COUNTER, "ok"));
+	zassert_str_equal(next_reply(), expected("ACK", PKT_LEVEL_BY_SLOT1_COUNTER, "ok"));
+	zassert_true(target_next(&cmd));
+}
+
+ZTEST(command_ingest, test_no_floor_is_reset)
+{
+	/*
+	 * Rotation never resets a floor (DS-53). Slot 0 accepts a command at
+	 * counter ...095, then the spacecraft rotates to slot 1. Slot 0's
+	 * floor must still be ...095, so a slot-0 command below it is refused
+	 * as a replay. Had leaving slot 0 reset its floor, every command ever
+	 * recorded under slot 0 would be accepted again.
+	 */
+	uplink(PKT_LEVEL_ABOVE_RETURN);
+	uplink(PKT_ARM_1);
+	uplink(PKT_ROTATE_1);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_LEVEL_ABOVE_RETURN_COUNTER, "ok"));
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ARM_1_COUNTER, "ok"));
+	zassert_str_equal(next_reply(), expected("ACK", PKT_ROTATE_1_COUNTER, "ok"));
+	zassert_equal(ci_hk().active_slot, 1);
+
+	/* Slot 0's key may still arm a rotation back, but ...090 is below its floor. */
+	uplink(PKT_ARM_0);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("NAK", PKT_ARM_0_COUNTER, "replay"));
+	zassert_equal(floor_of(0), PKT_LEVEL_ABOVE_RETURN_COUNTER);
 }

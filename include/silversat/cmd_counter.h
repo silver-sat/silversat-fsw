@@ -23,8 +23,9 @@
 
 /*
  * The mission epoch, 2026-01-01T00:00:00Z in epoch milliseconds. The floor
- * starts here, not at 0, when nothing is stored and after a key rotation,
- * so the first real command is not rejected as too large a jump (DS-53).
+ * starts here, not at 0, when nothing is stored, so the first real command
+ * is not rejected as too large a jump (DS-53). No floor is ever reset,
+ * including by key rotation.
  */
 #define CMD_COUNTER_EPOCH_MS 1767225600000ULL
 

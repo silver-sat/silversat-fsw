@@ -17,3 +17,27 @@ packets:
   - {name: nominal_thing, text: "target_app nominal_thing", counter: 1790812800008, key: slot0}
   - {name: nominal_thing_again, text: "target_app nominal_thing", counter: 1790812800009,
      key: slot0}
+  # Signed with a key in neither slot.
+  - {name: forged, text: "target_app set_level 7", counter: 1790812800011, key: bogus}
+
+  # Key rotation (DS-54): both commands signed with the key of the new slot.
+  - {name: arm_1, text: "command_ingest arm_key_rotation 1", counter: 1790812800020,
+     key: slot1}
+  - {name: rotate_1, text: "command_ingest rotate_key 1", counter: 1790812800021, key: slot1}
+  - {name: level_by_slot1, text: "target_app set_level 5", counter: 1790812800022,
+     key: slot1}
+  # Signed by the wrong slot: the active one, or a slot other than the one named.
+  - {name: arm_1_by_slot0, text: "command_ingest arm_key_rotation 1", counter: 1790812800023,
+     key: slot0}
+  - {name: arm_0_by_slot1, text: "command_ingest arm_key_rotation 0", counter: 1790812800024,
+     key: slot1}
+  - {name: arm_2_by_slot1, text: "command_ingest arm_key_rotation 2", counter: 1790812800026,
+     key: slot1}
+  - {name: rotate_1_late, text: "command_ingest rotate_key 1", counter: 1790812800027,
+     key: slot1}
+  # Back to slot 0, signed with slot 0's key.
+  - {name: arm_0, text: "command_ingest arm_key_rotation 0", counter: 1790812800090, key: slot0}
+  - {name: rotate_0, text: "command_ingest rotate_key 0", counter: 1790812800091, key: slot0}
+  # Above arm_0's counter, so a kept floor refuses arm_0 as a replay.
+  - {name: level_above_return, text: "target_app set_level 6", counter: 1790812800095,
+     key: slot0}
