@@ -2,7 +2,7 @@
 """Tests for tools/command_text.py. Run with `make test-python`.
 
 The shared vectors are the same ones the flight decoder is tested against
-(tests/unit/cmd_route), so passing both means the ground and the satellite
+(tests/unit/command), so passing both means the ground and the satellite
 agree on what every one of them means.
 """
 
@@ -16,7 +16,7 @@ sys.path.insert(0, str(REPO / "tools"))
 
 import command_text as ct  # noqa: E402
 
-ROUTE_TEST = REPO / "tests" / "unit" / "cmd_route"
+ROUTE_TEST = REPO / "tests" / "unit" / "command"
 VECTORS = ct.load_vectors(ROUTE_TEST / "vectors.yaml")
 
 

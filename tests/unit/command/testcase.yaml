@@ -3,7 +3,7 @@ common:
     - command
 
 tests:
-  unit.cmd_auth:
+  unit.command:
     platform_allow:
       - native_sim
       - native_sim/native/64
