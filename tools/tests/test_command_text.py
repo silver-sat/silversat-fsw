@@ -33,9 +33,10 @@ def test_shared_vectors(dictionary, vector):
         assert parsed.bad_arg == vector["bad_arg"]
 
 
-def test_vectors_cover_every_result_but_publish_failed():
-    # publish_failed comes from zbus, not from the text; the C test covers it.
-    assert {v["result"] for v in VECTORS} == set(ct.RESULTS) - {"publish_failed"}
+def test_vectors_cover_every_result_from_text():
+    # busy and publish_failed depend on the target app and zbus, not on the
+    # text; the C tests cover them.
+    assert {v["result"] for v in VECTORS} == set(ct.RESULTS) - {"busy", "publish_failed"}
 
 
 def test_parse_values(dictionary):

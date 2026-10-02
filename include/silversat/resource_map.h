@@ -55,13 +55,31 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 
 #define FRAME_MANAGER_PRIORITY PRIORITY_FRAME_MANAGER
 
+/* Woken every minor frame, so a ground command waits at most one frame. */
+#define COMMAND_INGEST_PRIORITY PRIORITY_10HZ
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 #define FRAME_MANAGER_STACK_SIZE 1024
+#define COMMAND_INGEST_STACK_SIZE 2048 /* BLAKE2s state, one link frame */
 
 /* ---- UART assignments --------------------------------------------------- */
 
 /* None yet; they arrive with the first subsystem app (DS-32). */
+
+/* ---- Link frame queues (DS-11) ------------------------------------------ */
+
+/*
+ * Raw link frames are too big for zbus (every zbus buffer is sized for the
+ * largest message), so they travel through these static queues instead.
+ * Each entry holds one whole frame (struct link_frame, 256 bytes).
+ */
+
+/* Uplink frames waiting for command ingest, which empties it every frame. */
+#define UPLINK_QUEUE_DEPTH 4
+
+/* Downlink frames waiting for the radio: command replies, later telemetry. */
+#define DOWNLINK_QUEUE_DEPTH 8
 
 /* ---- zbus buffer pool (DS-07, DS-22) ------------------------------------ */
 
@@ -82,8 +100,8 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define FRAME_MAX_PENDING 2
 
 /*
- * Commands queued for an app. Proposed; command ingest will enforce it the
- * way the frame manager enforces FRAME_MAX_PENDING (DS-50).
+ * Ground commands queued for an app. Command routing enforces it: once an
+ * app has this many it hasn't handled, the next gets "busy" (DS-50).
  */
 #define CMD_MAX_PENDING 2
 
@@ -161,6 +179,16 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 	 * threshold is set when health is written; until then health does not
 	 * exist to watch it.
 	 */
+	/*
+	 * Protected (DS-43): without it the ground cannot command the
+	 * spacecraft. The stall threshold is set when health is written.
+	 */
+	[APP_ID_COMMAND_INGEST] = {
+		.protected = true,
+		.stall_threshold = 0,
+		.reenable = REENABLE_NEVER,
+		.auto_retry_cap = 0,
+	},
 	[APP_ID_MODE_MANAGER] = {
 		.protected = true,
 		.stall_threshold = 0,

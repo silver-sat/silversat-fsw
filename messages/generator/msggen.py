@@ -93,6 +93,10 @@ REQUIRED_STRUCTS = ("frame_tick", "app_status")
 # allowed in (DS-50).
 REQUIRED_ENUMS = ("mode",)
 
+# Fields the generated code reads from struct app_status (DS-14, DS-22):
+# the frame manager reads steps, and command routing reads the counters.
+REQUIRED_STATUS_FIELDS = ("steps", "cmd_accepted", "cmd_rejected")
+
 # A command's text is "<app> <command> <arguments>", at most
 # CMD_TEXT_WORDS_MAX (16) words in include/silversat/cmd_text.h.
 COMMAND_ARGS_MAX = 14
@@ -445,6 +449,11 @@ def _parse_common(path):
         if required not in {s.name for s in structs}:
             raise DefinitionError(
                 f"{where}: must define struct {required!r}; every app's channels use it")
+    status = next(s for s in structs if s.name == "app_status")
+    for name in REQUIRED_STATUS_FIELDS:
+        if not any(f.name == name and f.type == "uint32" for f in status.fields):
+            raise DefinitionError(
+                f"{where}: struct app_status must have a uint32 field {name!r} (DS-14)")
     for required in REQUIRED_ENUMS:
         if required not in by_name:
             raise DefinitionError(

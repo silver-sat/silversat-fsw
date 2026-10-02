@@ -182,6 +182,12 @@ Command text, decided 2026-10-02:
 - Every command lists the modes it is allowed in (`modes:` in the YAML). There is no default.
 - Decoding and routing are generated from the YAML (DS-60). The ground formats and checks text from the same definitions, and a shared set of vectors keeps the two in step.
 
+Replies and scheduling, decided 2026-10-02:
+- Command ingest is woken by the frame manager every minor frame and empties the uplink queue, so a command waits at most one minor frame.
+- Frames that fail the shape or signature check get no reply, only a counter: there is nothing to tell a forger, and noise needs no answer.
+- Every authenticated command gets exactly one reply, sent after routing, as text in the downlink queue: `ACK <counter> <result>` (for example `ACK 0000018f2c4d5e6f ok`, or `... bad_arg 2`), or `NAK <counter> replay|jump|store` if the counter check or floor store fails. This folds stage 5's ACK into the routing result. The floor is still stored before anything is sent, and the counter is used up whatever the routing result.
+- An app that already has `CMD_MAX_PENDING` ground commands it hasn't handled gets `busy` instead of another one, so the zbus pool stays within its budget (DS-07).
+
 **DS-51 On-orbit software update: Specified (plan).**
 - Plan for MCUboot with signed images and revert-on-failure.
 - The flatsat runs in two modes: development mode (direct flash plus GDB) and update mode (signed image uplinked through the flight path).
@@ -206,7 +212,7 @@ Command text, decided 2026-10-02:
 **DS-54 Keys: Specified / Proposed.**
 - *Specified:* the flight key is kept outside Git. This is not a high-security environment, and the realistic risk is accidental commanding, not a sophisticated adversary.
 - *Specified:* separate test and flight keys, so flatsat and Codespace setups cannot command the flight vehicle.
-- *Proposed:* flight builds get the key from a CI secret.
+- *Proposed:* flight builds get the key from a CI secret. Each key slot's key comes from a file named in Kconfig (`CONFIG_SS_CMD_KEY_FILE_SLOT0` and `_SLOT1`), defaulting to the two published test keys in `tools/`. The build turns them into a header in the build directory. A flight build (`CONFIG_SS_FLIGHT_BUILD`) points them at files written from CI secrets, and the build fails if either is a published test key.
 - *Proposed:* two key slots allow rotation as people leave, and provide recovery from a maxed counter floor (DS-53). Rotation is signed by the other slot and uses arm-then-fire.
 - *Proposed:* keys are compiled into flash; FRAM holds only which slot is active and the per-slot floors, so a FRAM failure cannot lose the keys (DS-75).
 - *Proposed:* rotation switches between the two compiled-in keys; it cannot load a new one. Commands are signed, not encrypted (DS-52), so a key sent in a command could be read by anyone listening. Installing new keys takes a new flight image (DS-51). Two slots therefore give one spare key, for a key that has left with someone or for a maxed-out floor.
@@ -413,6 +419,7 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | DS-68 | Data channel types that only some apps read. For now a data channel's type must be in `common.yaml` |
 | DS-25 | MET at boot: health publishes mission time from FRAM. Until then each boot's MET starts at zero |
 | DS-26 | Measure idle time for the frame manager's housekeeping |
+| DS-53, DS-54 | Key rotation. DS-53 says rotation resets a slot's floor; if that is the slot being left, rotating back to it later would let its recorded commands be replayed. Rotation should not need to reset any floor. Settle with the rotation commands |
 
 ---
 
@@ -432,3 +439,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-01 | DS-53: the floor defaults to the mission epoch (2026-01-01) rather than zero, and the spacecraft's maximum jump is 10 years, because a floor of zero with a one-year guard would reject every command (first command, after a long silence, after key rotation). The counter-at-maximum rule applies within the jump |
 | 2026-10-01 | DS-54: rotation switches between the two compiled-in keys and cannot load new ones (one spare key); a rotation command signed by the other slot is checked against that slot's floor. DS-71 and DS-74 no longer place keys in FRAM, matching DS-54 and DS-75 |
 | 2026-10-02 | DS-50: command text syntax (`<app> <command> <arguments>`, single spaces, words for bool and enum), required `modes:` per command, floats deferred; decoding and routing generated from the YAML |
+| 2026-10-02 | DS-50: command ingest is woken every minor frame; one reply per authenticated command after routing (`ACK <counter> <result>` or `NAK <counter> <reason>`), none for shape or signature failures; `busy` when an app has `CMD_MAX_PENDING` unhandled ground commands. DS-54: keys from Kconfig key files, and a flight build refuses the published test keys. Open item for key rotation and floor reset |

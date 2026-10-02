@@ -20,8 +20,46 @@
 {% endfor %}
 #include "silversat/cmd_route.h"
 #include "silversat/cmd_text.h"
+#include "silversat/resource_map.h"
 
 BUILD_ASSERT(MODE_MAX < 32, "the allowed-modes mask has 32 bits");
+
+/*
+ * Ground commands each app has been sent but not yet handled, kept at most
+ * CMD_MAX_PENDING so the zbus pool stays within its budget (DS-07): every
+ * waiting command holds a pool buffer. An app's status counts every command
+ * it handles, including internal ones from other apps, so any progress is
+ * credited against the ground's count. That can only undercount, and once
+ * an app stops handling commands, the count is exact.
+ */
+static uint32_t outstanding[APP_ID_MAX + 1];
+static uint32_t handled_seen[APP_ID_MAX + 1];
+
+static enum cmd_route_result deliver(uint8_t app, const struct zbus_channel *cmd_chan,
+				     const struct zbus_channel *status_chan, const void *cmd)
+{
+	struct app_status status;
+	uint32_t handled;
+	uint32_t progress;
+
+	/* If the status can't be read without waiting, don't guess. */
+	if (zbus_chan_read(status_chan, &status, K_NO_WAIT) != 0) {
+		return CMD_ROUTE_BUSY;
+	}
+	handled = status.cmd_accepted + status.cmd_rejected;
+	progress = handled - handled_seen[app];
+	handled_seen[app] = handled;
+	outstanding[app] = progress >= outstanding[app] ? 0 : outstanding[app] - progress;
+
+	if (outstanding[app] >= CMD_MAX_PENDING) {
+		return CMD_ROUTE_BUSY;
+	}
+	if (zbus_chan_pub(cmd_chan, cmd, K_NO_WAIT) != 0) {
+		return CMD_ROUTE_PUBLISH_FAILED;
+	}
+	outstanding[app]++;
+	return CMD_ROUTE_OK;
+}
 {% for e in defs.command_enums %}
 
 /* Words for enum {{ e.name }}. */
@@ -73,8 +111,7 @@ route_{{ app.name }}_{{ c.name }}(const struct cmd_text *t, struct cmd_route_inf
 	ARG_UNUSED(t);
 	ARG_UNUSED(info);
 {% endif %}
-	return zbus_chan_pub(&{{ app.cmd_chan }}, &cmd, K_NO_WAIT) == 0 ? CMD_ROUTE_OK
-							       : CMD_ROUTE_PUBLISH_FAILED;
+	return deliver({{ app.id_constant }}, &{{ app.cmd_chan }}, &{{ app.status_chan }}, &cmd);
 }
 {% endfor %}
 {% endfor %}

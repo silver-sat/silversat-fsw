@@ -1,0 +1,10 @@
+common:
+  tags:
+    - app
+    - command
+
+tests:
+  app.command_ingest:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64

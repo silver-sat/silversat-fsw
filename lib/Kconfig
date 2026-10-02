@@ -28,4 +28,12 @@ config SS_CMD_TEXT
 	  Splits ground command text into words and reads typed arguments.
 	  Used by the generated command routing (DS-50).
 
+config SS_LINK
+	bool "Link frame queues"
+	depends on SS_MESSAGES
+	help
+	  The static queues that carry raw link frames between the radio app
+	  and the apps that use them (DS-11): uplink to command ingest, and
+	  downlink to the radio.
+
 endmenu

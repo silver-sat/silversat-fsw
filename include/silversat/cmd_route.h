@@ -34,6 +34,11 @@ enum cmd_route_result {
 	/* An argument is malformed or out of range; see bad_arg. */
 	CMD_ROUTE_BAD_ARG,
 	/*
+	 * The target app already has CMD_MAX_PENDING ground commands it hasn't
+	 * handled (DS-07). Send it again once the app has caught up.
+	 */
+	CMD_ROUTE_BUSY,
+	/*
 	 * The publish failed: the target channel's validator rejected the
 	 * command, or the zbus pool had no buffer for it.
 	 */

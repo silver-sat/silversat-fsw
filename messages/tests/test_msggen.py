@@ -42,6 +42,8 @@ COMMON = {
         ]},
         {"name": "app_status", "description": "Status.", "fields": [
             {"name": "steps", "type": "uint32"},
+            {"name": "cmd_accepted", "type": "uint32"},
+            {"name": "cmd_rejected", "type": "uint32"},
         ]},
         {"name": "event", "description": "An event.", "fields": [
             {"name": "severity", "type": "severity"},
@@ -296,10 +298,15 @@ def compile_generated(tmp_path, data_size, apps=None):
         "typedef int k_timeout_t;\n"
         "#define K_NO_WAIT 0\n"
         "int zbus_chan_pub(const struct zbus_channel *chan, const void *msg, k_timeout_t t);\n"
+        "int zbus_chan_read(const struct zbus_channel *chan, void *msg, k_timeout_t t);\n"
         "#define ZBUS_CHAN_DECLARE(name) extern const struct zbus_channel name\n"
         "#define ZBUS_OBSERVERS_EMPTY\n"
         "#define ZBUS_MSG_INIT(val, ...) {val, ##__VA_ARGS__}\n"
         "#define ZBUS_CHAN_DEFINE(name, type, v, u, o, init) type name##_msg = init\n")
+    # The real resource map names the flight apps, which these tests replace.
+    (out / "include" / "silversat").mkdir()
+    (out / "include" / "silversat" / "resource_map.h").write_text(
+        "#pragma once\n#define CMD_MAX_PENDING 2\n")
     (stub / "sys" / "util.h").write_text(
         "#pragma once\n"
         "#define BUILD_ASSERT(cond, msg) _Static_assert(cond, msg)\n"
@@ -342,7 +349,7 @@ def test_routes(tmp_path):
     assert ".modes = BIT(MODE_SAFE) | BIT(MODE_NOMINAL)," in routes
     assert ".arg_count = 1," in routes
     assert "cmd_text_unsigned(t, 2, UINT16_MAX, &value)" in routes
-    assert "return zbus_chan_pub(&sensor_cmd_chan, &cmd, K_NO_WAIT)" in routes
+    assert "return deliver(APP_ID_SENSOR, &sensor_cmd_chan, &sensor_status_chan, &cmd);" in routes
 
 
 def test_routes_decode_each_kind(tmp_path):
@@ -397,12 +404,16 @@ def test_main_writes_json(tmp_path):
 
 @needs_gcc
 def test_message_too_big_for_zbus_buffer_fails_the_build(tmp_path):
-    # sensor's frame_tick channel needs 8 bytes; quiet's messages fit in 4.
-    results = compile_generated(tmp_path, data_size=4)
+    # sensor's housekeeping needs 24 bytes; quiet's largest message, its
+    # 12-byte status, fits in 16.
+    big_hk = app_with(housekeeping={"description": "d", "fields": [
+        {"name": "a", "type": "uint64"}, {"name": "b", "type": "uint64"},
+        {"name": "c", "type": "uint64"}]})
+    results = compile_generated(tmp_path, data_size=16, apps=[big_hk, QUIET])
     quiet, sensor = results["msg_quiet.c"], results["msg_sensor.c"]
     assert quiet.returncode == 0, quiet.stderr
     assert sensor.returncode != 0
-    assert "sensor_wakeup_chan: raise CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE" \
+    assert "sensor_hk_chan: raise CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE" \
         in sensor.stderr
 
 
@@ -525,6 +536,10 @@ def enum(values, type="uint8"):
 COMMON_ERRORS = [
     ("missing frame_tick", {"structs": COMMON["structs"][1:]}, "must define struct 'frame_tick'"),
     ("missing mode", {"enums": COMMON["enums"][:1]}, "must define enum 'mode'"),
+    ("status without counters", {"structs": [
+        COMMON["structs"][0],
+        {"name": "app_status", "description": "d", "fields": [field("steps", "uint32")]},
+    ] + COMMON["structs"][2:]}, "must have a uint32 field 'cmd_accepted'"),
     ("enum value too big", {"enums": enum([{"name": "a", "value": 256}])}, "outside 0..255"),
     ("negative enum value", {"enums": enum([{"name": "a", "value": -1}])}, "outside 0..255"),
     ("duplicate enum value", {"enums": enum([{"name": "a", "value": 1},

@@ -1,0 +1,4 @@
+# PUBLISHED TEST KEY for key slot 1, for development, the flatsat, and CI (DS-54).
+# It is public on purpose. It must never be a flight key: flight keys are
+# kept outside Git and injected only into flight builds.
+8aa0bb051222094e88ff5dd4df1e78483f577d736f4fba5b8d9aec84028ceee4

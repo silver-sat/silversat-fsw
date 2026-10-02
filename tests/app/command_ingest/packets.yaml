@@ -1,0 +1,19 @@
+# Signed packets for the command ingest tests, made at build time by
+# tools/sign_command.py --c-packets. Counters are epoch milliseconds around
+# 2026-10-01 (1790812800000); each test starts with the floor at the
+# mission epoch.
+
+packets:
+  - {name: set_level_7, text: "target_app set_level 7", counter: 1790812800001, key: slot0}
+  - {name: set_level_8, text: "target_app set_level 8", counter: 1790812800002, key: slot0}
+  - {name: set_level_9, text: "target_app set_level 9", counter: 1790812800003, key: slot0}
+  - {name: set_level_10, text: "target_app set_level 10", counter: 1790812800004, key: slot0}
+  # Signed with the other slot's key, which is not the active one.
+  - {name: other_key, text: "target_app set_level 7", counter: 1790812800005, key: slot1}
+  # More than 10 years above the mission epoch (DS-53).
+  - {name: jump, text: "target_app set_level 7", counter: 2082585600001, key: slot0}
+  - {name: unknown_command, text: "target_app pong", counter: 1790812800006, key: slot0}
+  - {name: bad_arg, text: "target_app set_level 300", counter: 1790812800007, key: slot0}
+  - {name: nominal_thing, text: "target_app nominal_thing", counter: 1790812800008, key: slot0}
+  - {name: nominal_thing_again, text: "target_app nominal_thing", counter: 1790812800009,
+     key: slot0}

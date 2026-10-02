@@ -1,0 +1,24 @@
+# Test-only app that receives the commands routed by command ingest. The
+# test reads its command channel itself, standing in for the app.
+
+app: target_app
+id: 160
+description: Receives routed commands in the command ingest tests.
+wakeup: false
+
+commands:
+  - name: set_level
+    id: 1
+    description: Set a level.
+    modes: [safe, nominal]
+    fields:
+      - {name: level, type: uint8}
+  - name: nominal_thing
+    id: 2
+    description: Allowed only in nominal mode.
+    modes: [nominal]
+
+housekeeping:
+  description: Target app state.
+  fields:
+    - {name: level, type: uint8}

@@ -1,0 +1,48 @@
+# Command ingest messages (DS-50, DS-53).
+#
+# Command ingest has no commands of its own yet: key rotation (DS-54)
+# arrives in its own change. Its housekeeping counts each stage of the
+# pipeline, so the ground can see where commands are being lost.
+
+app: command_ingest
+id: 3
+description: Authenticates, checks, and routes ground commands.
+# Woken every minor frame to empty the uplink queue.
+wakeup: true
+
+housekeeping:
+  description: Command ingest state, published after every minor frame that handled a frame.
+  fields:
+    - name: received
+      type: uint32
+      description: Uplink frames taken from the queue.
+    - name: rejected_shape
+      type: uint32
+      description: Frames that failed the shape check (DS-50 stage 1). No reply is sent.
+    - name: rejected_signature
+      type: uint32
+      description: Frames whose tag did not verify (stage 2). No reply is sent.
+    - name: rejected_replay
+      type: uint32
+      description: Counters not above the floor (stage 3).
+    - name: rejected_jump
+      type: uint32
+      description: Counters too far above the floor (stage 3, DS-53).
+    - name: rejected_store
+      type: uint32
+      description: Accepted counters whose new floor could not be stored (stage 4).
+    - name: rejected_route
+      type: uint32
+      description: Accepted commands that failed decoding or routing (stages 6 and 7).
+    - name: routed
+      type: uint32
+      description: Commands delivered to their target app.
+    - name: replies_dropped
+      type: uint32
+      description: Replies lost because the downlink queue was full.
+    - name: last_counter
+      type: uint64
+      description: The counter of the last accepted command; the ground's next must be higher.
+    - name: last_accepted_met_ms
+      type: int64
+      description: When the last command was accepted, for the command-loss timer (DS-46).
