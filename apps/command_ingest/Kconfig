@@ -1,0 +1,31 @@
+# Command ingest (DS-50 to DS-54).
+
+config SS_COMMAND_INGEST
+	bool "Command ingest"
+	depends on SS_MESSAGES
+	select SS_CMD_AUTH
+	select SS_CMD_COUNTER
+	select SS_CMD_ROUTES
+	select SS_LINK
+	help
+	  Takes signed ground commands from the uplink queue, checks the
+	  signature and counter, and routes each command to its target app.
+
+if SS_COMMAND_INGEST
+
+config SS_CMD_KEY_FILE_SLOT0
+	string "Key file for key slot 0"
+	default "tools/test_key.txt"
+	help
+	  A file of 64 hex digits; lines starting with '#' are ignored. A
+	  relative path is from the root of this repository. The default is
+	  the published test key. A flight build points this at a file written
+	  from a CI secret, which is never committed (DS-54).
+
+config SS_CMD_KEY_FILE_SLOT1
+	string "Key file for key slot 1"
+	default "tools/test_key_slot1.txt"
+	help
+	  The second key slot (DS-54). See SS_CMD_KEY_FILE_SLOT0.
+
+endif # SS_COMMAND_INGEST

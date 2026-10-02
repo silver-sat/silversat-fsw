@@ -7,6 +7,7 @@
 #   add_subdirectory_ifdef(CONFIG_SS_* <app>)   (the app's own symbol)
 
 add_subdirectory_ifdef(CONFIG_SS_FRAME_MANAGER frame_manager)
+add_subdirectory_ifdef(CONFIG_SS_COMMAND_INGEST command_ingest)
 
 if(CONFIG_SS_MESSAGES)
   # Compiles the resource map's build checks in every build that has

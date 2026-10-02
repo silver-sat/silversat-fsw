@@ -26,9 +26,10 @@ configdefault ZBUS_PREFER_DYNAMIC_ALLOCATION
 
 # Every publish on every channel takes one buffer, so each buffer must
 # hold the largest message on any channel. The generated channel files
-# fail the build if a message is larger.
+# fail the build if a message is larger. Command ingest's housekeeping
+# (56 bytes) is the largest so far.
 configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE
-	default 32
+	default 64
 
 # The pool must hold every queued copy plus one buffer per thread that
 # publishes. include/silversat/resource_map.h computes the number and

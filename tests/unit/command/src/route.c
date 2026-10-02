@@ -19,6 +19,7 @@
 #include "msg/typed_app.h"
 #include "route_vectors.h"
 #include "silversat/cmd_route.h"
+#include "silversat/resource_map.h"
 
 /* Stands in for typed_app, so tests can see what was published. */
 ZBUS_MSG_SUBSCRIBER_DEFINE(typed_sub);
@@ -29,6 +30,26 @@ static enum cmd_route_result route(const char *text, uint8_t mode, struct cmd_ro
 	return cmd_route(text, strlen(text), mode, info);
 }
 
+/*
+ * Report commands as handled on an app's status channel, as the app would.
+ * Routing counts each app's unhandled ground commands (CMD_ROUTE_BUSY).
+ */
+static struct app_status typed_status;
+static struct app_status frame_manager_status;
+
+static void typed_handled(uint32_t count)
+{
+	typed_status.cmd_accepted += count;
+	zassert_ok(zbus_chan_pub(&typed_app_status_chan, &typed_status, K_NO_WAIT));
+}
+
+/* Nothing reads the frame manager's commands here; just count them handled. */
+static void frame_manager_handled(void)
+{
+	frame_manager_status.cmd_accepted++;
+	zassert_ok(zbus_chan_pub(&frame_manager_status_chan, &frame_manager_status, K_NO_WAIT));
+}
+
 /* Take the next command typed_app was sent, or fail. */
 static struct typed_app_cmd next_typed_command(void)
 {
@@ -37,17 +58,22 @@ static struct typed_app_cmd next_typed_command(void)
 
 	zassert_ok(zbus_sub_wait_msg(&typed_sub, &chan, &msg, K_NO_WAIT), "nothing published");
 	zassert_equal_ptr(chan, &typed_app_cmd_chan);
+	typed_handled(1);
 	return msg.cmd;
 }
 
+/* Handle everything waiting for typed_app. */
 static void drain(void *fixture)
 {
 	const struct zbus_channel *chan;
 	union typed_app_msg msg;
+	uint32_t count = 0;
 
 	ARG_UNUSED(fixture);
 	while (zbus_sub_wait_msg(&typed_sub, &chan, &msg, K_NO_WAIT) == 0) {
+		count++;
 	}
+	typed_handled(count);
 }
 
 ZTEST_SUITE(cmd_route, NULL, NULL, drain, drain, NULL);
@@ -64,6 +90,9 @@ ZTEST(cmd_route, test_shared_vectors)
 		if (v->result == CMD_ROUTE_BAD_ARG) {
 			zassert_equal(info.bad_arg, v->bad_arg, "\"%s\": argument %u", v->text,
 				      info.bad_arg);
+		}
+		if (result == CMD_ROUTE_OK && info.app == APP_ID_FRAME_MANAGER) {
+			frame_manager_handled();
 		}
 		drain(NULL);
 	}
@@ -148,17 +177,46 @@ ZTEST(cmd_route, test_unknown_mode)
 	zassert_equal(route("typed_app ping", MODE_MAX + 1, &info), CMD_ROUTE_MODE);
 }
 
+ZTEST(cmd_route, test_busy_app)
+{
+	/*
+	 * typed_app stops handling commands. Once CMD_MAX_PENDING are waiting,
+	 * the next is refused rather than queued, so the zbus pool stays within
+	 * its budget (DS-07).
+	 */
+	struct cmd_route_info info;
+
+	for (int i = 0; i < CMD_MAX_PENDING; i++) {
+		zassert_equal(route("typed_app ping", MODE_SAFE, &info), CMD_ROUTE_OK);
+	}
+	zassert_equal(route("typed_app ping", MODE_SAFE, &info), CMD_ROUTE_BUSY);
+	zassert_equal(info.app, APP_ID_TYPED_APP);
+	zassert_equal(info.command, TYPED_APP_CMD_PING);
+
+	/* Another app is unaffected. */
+	zassert_equal(route("frame_manager set_entry_enabled safe 0 true", MODE_SAFE, &info),
+		      CMD_ROUTE_OK);
+	frame_manager_handled();
+
+	/* Once typed_app catches up, it can be sent commands again. */
+	drain(NULL);
+	zassert_equal(route("typed_app ping", MODE_SAFE, &info), CMD_ROUTE_OK);
+}
+
 ZTEST(cmd_route, test_publish_failure_is_reported)
 {
 	/*
-	 * Nothing reads typed_sub here, so each accepted command holds a zbus
-	 * buffer. Once the pool is down to the buffer each publish needs for
-	 * itself, the copy for typed_sub cannot be made and the publish fails.
+	 * Here typed_app reports each command handled without taking it from
+	 * its queue, so the busy check passes but every accepted command still
+	 * holds a zbus buffer. Once the pool is down to the buffer each publish
+	 * needs for itself, the copy for typed_sub cannot be made and the
+	 * publish fails.
 	 */
 	struct cmd_route_info info;
 	int accepted = 0;
 
 	while (route("typed_app ping", MODE_SAFE, &info) == CMD_ROUTE_OK) {
+		typed_handled(1);
 		accepted++;
 		zassert_true(accepted < CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE, "never failed");
 	}

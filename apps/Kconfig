@@ -6,5 +6,6 @@
 menu "SilverSat apps"
 
 rsource "frame_manager/Kconfig"
+rsource "command_ingest/Kconfig"
 
 endmenu

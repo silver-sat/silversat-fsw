@@ -33,7 +33,7 @@ WORDS_MAX = 16  # CMD_TEXT_WORDS_MAX
 
 # The same order as enum cmd_route_result: the first that fails is reported.
 RESULTS = ("ok", "bad_syntax", "unknown_app", "unknown_command", "bad_arg_count", "mode",
-           "bad_arg", "publish_failed")
+           "bad_arg", "busy", "publish_failed")
 
 UNSIGNED_RE = re.compile(r"0|[1-9][0-9]{0,19}")
 SIGNED_RE = re.compile(r"0|-?[1-9][0-9]{0,19}")

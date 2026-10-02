@@ -7,3 +7,10 @@ rsource "drivers/Kconfig"
 rsource "lib/Kconfig"
 rsource "messages/Kconfig"
 rsource "apps/Kconfig"
+
+config SS_FLIGHT_BUILD
+	bool "Flight build (DS-06)"
+	help
+	  A build for the flight vehicle. For now this makes the build fail
+	  if a published test key is used (DS-54). The rest of the flight
+	  variant (events only, no shell, DS-06) comes later.
