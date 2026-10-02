@@ -1,0 +1,156 @@
+{% import "_macros.j2" as m %}
+{{ m.banner("the app definitions in messages/apps/") }}
+
+/*
+ * Command routing (DS-50 stages 6 and 7, DS-68): decode the text of an
+ * authenticated ground command and publish it to the target app's command
+ * channel. Only command ingest calls cmd_route(); this file includes every
+ * app's header so that command ingest itself never has to.
+ */
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <zephyr/sys/util.h>
+#include <zephyr/zbus/zbus.h>
+
+#include "msg/common.h"
+{% for app in defs.apps %}
+#include "msg/{{ app.name }}.h"
+{% endfor %}
+#include "silversat/cmd_route.h"
+#include "silversat/cmd_text.h"
+
+BUILD_ASSERT(MODE_MAX < 32, "the allowed-modes mask has 32 bits");
+{% for e in defs.command_enums %}
+
+/* Words for enum {{ e.name }}. */
+static const struct cmd_text_name {{ e.name }}_names[] = {
+{% for v in e.values %}
+	{"{{ v.name }}", {{ v.constant }}},
+{% endfor %}
+};
+{% endfor %}
+{% macro decode_field(f, i, c) %}
+	{
+{% if f.text_kind == "unsigned" %}
+		uint64_t value;
+
+		if (cmd_text_unsigned(t, {{ i + 2 }}, {{ f.type | unsigned_max }}, &value) != 0) {
+{% elif f.text_kind == "signed" %}
+		int64_t value;
+
+		if (cmd_text_signed(t, {{ i + 2 }}, {{ f.type | signed_min }}, {{ f.type | signed_max }},
+				    &value) != 0) {
+{% elif f.text_kind == "bool" %}
+		bool value;
+
+		if (cmd_text_bool(t, {{ i + 2 }}, &value) != 0) {
+{% else %}
+		uint32_t value;
+
+		if (cmd_text_name(t, {{ i + 2 }}, {{ f.enum }}_names, ARRAY_SIZE({{ f.enum }}_names),
+				  &value) != 0) {
+{% endif %}
+			info->bad_arg = {{ i }};
+			return CMD_ROUTE_BAD_ARG;
+		}
+		cmd.args.{{ c.name }}.{{ f.name }} = ({{ f.ctype }})value;
+	}
+{% endmacro %}
+{% for app in defs.apps %}
+{% for c in app.commands %}
+
+static enum cmd_route_result
+route_{{ app.name }}_{{ c.name }}(const struct cmd_text *t, struct cmd_route_info *info)
+{
+	struct {{ app.cmd_struct }} cmd = {.id = {{ c.constant }}};
+
+{% for f in c.fields %}
+{{ decode_field(f, loop.index0, c) -}}
+{% endfor %}
+{% if not c.fields %}
+	ARG_UNUSED(t);
+	ARG_UNUSED(info);
+{% endif %}
+	return zbus_chan_pub(&{{ app.cmd_chan }}, &cmd, K_NO_WAIT) == 0 ? CMD_ROUTE_OK
+							       : CMD_ROUTE_PUBLISH_FAILED;
+}
+{% endfor %}
+{% endfor %}
+
+/* Every app, so an app with no commands is still "known". */
+static const struct {
+	const char *name;
+	uint8_t id;
+} apps[] = {
+{% for app in defs.apps %}
+	{"{{ app.name }}", {{ app.id_constant }}},
+{% endfor %}
+};
+
+struct route {
+	uint8_t app;
+	const char *command;
+	uint16_t command_id;
+	uint8_t arg_count;
+	/* Bit n set: allowed in mode n (DS-50). */
+	uint32_t modes;
+	enum cmd_route_result (*decode)(const struct cmd_text *t, struct cmd_route_info *info);
+};
+
+static const struct route routes[] = {
+{% for app in defs.apps %}
+{% for c in app.commands %}
+	{
+		.app = {{ app.id_constant }},
+		.command = "{{ c.name }}",
+		.command_id = {{ c.constant }},
+		.arg_count = {{ c.fields | length }},
+		.modes = {% for mode in c.modes %}BIT(MODE_{{ mode | upper }}){{ " | " if not loop.last }}{% endfor %},
+		.decode = route_{{ app.name }}_{{ c.name }},
+	},
+{% endfor %}
+{% endfor %}
+{% if not defs.apps | map(attribute="commands") | select | list %}
+	{0}, /* no commands are defined yet */
+{% endif %}
+};
+
+enum cmd_route_result cmd_route(const char *text, size_t len, uint8_t mode,
+				struct cmd_route_info *info)
+{
+	struct cmd_text t;
+	bool app_known = false;
+
+	*info = (struct cmd_route_info){0};
+	if (cmd_text_split(text, len, &t) != 0 || t.count < 2) {
+		return CMD_ROUTE_BAD_SYNTAX;
+	}
+	for (size_t i = 0; i < ARRAY_SIZE(apps); i++) {
+		if (cmd_text_word_is(&t, 0, apps[i].name)) {
+			info->app = apps[i].id;
+			app_known = true;
+			break;
+		}
+	}
+	if (!app_known) {
+		return CMD_ROUTE_UNKNOWN_APP;
+	}
+	for (size_t i = 0; i < ARRAY_SIZE(routes); i++) {
+		const struct route *r = &routes[i];
+
+		if (r->decode == NULL || r->app != info->app || !cmd_text_word_is(&t, 1, r->command)) {
+			continue;
+		}
+		info->command = r->command_id;
+		if (t.count - 2 != r->arg_count) {
+			return CMD_ROUTE_BAD_ARG_COUNT;
+		}
+		if (mode > MODE_MAX || (r->modes & BIT(mode)) == 0) {
+			return CMD_ROUTE_MODE;
+		}
+		return r->decode(&t, info);
+	}
+	return CMD_ROUTE_UNKNOWN_COMMAND;
+}

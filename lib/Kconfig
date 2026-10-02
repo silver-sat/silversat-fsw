@@ -22,4 +22,10 @@ config SS_CMD_COUNTER
 	  and the per-key-slot floor (DS-50 stage 3, DS-53). The floor is
 	  held in RAM until the FRAM service exists.
 
+config SS_CMD_TEXT
+	bool "Command text"
+	help
+	  Splits ground command text into words and reads typed arguments.
+	  Used by the generated command routing (DS-50).
+
 endmenu

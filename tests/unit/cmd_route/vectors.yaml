@@ -1,0 +1,103 @@
+# Command text vectors, shared by the ground (tools/tests/test_command_text.py)
+# and the satellite (tests/unit/cmd_route). Both must give every vector the
+# same result, so the ground never sends text the satellite rejects.
+#
+# result is one of: ok, bad_syntax, unknown_app, unknown_command,
+# bad_arg_count, mode, bad_arg, publish_failed. bad_arg counts from 0.
+
+vectors:
+  # Accepted
+  - {text: "frame_manager set_entry_enabled nominal 3 false", mode: safe, result: ok}
+  - {text: "frame_manager set_entry_enabled safe 0 true", mode: nominal, result: ok}
+  - {text: "typed_app ping", mode: safe, result: ok}
+  - {text: "typed_app nominal_only 7", mode: nominal, result: ok}
+  - text: "typed_app set_all 255 65535 4294967295 18446744073709551615 \
+      127 32767 2147483647 9223372036854775807 true nominal"
+    mode: safe
+    result: ok
+  - text: "typed_app set_all 0 0 0 0 -128 -32768 -2147483648 -9223372036854775808 false safe"
+    mode: nominal
+    result: ok
+
+  # Spacing and word count
+  - {text: "", mode: safe, result: bad_syntax}
+  - {text: "typed_app", mode: safe, result: bad_syntax}
+  - {text: " typed_app ping", mode: safe, result: bad_syntax}
+  - {text: "typed_app ping ", mode: safe, result: bad_syntax}
+  - {text: "typed_app  ping", mode: safe, result: bad_syntax}
+  - {text: " ", mode: safe, result: bad_syntax}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", mode: safe, result: bad_syntax}
+
+  # Names
+  - {text: "no_such_app ping", mode: safe, result: unknown_app}
+  - {text: "Typed_app ping", mode: safe, result: unknown_app}
+  - {text: "typed_app pong", mode: safe, result: unknown_command}
+  - {text: "typed_app PING", mode: safe, result: unknown_command}
+  # A shortened or lengthened name is not a match.
+  - {text: "typed_ap ping", mode: safe, result: unknown_app}
+  - {text: "typed_app pin", mode: safe, result: unknown_command}
+  - {text: "typed_app pingx", mode: safe, result: unknown_command}
+  - {text: "mode_manager ping", mode: safe, result: unknown_command}
+
+  # Argument count, then mode, then arguments
+  - {text: "typed_app ping extra", mode: safe, result: bad_arg_count}
+  - {text: "typed_app set_all 0", mode: safe, result: bad_arg_count}
+  - {text: "typed_app nominal_only", mode: safe, result: bad_arg_count}
+  - {text: "typed_app nominal_only 7", mode: safe, result: mode}
+  - {text: "typed_app nominal_only x", mode: safe, result: mode}
+  - {text: "typed_app nominal_only x", mode: nominal, result: bad_arg,
+     bad_arg: 0}
+
+  # Unsigned
+  - {text: "typed_app nominal_only 256", mode: nominal, result: bad_arg, bad_arg: 0}
+  - {text: "typed_app nominal_only -1", mode: nominal, result: bad_arg, bad_arg: 0}
+  - {text: "typed_app nominal_only 007", mode: nominal, result: bad_arg, bad_arg: 0}
+  - {text: "typed_app nominal_only +5", mode: nominal, result: bad_arg, bad_arg: 0}
+  - {text: "typed_app nominal_only 0x10", mode: nominal, result: bad_arg, bad_arg: 0}
+  - {text: "typed_app nominal_only 1e2", mode: nominal, result: bad_arg, bad_arg: 0}
+  - {text: "frame_manager set_entry_enabled nominal 256 false", mode: safe,
+     result: bad_arg, bad_arg: 1}
+  - text: "typed_app set_all 0 0 0 18446744073709551616 0 0 0 0 true safe"
+    mode: safe
+    result: bad_arg
+    bad_arg: 3
+  - text: "typed_app set_all 0 0 0 100000000000000000000 0 0 0 0 true safe"
+    mode: safe
+    result: bad_arg
+    bad_arg: 3
+  - text: "typed_app set_all 0 0 4294967296 0 0 0 0 0 true safe"
+    mode: safe
+    result: bad_arg
+    bad_arg: 2
+
+  # Signed
+  - {text: "typed_app set_all 0 0 0 0 128 0 0 0 true safe", mode: safe, result: bad_arg, bad_arg: 4}
+  - {text: "typed_app set_all 0 0 0 0 -129 0 0 0 true safe", mode: safe,
+     result: bad_arg, bad_arg: 4}
+  - {text: "typed_app set_all 0 0 0 0 -0 0 0 0 true safe", mode: safe, result: bad_arg, bad_arg: 4}
+  - {text: "typed_app set_all 0 0 0 0 - 0 0 0 true safe", mode: safe, result: bad_arg, bad_arg: 4}
+  - {text: "typed_app set_all 0 0 0 0 -07 0 0 0 true safe", mode: safe, result: bad_arg, bad_arg: 4}
+  - text: "typed_app set_all 0 0 0 0 0 0 0 9223372036854775808 true safe"
+    mode: safe
+    result: bad_arg
+    bad_arg: 7
+  - text: "typed_app set_all 0 0 0 0 0 0 0 -9223372036854775809 true safe"
+    mode: safe
+    result: bad_arg
+    bad_arg: 7
+
+  # Bool and enum
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 TRUE safe", mode: safe, result: bad_arg, bad_arg: 8}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 1 safe", mode: safe, result: bad_arg, bad_arg: 8}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 true Safe", mode: safe, result: bad_arg, bad_arg: 9}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 true 1", mode: safe, result: bad_arg, bad_arg: 9}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 tru safe", mode: safe,
+     result: bad_arg, bad_arg: 8}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 true nom", mode: safe,
+     result: bad_arg, bad_arg: 9}
+  - {text: "typed_app set_all 0 0 0 0 0 0 0 0 true standby", mode: safe,
+     result: bad_arg, bad_arg: 9}
+
+  # The first bad argument is the one reported.
+  - {text: "typed_app set_all 256 0 0 0 0 0 0 0 maybe safe", mode: safe,
+     result: bad_arg, bad_arg: 0}

@@ -7,6 +7,7 @@ flight definitions themselves.
 """
 
 import copy
+import json
 import shutil
 import subprocess
 import sys
@@ -20,12 +21,19 @@ sys.path.insert(0, str(MESSAGES_DIR / "generator"))
 
 import msggen  # noqa: E402
 
+MODES = ["safe", "nominal"]
+
 COMMON = {
     "enums": [{
         "name": "severity",
         "type": "uint8",
         "description": "How serious an event is.",
         "values": [{"name": "info", "value": 1}, {"name": "error", "value": 3}],
+    }, {
+        "name": "mode",
+        "type": "uint8",
+        "description": "Spacecraft mode.",
+        "values": [{"name": "safe", "value": 0}, {"name": "nominal", "value": 1}],
     }],
     "structs": [
         {"name": "frame_tick", "description": "The tick.", "fields": [
@@ -47,9 +55,9 @@ SENSOR = {
     "description": "A frame-driven app.",
     "wakeup": True,
     "commands": [
-        {"name": "set_rate", "id": 1, "description": "Set the rate.",
+        {"name": "set_rate", "id": 1, "description": "Set the rate.", "modes": MODES,
          "fields": [{"name": "hz", "type": "uint16", "description": "Rate."}]},
-        {"name": "reinit", "id": 2, "description": "Reinitialize."},
+        {"name": "reinit", "id": 2, "description": "Reinitialize.", "modes": MODES},
     ],
     "housekeeping": {"description": "Sensor housekeeping.", "fields": [
         {"name": "reads", "type": "uint32"},
@@ -119,6 +127,7 @@ def test_outputs_one_header_and_one_source_per_app(tmp_path):
         "include/msg/common.h",
         "include/msg/quiet.h",
         "include/msg/sensor.h",
+        "src/cmd_routes.c",
         "src/msg_quiet.c",
         "src/msg_sensor.c",
     ]
@@ -249,7 +258,7 @@ def test_app_without_commands_or_wakeup(tmp_path):
 
 
 def test_commands_all_without_fields_have_no_args_union(tmp_path):
-    app = app_with(commands=[{"name": "reinit", "id": 1, "description": "Reinitialize."}])
+    app = app_with(commands=[{"name": "reinit", "id": 1, "description": "Reinitialize.", "modes": MODES}])
     header = generate(write_defs(tmp_path, apps=[app]))["include/msg/sensor.h"]
     assert "SENSOR_CMD_REINIT = 1," in header
     assert "args;" not in header
@@ -264,34 +273,46 @@ def test_multiline_description_becomes_one_comment(tmp_path):
     assert "/** First line second line. */" in header
 
 
-def compile_generated(tmp_path, data_size):
-    """Generate the test definitions and compile each channel source with
-    strict warnings against stand-in Zephyr headers. Returns the gcc results.
+REPO_INCLUDE = MESSAGES_DIR.parent / "include"
+
+
+def compile_generated(tmp_path, data_size, apps=None):
+    """Generate the test definitions and compile each source with strict
+    warnings against stand-in Zephyr headers. Returns {file name: gcc result}.
 
     The stand-ins check only that the output is valid C (for example, no
     empty enum or union when an app has no commands) and that the size
-    checks work. The native_sim test in tests/unit/messages checks the
-    output against real zbus.
+    checks work. The native_sim tests in tests/unit/messages and
+    tests/unit/cmd_route check the output against real zbus.
     """
     out = tmp_path / "out"
-    msggen.write_outputs(generate_paths(write_defs(tmp_path / "defs")), out)
+    msggen.write_outputs(generate_paths(write_defs(tmp_path / "defs", apps=apps)), out)
     stub = out / "include" / "zephyr"
     (stub / "zbus").mkdir(parents=True)
     (stub / "sys").mkdir()
     (stub / "zbus" / "zbus.h").write_text(
-        "#define ZBUS_CHAN_DECLARE(name) extern const int name\n"
+        "#pragma once\n"
+        "struct zbus_channel { int unused; };\n"
+        "typedef int k_timeout_t;\n"
+        "#define K_NO_WAIT 0\n"
+        "int zbus_chan_pub(const struct zbus_channel *chan, const void *msg, k_timeout_t t);\n"
+        "#define ZBUS_CHAN_DECLARE(name) extern const struct zbus_channel name\n"
         "#define ZBUS_OBSERVERS_EMPTY\n"
         "#define ZBUS_MSG_INIT(val, ...) {val, ##__VA_ARGS__}\n"
         "#define ZBUS_CHAN_DEFINE(name, type, v, u, o, init) type name##_msg = init\n")
     (stub / "sys" / "util.h").write_text(
-        "#define BUILD_ASSERT(cond, msg) _Static_assert(cond, msg)\n")
-    return [subprocess.run(
+        "#pragma once\n"
+        "#define BUILD_ASSERT(cond, msg) _Static_assert(cond, msg)\n"
+        "#define BIT(n) (1UL << (n))\n"
+        "#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))\n"
+        "#define ARG_UNUSED(x) (void)(x)\n")
+    return {source.name: subprocess.run(
         ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-fsyntax-only",
          "-DCONFIG_ZBUS_MSG_SUBSCRIBER_BUF_ALLOC_STATIC=1",
          f"-DCONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE={data_size}",
-         "-I", str(out / "include"), str(source)],
+         "-I", str(out / "include"), "-I", str(REPO_INCLUDE), str(source)],
         capture_output=True, text=True)
-        for source in sorted((out / "src").glob("*.c"))]
+        for source in sorted((out / "src").glob("*.c"))}
 
 
 needs_gcc = pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a host C compiler")
@@ -299,14 +320,86 @@ needs_gcc = pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a host
 
 @needs_gcc
 def test_generated_c_compiles(tmp_path):
-    for result in compile_generated(tmp_path, data_size=64):
-        assert result.returncode == 0, result.stderr
+    results = compile_generated(tmp_path, data_size=64)
+    assert "cmd_routes.c" in results
+    for name, result in results.items():
+        assert result.returncode == 0, f"{name}: {result.stderr}"
+
+
+@needs_gcc
+def test_routes_compile_with_no_commands(tmp_path):
+    result = compile_generated(tmp_path, data_size=64, apps=[QUIET])["cmd_routes.c"]
+    assert result.returncode == 0, result.stderr
+
+
+def test_routes(tmp_path):
+    routes = generate(write_defs(tmp_path))["src/cmd_routes.c"]
+    assert '#include "msg/sensor.h"' in routes
+    assert '#include "msg/quiet.h"' in routes
+    # Every app is known, even one with no commands.
+    assert '{"quiet", APP_ID_QUIET},' in routes
+    assert ".command = \"set_rate\"," in routes
+    assert ".modes = BIT(MODE_SAFE) | BIT(MODE_NOMINAL)," in routes
+    assert ".arg_count = 1," in routes
+    assert "cmd_text_unsigned(t, 2, UINT16_MAX, &value)" in routes
+    assert "return zbus_chan_pub(&sensor_cmd_chan, &cmd, K_NO_WAIT)" in routes
+
+
+def test_routes_decode_each_kind(tmp_path):
+    fields = [{"name": "u", "type": "uint32"}, {"name": "s", "type": "int8"},
+              {"name": "b", "type": "bool"}, {"name": "m", "type": "mode"}]
+    app = app_with(commands=[{"name": "all", "id": 1, "description": "d",
+                              "modes": ["nominal"], "fields": fields}])
+    routes = generate(write_defs(tmp_path, apps=[app]))["src/cmd_routes.c"]
+    assert "cmd_text_unsigned(t, 2, UINT32_MAX, &value)" in routes
+    assert "cmd_text_signed(t, 3, INT8_MIN, INT8_MAX," in routes
+    assert "cmd_text_bool(t, 4, &value)" in routes
+    assert "cmd_text_name(t, 5, mode_names, ARRAY_SIZE(mode_names)," in routes
+    assert '{"nominal", MODE_NOMINAL},' in routes
+    assert "info->bad_arg = 3;" in routes
+    assert ".modes = BIT(MODE_NOMINAL)," in routes
+
+
+def test_command_dictionary(tmp_path):
+    defs = msggen.load_definitions(write_defs(tmp_path))
+    d = msggen.command_dictionary(defs)
+    assert d["modes"] == ["safe", "nominal"]
+    sensor = next(a for a in d["apps"] if a["name"] == "sensor")
+    set_rate = next(c for c in sensor["commands"] if c["name"] == "set_rate")
+    assert set_rate["id"] == 1
+    assert set_rate["modes"] == ["safe", "nominal"]
+    assert set_rate["args"] == [{"name": "hz", "type": "uint16", "kind": "unsigned",
+                                 "min": 0, "max": 65535, "description": "Rate."}]
+    quiet = next(a for a in d["apps"] if a["name"] == "quiet")
+    assert quiet["commands"] == []
+
+
+def test_command_dictionary_ranges_and_names(tmp_path):
+    fields = [{"name": "s", "type": "int16"}, {"name": "m", "type": "mode"},
+              {"name": "b", "type": "bool"}]
+    app = app_with(commands=[{"name": "all", "id": 1, "description": "d",
+                              "modes": ["safe"], "fields": fields}])
+    d = msggen.command_dictionary(msggen.load_definitions(write_defs(tmp_path, apps=[app])))
+    args = d["apps"][0]["commands"][0]["args"]
+    assert args[0] == {"name": "s", "type": "int16", "kind": "signed",
+                       "min": -32768, "max": 32767}
+    assert args[1] == {"name": "m", "type": "mode", "kind": "enum",
+                       "values": ["safe", "nominal"]}
+    assert args[2] == {"name": "b", "type": "bool", "kind": "bool"}
+
+
+def test_main_writes_json(tmp_path):
+    root = write_defs(tmp_path / "defs")
+    out = tmp_path / "dict" / "commands.json"
+    assert msggen.main(["--defs", str(root), "--json", str(out)]) == 0
+    assert json.loads(out.read_text())["modes"] == ["safe", "nominal"]
 
 
 @needs_gcc
 def test_message_too_big_for_zbus_buffer_fails_the_build(tmp_path):
     # sensor's frame_tick channel needs 8 bytes; quiet's messages fit in 4.
-    quiet, sensor = compile_generated(tmp_path, data_size=4)
+    results = compile_generated(tmp_path, data_size=4)
+    quiet, sensor = results["msg_quiet.c"], results["msg_sensor.c"]
     assert quiet.returncode == 0, quiet.stderr
     assert sensor.returncode != 0
     assert "sensor_wakeup_chan: raise CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE" \
@@ -372,14 +465,29 @@ APP_ERRORS = [
     ("wakeup not a bool", {"wakeup": "yes"}, "wakeup must be true"),
     ("commands not a list", {"commands": {"name": "x"}}, "must be a list"),
     ("duplicate command id", {"commands": [
-        {"name": "a", "id": 1, "description": "d"},
-        {"name": "b", "id": 1, "description": "d"}]}, "duplicate command id 1"),
+        {"name": "a", "id": 1, "description": "d", "modes": MODES},
+        {"name": "b", "id": 1, "description": "d", "modes": MODES}]}, "duplicate command id 1"),
     ("duplicate command name", {"commands": [
-        {"name": "a", "id": 1, "description": "d"},
-        {"name": "a", "id": 2, "description": "d"}]}, "duplicate command name 'a'"),
-    ("command id zero", {"commands": [{"name": "a", "id": 0, "description": "d"}]},
+        {"name": "a", "id": 1, "description": "d", "modes": MODES},
+        {"name": "a", "id": 2, "description": "d", "modes": MODES}]}, "duplicate command name 'a'"),
+    ("command id zero", {"commands": [{"name": "a", "id": 0, "description": "d", "modes": MODES}]},
      "outside 1..65535"),
-    ("reserved command name", {"commands": [{"name": "hk", "id": 1, "description": "d"}]},
+    ("modes missing", {"commands": [{"name": "a", "id": 1, "description": "d"}]},
+     "list the modes this command is allowed in"),
+    ("modes empty", {"commands": [{"name": "a", "id": 1, "description": "d", "modes": []}]},
+     "list the modes this command is allowed in"),
+    ("unknown mode", {"commands": [{"name": "a", "id": 1, "description": "d",
+                                    "modes": ["standby"]}]}, "unknown mode 'standby'"),
+    ("mode twice", {"commands": [{"name": "a", "id": 1, "description": "d",
+                                  "modes": ["safe", "safe"]}]}, "listed twice"),
+    ("float argument", {"commands": [{"name": "a", "id": 1, "description": "d", "modes": MODES,
+                                      "fields": [field(type="float32")]}]},
+     "float32 arguments are not supported in commands yet"),
+    ("too many arguments", {"commands": [{"name": "a", "id": 1, "description": "d",
+                                          "modes": MODES,
+                                          "fields": [field(f"x{i}") for i in range(15)]}]},
+     "at most 14 arguments"),
+    ("reserved command name", {"commands": [{"name": "hk", "id": 1, "description": "d", "modes": MODES}]},
      "reserved"),
     ("empty description", {"description": "  "}, "non-empty text"),
     ("data channel type not shared", {"data_channels": [
@@ -416,6 +524,7 @@ def enum(values, type="uint8"):
 
 COMMON_ERRORS = [
     ("missing frame_tick", {"structs": COMMON["structs"][1:]}, "must define struct 'frame_tick'"),
+    ("missing mode", {"enums": COMMON["enums"][:1]}, "must define enum 'mode'"),
     ("enum value too big", {"enums": enum([{"name": "a", "value": 256}])}, "outside 0..255"),
     ("negative enum value", {"enums": enum([{"name": "a", "value": -1}])}, "outside 0..255"),
     ("duplicate enum value", {"enums": enum([{"name": "a", "value": 1},
@@ -467,9 +576,9 @@ def test_duplicate_app_id_across_files(tmp_path):
 def test_generated_names_collide_across_apps(tmp_path):
     # foo's command bar_baz and foo_bar's command baz both make struct foo_bar_baz.
     foo = app_with(app="foo", id=4, commands=[
-        {"name": "bar_baz", "id": 1, "description": "d", "fields": [field()]}])
+        {"name": "bar_baz", "id": 1, "description": "d", "modes": MODES, "fields": [field()]}])
     foo_bar = app_with(app="foo_bar", id=5, commands=[
-        {"name": "baz", "id": 1, "description": "d", "fields": [field()]}])
+        {"name": "baz", "id": 1, "description": "d", "modes": MODES, "fields": [field()]}])
     root = write_defs(tmp_path, apps=[foo, foo_bar])
     with pytest.raises(msggen.DefinitionError, match="generated name 'foo_bar_baz'"):
         msggen.load_definitions(root)

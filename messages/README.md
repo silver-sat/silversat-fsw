@@ -35,12 +35,32 @@ Your app includes only `msg/foo.h` and `msg/common.h`.
 
 1. Add an entry under `commands:` in `apps/<app>.yaml`, with a new `id`. Never
    reuse an ID or delete a command that has flown (DS-62).
-2. Commands set state; they do not toggle it (DS-35).
-3. Rebuild. The generator checks your change and stops with a message naming
+2. List the modes it is allowed in, for example `modes: [safe, nominal]`.
+   There is no default (DS-50).
+3. Commands set state; they do not toggle it (DS-35).
+4. Rebuild. The generator checks your change and stops with a message naming
    the file and the entry if something is wrong.
 
 Field types are `bool`, `uint8` to `uint64`, `int8` to `int64`, `float32`,
-`float64`, or the name of an enum in `common.yaml`.
+`float64`, or the name of an enum in `common.yaml`. Command arguments can't
+be floats yet.
+
+## Command text
+
+The ground sends a command as text: the app, the command, then the
+arguments in YAML order, separated by single spaces:
+
+```
+frame_manager set_entry_enabled nominal 3 false
+```
+
+Integers are decimal, bools are `true` or `false`, and enums are the value's
+name. The generator writes the satellite's decoder (`src/cmd_routes.c`), and
+`tools/command_text.py` checks text on the ground using the same YAML:
+
+```
+python3 tools/command_text.py frame_manager set_entry_enabled nominal 3 false
+```
 
 ## Build checks
 

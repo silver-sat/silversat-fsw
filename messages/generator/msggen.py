@@ -12,6 +12,10 @@ Input:
     <defs>/common.yaml       shared types     -> include/msg/common.h
     <defs>/apps/<app>.yaml   one app's types  -> include/msg/<app>.h
                              and its channels -> src/msg_<app>.c
+    every command                             -> src/cmd_routes.c
+
+--json FILE also writes the command dictionary (DS-61), which the ground
+uses to format and check command text (tools/command_text.py).
 
 Leave out --out to check the definitions without writing anything.
 
@@ -24,6 +28,7 @@ come later, with command ingest.
 """
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -84,6 +89,21 @@ RESERVED_APP_NAMES = {"common"}
 # common.yaml must define these; every app's channels use them.
 REQUIRED_STRUCTS = ("frame_tick", "app_status")
 
+# common.yaml must define enum mode; every command lists the modes it is
+# allowed in (DS-50).
+REQUIRED_ENUMS = ("mode",)
+
+# A command's text is "<app> <command> <arguments>", at most
+# CMD_TEXT_WORDS_MAX (16) words in include/silversat/cmd_text.h.
+COMMAND_ARGS_MAX = 14
+
+# How each field type is written in command text, and its C range.
+UNSIGNED_MAX = {"uint8": "UINT8_MAX", "uint16": "UINT16_MAX",
+                "uint32": "UINT32_MAX", "uint64": "UINT64_MAX"}
+SIGNED_RANGE = {"int8": ("INT8_MIN", "INT8_MAX"), "int16": ("INT16_MIN", "INT16_MAX"),
+                "int32": ("INT32_MIN", "INT32_MAX"), "int64": ("INT64_MIN", "INT64_MAX")}
+FLOAT_TYPES = ("float32", "float64")
+
 APP_ID_MAX = 0xFF          # struct event carries the app as uint8
 COMMAND_ID_MAX = 0xFFFF    # struct <app>_cmd carries the id as uint16
 
@@ -102,6 +122,19 @@ class Field:
     ctype: str                # C type used in the struct
     description: str
     enum: str | None = None   # the enum's name, if the type is an enum
+
+    @property
+    def text_kind(self):
+        """How the field is written in command text."""
+        if self.enum:
+            return "enum"
+        if self.type == "bool":
+            return "bool"
+        if self.type in UNSIGNED_MAX:
+            return "unsigned"
+        if self.type in SIGNED_RANGE:
+            return "signed"
+        return None
 
 
 @dataclass
@@ -143,6 +176,7 @@ class Command:
     fields: list[Field]
     constant: str             # C name of the id, for example FRAME_MANAGER_CMD_SET_ENTRY_ENABLED
     struct: str               # C name of the arguments struct
+    modes: list[str]          # the modes it is allowed in (DS-50)
 
 
 @dataclass
@@ -241,6 +275,16 @@ class Definitions:
     @property
     def wakeup_apps(self):
         return [a for a in self.apps if a.wakeup]
+
+    @property
+    def enums_by_name(self):
+        return {e.name: e for e in self.enums}
+
+    @property
+    def command_enums(self):
+        """Enums used by some command argument, in definition order."""
+        used = {f.enum for a in self.apps for c in a.commands for f in c.fields if f.enum}
+        return [e for e in self.enums if e.name in used]
 
 
 # --- Checking helpers -----------------------------------------------------
@@ -401,24 +445,58 @@ def _parse_common(path):
         if required not in {s.name for s in structs}:
             raise DefinitionError(
                 f"{where}: must define struct {required!r}; every app's channels use it")
+    for required in REQUIRED_ENUMS:
+        if required not in by_name:
+            raise DefinitionError(
+                f"{where}: must define enum {required!r}; every command lists its modes")
     return enums, structs
 
 
+def _parse_modes(node, where, enums):
+    """The modes a command is allowed in. Required: no default (DS-50)."""
+    modes = node.get("modes")
+    if not isinstance(modes, list) or not modes:
+        raise DefinitionError(
+            f"{where}: list the modes this command is allowed in, for example "
+            "modes: [safe, nominal]")
+    known = [v.name for v in enums["mode"].values]
+    seen = set()
+    for i, mode in enumerate(modes):
+        if mode not in known:
+            raise DefinitionError(
+                f"{where}[{i}]: unknown mode {mode!r}; the modes are {', '.join(known)}")
+        if mode in seen:
+            raise DefinitionError(f"{where}[{i}]: mode {mode!r} is listed twice")
+        seen.add(mode)
+    return modes
+
+
 def _parse_command(node, where, app_name, enums):
-    _check_keys(node, where, ("name", "id", "description"), ("fields",))
+    # modes is required, but _parse_modes says so with an example.
+    _check_keys(node, where, ("name", "id", "description"), ("fields", "modes"))
     name = _name(node["name"], f"{where}.name")
     if name in RESERVED_COMMAND_NAMES:
         raise DefinitionError(
             f"{where}.name: {name!r} is reserved for the generator's own "
             f"{app_name}_{name} type")
+    fields = _parse_fields(_sequence(node, "fields", where), f"{where}.fields", enums,
+                           allow_empty=True)
+    for i, f in enumerate(fields):
+        if f.type in FLOAT_TYPES:
+            raise DefinitionError(
+                f"{where}.fields[{i}]: {f.type} arguments are not supported in commands "
+                "yet; they arrive with the first command that needs one")
+    if len(fields) > COMMAND_ARGS_MAX:
+        raise DefinitionError(
+            f"{where}.fields: a command has at most {COMMAND_ARGS_MAX} arguments")
     return Command(
         name=name,
         id=_integer(node["id"], f"{where}.id", 1, COMMAND_ID_MAX),
         description=_text(node["description"], f"{where}.description"),
-        fields=_parse_fields(_sequence(node, "fields", where), f"{where}.fields", enums,
-                             allow_empty=True),
+        fields=fields,
         constant=f"{app_name}_cmd_{name}".upper(),
         struct=f"{app_name}_{name}",
+        modes=_parse_modes(node, f"{where}.modes", enums),
     )
 
 
@@ -563,6 +641,9 @@ def render(defs):
         keep_trailing_newline=True,
     )
     env.filters["comment"] = _c_comment
+    env.filters["unsigned_max"] = lambda t: UNSIGNED_MAX[t]
+    env.filters["signed_min"] = lambda t: SIGNED_RANGE[t][0]
+    env.filters["signed_max"] = lambda t: SIGNED_RANGE[t][1]
 
     outputs = {
         Path("include/msg/common.h"): env.get_template("common.h.j2").render(defs=defs),
@@ -572,7 +653,43 @@ def render(defs):
             env.get_template("app.h.j2").render(app=app)
         outputs[Path(f"src/msg_{app.name}.c")] = \
             env.get_template("app_channels.c.j2").render(app=app)
+    outputs[Path("src/cmd_routes.c")] = \
+        env.get_template("cmd_routes.c.j2").render(defs=defs)
     return outputs
+
+
+def _field_entry(field, defs):
+    entry = {"name": field.name, "type": field.type, "kind": field.text_kind}
+    if field.enum:
+        entry["values"] = [v.name for v in defs.enums_by_name[field.enum].values]
+    elif field.type in UNSIGNED_MAX:
+        bits = int(field.type[4:])
+        entry["min"], entry["max"] = 0, 2**bits - 1
+    elif field.type in SIGNED_RANGE:
+        bits = int(field.type[3:])
+        entry["min"], entry["max"] = -(2**(bits - 1)), 2**(bits - 1) - 1
+    if field.description:
+        entry["description"] = field.description
+    return entry
+
+
+def command_dictionary(defs):
+    """Every command, resolved, as plain data (DS-61). The ground formats and
+    checks command text from this; --json writes it for other languages."""
+    return {
+        "modes": [v.name for v in defs.enums_by_name["mode"].values],
+        "apps": [{
+            "name": app.name,
+            "id": app.id,
+            "commands": [{
+                "name": c.name,
+                "id": c.id,
+                "description": c.description,
+                "modes": c.modes,
+                "args": [_field_entry(f, defs) for f in c.fields],
+            } for c in app.commands],
+        } for app in defs.apps],
+    }
 
 
 def write_outputs(outputs, out_dir):
@@ -594,6 +711,8 @@ def main(argv=None):
                         help="output directory; leave out to only check the definitions")
     parser.add_argument("--extra-apps", type=Path, action="append", default=[],
                         metavar="DIR", help="a directory of test-only <app>.yaml files")
+    parser.add_argument("--json", type=Path, metavar="FILE",
+                        help="also write the command dictionary as JSON (DS-61)")
     args = parser.parse_args(argv)
 
     try:
@@ -603,6 +722,9 @@ def main(argv=None):
         return 1
     if args.out:
         write_outputs(render(defs), args.out)
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps(command_dictionary(defs), indent=2) + "\n")
     return 0
 
 
