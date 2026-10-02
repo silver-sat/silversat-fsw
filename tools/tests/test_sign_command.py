@@ -70,6 +70,22 @@ def test_default_counter_is_increasing():
     assert sc.default_counter(last=now + 1000) == now + 1001
 
 
+def test_counter_too_far_ahead():
+    now = 1_790_812_800_000
+    sc.check_not_too_far_ahead(now + sc.FUTURE_MARGIN_MS, now)
+    with pytest.raises(ValueError, match="more than a day ahead"):
+        sc.check_not_too_far_ahead(now + sc.FUTURE_MARGIN_MS + 1, now)
+    with pytest.raises(ValueError, match="check its units"):
+        sc.check_not_too_far_ahead(now * 1000, now)       # microseconds by mistake
+
+
+def test_main_refuses_a_counter_far_ahead(capsys):
+    far = sc.now_ms() * 1000
+    assert sc.main(["--counter", str(far), "noop"]) == 1
+    assert "more than a day ahead" in capsys.readouterr().err
+    assert sc.main(["--counter", str(far), "--allow-future", "noop"]) == 0
+
+
 def test_load_key(tmp_path):
     assert len(sc.load_key(sc.TEST_KEY_FILE)) == sc.KEY_LEN
     bad = tmp_path / "short.txt"
