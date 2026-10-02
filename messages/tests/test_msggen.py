@@ -226,6 +226,8 @@ def test_app_header(tmp_path):
     assert '#include "msg/common.h"' in header
     assert "SENSOR_CMD_SET_RATE = 1," in header
     assert "SENSOR_CMD_REINIT = 2," in header
+    assert '#define SENSOR_APP_NAME "sensor"' in header
+    assert '#define SENSOR_CMD_SET_RATE_NAME "set_rate"' in header
     assert "struct sensor_set_rate {" in header
     # A command without fields gets no arguments struct.
     assert "struct sensor_reinit" not in header

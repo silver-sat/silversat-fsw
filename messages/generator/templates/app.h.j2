@@ -19,6 +19,12 @@ enum {{ app.cmd_id_enum }} {
 	{{ c.constant }} = {{ c.id }},
 {% endfor %}
 };
+
+/* The words for this app and its commands in command text (DS-50). */
+#define {{ app.name_constant }} "{{ app.name }}"
+{% for c in app.commands %}
+#define {{ c.constant }}_NAME "{{ c.name }}"
+{% endfor %}
 {% endif %}
 {% for c in app.commands_with_args %}
 

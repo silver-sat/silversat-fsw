@@ -90,13 +90,15 @@ def test_c_packets(tmp_path):
     spec = tmp_path / "packets.yaml"
     spec.write_text("packets:\n"
                     "  - {name: ping, text: typed_app ping, counter: 5, key: slot0}\n"
-                    "  - {name: other_key, text: typed_app ping, counter: 6, key: slot1}\n")
+                    "  - {name: other_key, text: typed_app ping, counter: 6, key: slot1}\n"
+                    "  - {name: forged, text: typed_app ping, counter: 7, key: bogus}\n")
     header = sc.c_packets(spec)
     assert "#define PKT_PING_COUNTER 0x0000000000000005ULL" in header
     slot0 = sc.load_key(sc.TEST_KEY_FILES["slot0"])
     expected = sc.sign("typed_app ping", slot0, 5, sc.VECTOR_SALT)
     assert f'#define PKT_PING "{expected}"' in header
     assert "slot1, counter 6" in header
+    assert sc.sign("typed_app ping", bytes(range(32)), 7, sc.VECTOR_SALT) in header
 
     out = tmp_path / "out" / "packets.h"
     assert sc.main(["--c-packets", str(spec), str(out)]) == 0
