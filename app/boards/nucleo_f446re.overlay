@@ -1,7 +1,12 @@
 /*
  * Application overlay for the Nucleo-F446RE flatsat target.
  *
- * Empty for now. The magnetometer PR adds:
+ * The radio's UART (DS-07) is usart1 on PA9 (TX, Arduino D8) and PA10 (RX,
+ * Arduino D2), at SilverSat 1's 19200 baud. The board's default PB6/PB7
+ * pins are not used, because PB6 is reserved below for the magnetometer's
+ * chip select. To be confirmed by the five-UART pin-mux check.
+ *
+ * The magnetometer PR adds:
  *
  *   &spi1 {
  *           status = "okay";
@@ -18,3 +23,16 @@
  * overlay. That is what lets the same driver code and the same tests run
  * against both, with no #ifdef anywhere.
  */
+
+/ {
+	aliases {
+		radio-uart = &usart1;
+	};
+};
+
+&usart1 {
+	pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
+	pinctrl-names = "default";
+	current-speed = <19200>;
+	status = "okay";
+};

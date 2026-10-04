@@ -1,0 +1,14 @@
+# Radio app (DS-32, DS-33).
+
+config SS_RADIO
+	bool "Radio app"
+	depends on SS_MESSAGES
+	depends on $(dt_alias_enabled,radio-uart)
+	select SS_LINK
+	select SS_LINK_CODEC
+	select SERIAL
+	select UART_INTERRUPT_DRIVEN
+	select RING_BUFFER
+	help
+	  Carries ground traffic between the radio's UART (the radio-uart
+	  devicetree alias) and the uplink and downlink queues.

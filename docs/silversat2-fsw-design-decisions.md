@@ -42,6 +42,7 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 - CI builds both.
 
 **DS-07 Resource map: Specified.** A single header defines all thread priorities, stack sizes, zbus message pool sizes, and UART assignments.
+- A UART assignment is a devicetree alias (for example `radio-uart`) named in the header and bound to a UART in each board's overlay: on native_sim a pseudo-terminal, on the Nucleo a USART and its pins.
 - It also holds one const attribute row per app: the protected flag, the stall threshold, and the re-enable policy (DS-43). The frame manager and health both read this row, so each app's attributes are stated once.
 - The zbus message pool size is computed in the header from the app counts: `FRAME_MAX_PENDING` for each frame-driven app, plus each app's command and housekeeping-request depths, plus one buffer for each thread that publishes, because every publish holds a buffer while it runs (DS-22). Zephyr takes the pool size from Kconfig, so a build check fails if the Kconfig value is smaller than the computed size.
 - Every buffer must hold the largest message on any channel, observed or not, because every publish takes one. The generated channel definitions fail the build if a message does not fit.
@@ -115,6 +116,7 @@ Apps timestamp their data from the frame tick, not by calling the clock.
 **DS-33 Subsystem app behavior: Proposed.**
 - Never block. Waiting is a state in a per-frame state machine.
 - A shared link library handles framing, CRC, sequence numbers, and retries. Each subsystem app implements only its own message set.
+- The radio app, decided 2026-10-04: woken every minor frame, in the slot before command ingest. The UART interrupt only moves bytes between the UART and two static ring buffers, one each way; nothing is published from it. Each frame the app decodes what arrived, passes ground frames to the uplink queue, drops a repeated frame, counts lost ones from sequence gaps, and encodes waiting downlink frames for the interrupt to send.
 - Acknowledgement, decided 2026-10-02: commands to a peer ("get status") expect a response, and the subsystem app's state machine retries on timeout. Data frames (uplink, downlink) are not acknowledged on the link; command ACKs are end-to-end already (DS-50), and telemetry is periodic.
 - Mirror the peer's state, including how fresh it is. After a link timeout, report "unknown."
 - Detect peer resets through a boot counter in the peer's telemetry.
@@ -263,7 +265,7 @@ The dictionary version and hash are included in the beacon.
 - The fallback, the common IEEE CRC-32 used by Ethernet and zlib, is used only if a subsystem cannot support CRC-32C. It is chosen per link and recorded in that link's interface document; there is no negotiation on the wire.
 - The golden vectors (DS-61) include CRC test frames for every link.
 
-**DS-66 KISS framing: Specified / Open.** The radio is not yet selected (2026-10-02), so the link codec is built generically and no type byte values are assigned yet.
+**DS-66 KISS framing: Specified / Open.** The radio is not yet selected (2026-10-02), so the link codec is built generically. Ground traffic uses the standard data frame, `0x00`, in both directions (decided 2026-10-04); no other type byte is assigned yet.
 - *Specified:* keep KISS on all serial links.
 - *Specified:* support the standard data frame (0x00) if required.
 - *Specified:* command packets are under 256 bytes.
@@ -375,6 +377,7 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 - On the flatsat, the same simulators run on the Mac Mini through USB-serial adapters.
 - The flight code is unchanged across stages; only the far end of the wire changes.
 - Each simulator has a fault menu.
+- The first is `sim/radio_sim.py`. Its fault menu drops, corrupts, repeats, splits, or renumbers a frame, sends noise first, or uses an unhandled type byte. `tests/app/radio` runs the flight apps against it in real time (DS-92).
 
 **DS-91 Shared Python package: Specified.** One Python codebase provides KISS, CRC, sequencing, and signatures for both the satellite radio simulator and the ground station interface. The local serial link layer and the end-to-end space link layer are kept distinct.
 
@@ -415,7 +418,7 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | DS-69 | Beacon size, interval, and Morse subset, after radio and mission selection |
 | — | Mission objectives and form factor (1U expected) |
 | — | Minor frame rate once ADCS requirements are known |
-| — | Pin mux check for five UARTs on the Nucleo-F446RE |
+| — | Pin mux check for five UARTs on the Nucleo-F446RE. So far: radio on USART1 at PA9/PA10, because the default PB6 is reserved for the magnetometer's chip select |
 | — | Driver and emulator support for the selected IMU and FRAM parts in the pinned Zephyr version |
 | DS-43 | How health gets each app's delivered and overrun counts from the frame manager, without large housekeeping messages (DS-07, DS-11) |
 | DS-10 | The events channel: owner, how its queued copies are bounded, and its effect on the zbus pool. Until then, apps count rejections in housekeeping |
@@ -445,3 +448,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-02 | DS-50: command ingest is woken every minor frame; one reply per authenticated command after routing (`ACK <counter> <result>` or `NAK <counter> <reason>`), none for shape or signature failures; `busy` when an app has `CMD_MAX_PENDING` unhandled ground commands. DS-54: keys from Kconfig key files, and a flight build refuses the published test keys. Open item for key rotation and floor reset |
 | 2026-10-02 | DS-53: no floor is ever reset, including by rotation (the floor default no longer mentions rotation). DS-54: rotation commands, signing by the new slot, the 10-minute arm, replies for the spare key, and the active slot in RAM until FRAM. Rotation open item closed |
 | 2026-10-02 | DS-65: frame layout (type, seq, len, payload, CRC) on every avionics serial link, implemented in `lib/link_codec` and `tools/link_codec.py`. DS-33: commands to a peer expect a response and are retried by the app; data frames are not acknowledged on the link. DS-66: radio not yet selected; no type byte values assigned |
+| 2026-10-04 | DS-07: UART assignments are devicetree aliases named in the resource map. DS-33: the radio app (every minor frame, interrupt-driven ring buffers). DS-66: ground traffic uses data frame 0x00 both ways. DS-90: the radio simulator and its fault menu. Open items: the radio's Nucleo pins |

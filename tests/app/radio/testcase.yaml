@@ -1,0 +1,15 @@
+common:
+  tags:
+    - app
+    - radio
+
+tests:
+  app.radio:
+    # A Python radio simulator talks to the radio UART's pseudo-terminal
+    # (DS-90), in real time (DS-92). Keep these tests short.
+    harness: pytest
+    harness_config:
+      pytest_dut_scope: session
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
