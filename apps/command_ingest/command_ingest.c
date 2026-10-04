@@ -282,7 +282,8 @@ static void step(const struct frame_tick *tick)
 		ingest(&frame, tick->met_ms);
 		handled = true;
 	}
-	if (handled || armed != was_armed) {
+	/* At least once a major frame (DS-14), and whenever something changed. */
+	if (handled || armed != was_armed || tick->slot == 0) {
 		zbus_chan_pub(&command_ingest_hk_chan, &hk, K_NO_WAIT);
 	}
 }

@@ -7,6 +7,7 @@ flight definitions themselves.
 """
 
 import copy
+import os
 import json
 import shutil
 import subprocess
@@ -132,6 +133,7 @@ def test_outputs_one_header_and_one_source_per_app(tmp_path):
         "src/cmd_routes.c",
         "src/msg_quiet.c",
         "src/msg_sensor.c",
+        "src/tlm_encode.c",
     ]
 
 
@@ -309,6 +311,13 @@ def compile_generated(tmp_path, data_size, apps=None):
     (out / "include" / "silversat").mkdir()
     (out / "include" / "silversat" / "resource_map.h").write_text(
         "#pragma once\n#define CMD_MAX_PENDING 2\n")
+    (stub / "sys" / "byteorder.h").write_text(
+        "#pragma once\n#include <stdint.h>\n"
+        "static inline void sys_put_le16(uint16_t v, uint8_t *d) { d[0] = v; d[1] = v >> 8; }\n"
+        "static inline void sys_put_le32(uint32_t v, uint8_t *d) "
+        "{ sys_put_le16(v, d); sys_put_le16(v >> 16, d + 2); }\n"
+        "static inline void sys_put_le64(uint64_t v, uint8_t *d) "
+        "{ sys_put_le32(v, d); sys_put_le32(v >> 32, d + 4); }\n")
     (stub / "sys" / "util.h").write_text(
         "#pragma once\n"
         "#define BUILD_ASSERT(cond, msg) _Static_assert(cond, msg)\n"
@@ -316,7 +325,9 @@ def compile_generated(tmp_path, data_size, apps=None):
         "#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))\n"
         "#define ARG_UNUSED(x) (void)(x)\n")
     return {source.name: subprocess.run(
-        ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-fsyntax-only",
+        # A real compile, not -fsyntax-only, which skips some warnings
+        # (unused static functions among them).
+        ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-c", "-o", os.devnull,
          "-DCONFIG_ZBUS_MSG_SUBSCRIBER_BUF_ALLOC_STATIC=1",
          f"-DCONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE={data_size}",
          "-I", str(out / "include"), "-I", str(REPO_INCLUDE), str(source)],
@@ -381,6 +392,41 @@ def test_command_dictionary(tmp_path):
                                  "min": 0, "max": 65535, "description": "Rate."}]
     quiet = next(a for a in d["apps"] if a["name"] == "quiet")
     assert quiet["commands"] == []
+
+
+def test_housekeeping_wire_layout(tmp_path):
+    fields = [{"name": "b", "type": "bool"}, {"name": "u16", "type": "uint16"},
+              {"name": "m", "type": "mode"}, {"name": "i64", "type": "int64"},
+              {"name": "f", "type": "float32"}, {"name": "d", "type": "float64"}]
+    app = app_with(housekeeping={"description": "d", "fields": fields})
+    defs = msggen.load_definitions(write_defs(tmp_path, apps=[app]))
+    hk = msggen.command_dictionary(defs)["apps"][0]["housekeeping"]
+    # Packed in order, no padding (DS-64).
+    assert [(f["name"], f["offset"], f["size"]) for f in hk["fields"]] == [
+        ("b", 0, 1), ("u16", 1, 2), ("m", 3, 1), ("i64", 4, 8), ("f", 12, 4), ("d", 16, 8)]
+    assert hk["size"] == 24
+    assert hk["fields"][2]["values"] == [{"name": "safe", "value": 0},
+                                         {"name": "nominal", "value": 1}]
+
+    source = generate(write_defs(tmp_path / "again", apps=[app]))["src/tlm_encode.c"]
+    assert "out[0] = hk.b ? 1 : 0;" in source
+    assert "sys_put_le16((uint16_t)hk.u16, &out[1]);" in source
+    assert "out[3] = (uint8_t)hk.m;" in source
+    assert "sys_put_le64((uint64_t)hk.i64, &out[4]);" in source
+    assert "put_f32(hk.f, &out[12]);" in source
+    assert "put_f64(hk.d, &out[16]);" in source
+    assert "return 24;" in source
+    assert "{APP_ID_SENSOR, 24, encode_sensor}," in source
+
+
+def test_housekeeping_must_fit_one_frame(tmp_path):
+    fields = [{"name": f"x{i}", "type": "uint64"} for i in range(31)]   # 248 bytes
+    app = app_with(housekeeping={"description": "d", "fields": fields})
+    with pytest.raises(msggen.DefinitionError, match="248 bytes on the downlink"):
+        msggen.load_definitions(write_defs(tmp_path, apps=[app]))
+    fields = fields[:30] + [{"name": "y", "type": "uint32"}, {"name": "z", "type": "uint8"}]
+    app = app_with(housekeeping={"description": "d", "fields": fields})
+    msggen.load_definitions(write_defs(tmp_path / "fits", apps=[app]))   # 245 bytes
 
 
 def test_command_dictionary_ranges_and_names(tmp_path):

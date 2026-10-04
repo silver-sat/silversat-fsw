@@ -1,0 +1,10 @@
+# Telemetry output (DS-10, DS-69).
+
+config SS_TELEMETRY_OUTPUT
+	bool "Telemetry output"
+	depends on SS_MESSAGES
+	select SS_LINK
+	select SS_TLM_ENCODE
+	help
+	  Sends each app's housekeeping to the ground through the downlink
+	  queue, one app per major frame.

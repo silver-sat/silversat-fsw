@@ -72,7 +72,7 @@ Channel validators run at publish time in the publisher's context. That is how p
 
 ### Why phasing
 
-A table of slots within a fixed major frame makes data flow through each second in a known order: sensors read in slot 0, so ADCS in slot 1 always has fresh data; housekeeping is collected in slot 5 and shipped in slot 6. Independent timers per app drift relative to each other in ways that are hard to predict.
+A table of slots within a fixed major frame makes data flow through each second in a known order: sensors read in slot 0, so ADCS in slot 1 always has fresh data; telemetry output encodes housekeeping in slot 5 and the radio ships it at the next minor frame. Independent timers per app drift relative to each other in ways that are hard to predict.
 
 ### Why a thread, not the timer ISR
 
@@ -159,6 +159,12 @@ Messages are consumed by C flight code, Python simulators, the ground station, a
 
 Padding and field sizes differ between the Cortex-M4, 32-bit native_sim, and 64-bit native_sim.
 
+### Why telemetry output reads the latest housekeeping instead of requesting it
+
+The cFS pattern is a housekeeping request: telemetry output asks, each app answers. On zbus every request is a queued copy for every app, each holding a pool buffer, and the answer is one more publish, all to fetch a value that is already sitting on the app's housekeeping channel. A last-value channel (DS-11) is made for this: each app publishes its housekeeping at least once a major frame (DS-14), and telemetry output reads whichever value is latest without waking anyone. The pool loses its request budget, and an app that has stalled still has its last housekeeping read and sent, which is what the ground wants to see.
+
+The encoders are generated (DS-61) so telemetry output never includes another app's header (DS-68), and the ground decoder reads the same layout from the JSON dictionary. Each downlink packet starts with a printable letter giving its kind (DS-66), so a hex dump or a terminal shows at a glance whether a packet is a reply or telemetry.
+
 ### Why CRC before KISS escaping
 
 1. The CRC bytes themselves must be escaped; appending a CRC after escaping would occasionally put a raw frame delimiter in the stream.
@@ -227,7 +233,6 @@ These are sketches of the shape, not final code. Real message types, channel nam
 ZBUS_MSG_SUBSCRIBER_DEFINE(adcs_sub);
 ZBUS_CHAN_ADD_OBS(adcs_wakeup_chan, adcs_sub, 3);
 ZBUS_CHAN_ADD_OBS(adcs_cmd_chan, adcs_sub, 3);
-ZBUS_CHAN_ADD_OBS(hk_req_chan, adcs_sub, 3);
 
 static struct app_status status;
 
@@ -240,7 +245,6 @@ static struct app_status status;
 union adcs_msg {
     struct frame_tick tick;
     struct adcs_cmd cmd;
-    struct hk_req hk_req;
 };
 
 static void adcs_main(void *a, void *b, void *c)
@@ -253,14 +257,16 @@ static void adcs_main(void *a, void *b, void *c)
         if (chan == &adcs_wakeup_chan) {
             adcs_step(&msg.tick);
             status.steps++;
+            if (msg.tick.slot == 0) {
+                /* At least once a major frame; telemetry output reads the latest (DS-14). */
+                zbus_chan_pub(&adcs_hk_chan, &adcs_hk, K_NO_WAIT);
+            }
         } else if (chan == &adcs_cmd_chan) {
             if (adcs_dispatch(&msg.cmd) == 0) {
                 status.cmd_accepted++;
             } else {
                 status.cmd_rejected++;
             }
-        } else if (chan == &hk_req_chan) {
-            zbus_chan_pub(&adcs_hk_chan, &adcs_hk, K_NO_WAIT);
         }
         zbus_chan_pub(&adcs_status_chan, &status, K_NO_WAIT);
     }

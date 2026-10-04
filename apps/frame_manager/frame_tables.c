@@ -36,14 +36,26 @@
 	 .wakeup_chan = &command_ingest_wakeup_chan, .status_chan = &command_ingest_status_chan}
 #define LINK_IN_SLOT(n) RADIO_IN_SLOT(n), COMMAND_INGEST_IN_SLOT(n)
 
+/*
+ * Telemetry output runs once a major frame, in slot 5. Apps publish their
+ * housekeeping early in the major frame (DS-14), and the radio sends the
+ * packet in slot 6 (DS-21's "collected in slot 5, shipped in slot 6").
+ */
+#define TELEMETRY_OUTPUT_IN_SLOT(n)                                                            \
+	{.slot = (n), .app = APP_ID_TELEMETRY_OUTPUT,                                          \
+	 .wakeup_chan = &telemetry_output_wakeup_chan,                                         \
+	 .status_chan = &telemetry_output_status_chan}
+
 static const struct frame_entry safe_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
+	TELEMETRY_OUTPUT_IN_SLOT(5),
 };
 
 static const struct frame_entry nominal_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
+	TELEMETRY_OUTPUT_IN_SLOT(5),
 };
 
 BUILD_ASSERT(ARRAY_SIZE(safe_entries) <= FRAME_ENTRIES_MAX);

@@ -22,7 +22,7 @@ Code is read and extended by high school students working a few hours a week. Pr
 ## Architecture rules
 
 - cFS-style apps on zbus (DS-10). One app = one directory, one thread, one pending point (`zbus_sub_wait_msg`).
-- Each app has a command channel, a housekeeping channel, and a status channel (step counter, accepted/rejected command counters) (DS-14).
+- Each app has a command channel, a housekeeping channel, and a status channel (step counter, accepted/rejected command counters) (DS-14). Every app publishes its housekeeping at least once per major frame (at slot 0, or when it changes); telemetry output reads the latest value, and nobody requests housekeeping.
 - Apps share data **only** through channels. No globals shared across apps; no `extern` reaching into another app's directory (DS-12).
 - Commands use message subscribers (never lost). Telemetry and sensor data use last-value channels (DS-11).
 - Periodic work is driven only by the **frame manager** (not "scheduler"; that name belongs to the Zephyr kernel) (DS-20). Apps never start their own timers.

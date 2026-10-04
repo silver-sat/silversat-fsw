@@ -99,6 +99,15 @@ def test_receive(link):
     assert sim.replies(timeout=1.0, count=2) == ["ACK 01 ok", "ACK 02 ok"]
 
 
+def test_replies_set_housekeeping_aside(link):
+    sim, avionics = link
+    hk = b"H\x01" + bytes(8) + b"\x2a"
+    os.write(avionics, link_codec.encode(link_codec.Packet(0x00, 5, hk)) +
+             link_codec.encode(link_codec.Packet(0x00, 6, b"NAK 01 replay")))
+    assert sim.replies(timeout=1.0) == ["NAK 01 replay"]
+    assert sim.housekeeping == [hk]
+
+
 def test_receive_records_bad_frames(link):
     sim, avionics = link
     os.write(avionics, bytes([0xC0, 0x00, 0x01, 0xC0]))

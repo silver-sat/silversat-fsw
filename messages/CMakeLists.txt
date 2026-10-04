@@ -39,6 +39,8 @@ set(msg_headers ${MSG_GEN_DIR}/include/msg/common.h)
 set(msg_sources)
 # Routing for every command; compiled only into builds with command ingest.
 set(msg_routes ${MSG_GEN_DIR}/src/cmd_routes.c)
+# Housekeeping encoders; compiled only into builds with telemetry output.
+set(msg_tlm ${MSG_GEN_DIR}/src/tlm_encode.c)
 foreach(def ${msg_app_defs})
   get_filename_component(app ${def} NAME_WE)
   list(APPEND msg_headers ${MSG_GEN_DIR}/include/msg/${app}.h)
@@ -46,7 +48,7 @@ foreach(def ${msg_app_defs})
 endforeach()
 
 add_custom_command(
-  OUTPUT ${msg_headers} ${msg_sources} ${msg_routes}
+  OUTPUT ${msg_headers} ${msg_sources} ${msg_routes} ${msg_tlm}
   COMMAND ${PYTHON_EXECUTABLE} ${MSG_GENERATOR} --defs ${MSG_DEFS_DIR} ${msg_extra_args}
           --out ${MSG_GEN_DIR}
   DEPENDS ${MSG_GENERATOR} ${msg_templates} ${MSG_DEFS_DIR}/common.yaml ${msg_app_defs}
@@ -55,7 +57,8 @@ add_custom_command(
 
 # Every Zephyr library depends on zephyr_interface, so this makes the
 # headers exist before any code that includes them is compiled.
-add_custom_target(silversat_msg_gen DEPENDS ${msg_headers} ${msg_sources} ${msg_routes})
+add_custom_target(silversat_msg_gen
+  DEPENDS ${msg_headers} ${msg_sources} ${msg_routes} ${msg_tlm})
 add_dependencies(zephyr_interface silversat_msg_gen)
 
 zephyr_include_directories(${MSG_GEN_DIR}/include)
@@ -63,3 +66,4 @@ zephyr_include_directories(${MSG_GEN_DIR}/include)
 zephyr_library_named(silversat_messages)
 zephyr_library_sources(${msg_sources})
 zephyr_library_sources_ifdef(CONFIG_SS_CMD_ROUTES ${msg_routes})
+zephyr_library_sources_ifdef(CONFIG_SS_TLM_ENCODE ${msg_tlm})

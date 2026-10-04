@@ -24,6 +24,7 @@
 
 BUILD_ASSERT(MODE_MAX < 32, "the allowed-modes mask has 32 bits");
 
+{% if defs.apps | map(attribute="commands") | select | list %}
 /*
  * Ground commands each app has been sent but not yet handled, kept at most
  * CMD_MAX_PENDING so the zbus pool stays within its budget (DS-07): every
@@ -60,6 +61,7 @@ static enum cmd_route_result deliver(uint8_t app, const struct zbus_channel *cmd
 	outstanding[app]++;
 	return CMD_ROUTE_OK;
 }
+{% endif %}
 {% for e in defs.command_enums %}
 
 /* Words for enum {{ e.name }}. */

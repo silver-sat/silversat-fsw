@@ -4,9 +4,10 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Until telemetry output exists, the tests can't see the radio's
- * housekeeping on the downlink, so this prints it once a second for them
- * to read from the console.
+ * Telemetry output sends the radio's housekeeping on the downlink only
+ * once per round of apps, every few seconds. To keep the real-time tests
+ * short, this also prints it once a second for them to read from the
+ * console.
  */
 
 #include <zephyr/kernel.h>

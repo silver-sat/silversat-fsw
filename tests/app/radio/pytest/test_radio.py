@@ -6,12 +6,16 @@ The flight path for a ground command, every piece real except the radio:
     radio simulator --PTY--> radio app --> uplink queue --> command ingest
         --> frame manager, and the reply back the same way.
 
+Telemetry output also sends one app's housekeeping each second on the same
+downlink; the simulator sets those packets aside while it waits for replies.
+
 Twister starts the native_sim image; these tests play the radio with
 sim/radio_sim.py. They run in real time, so each one is short.
 """
 
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -23,6 +27,7 @@ sys.path.insert(0, str(REPO / "tools"))
 
 import radio_sim  # noqa: E402
 import sign_command  # noqa: E402
+import telemetry  # noqa: E402
 
 KEY = sign_command.load_key(sign_command.TEST_KEY_FILE)
 COMMAND = "frame_manager set_entry_enabled nominal 0 true"
@@ -58,6 +63,7 @@ def quiet_line(sim):
     """Start each test with nothing left over from the last."""
     sim.receive(timeout=0.3, count=100)
     sim.errors.clear()
+    sim.housekeeping.clear()
 
 
 def test_command_round_trip(sim):
@@ -149,14 +155,43 @@ def test_link_counters(sim, dut):
     assert delta("repeated") == 1
     assert delta("unknown_type") == 1
     assert delta("received") == 4, "skip_seq, both copies of repeat, other_type"
-    assert delta("sent") == 2, "replies to skip_seq and repeat"
+    # Replies to skip_seq and repeat, plus one housekeeping packet a second
+    # from telemetry output, which this test can't line up exactly with the
+    # console's once-a-second snapshot.
+    assert delta("sent") >= 2
     assert after["uplink_dropped"] == 0 and after["rx_overrun"] == 0
 
 
-def test_reply_sequence_numbers_count_up(sim):
+def test_downlink_sequence_numbers_count_up(sim):
+    """Every downlink packet takes the next sequence number, replies and
+    housekeeping alike. receive() can return more than count packets when
+    housekeeping arrives in the same read, so check all of them."""
     for _ in range(3):
         sim.send(signed()[0])
     packets = sim.receive(timeout=1.5, count=3)
-    assert len(packets) == 3
+    assert len(packets) >= 3
     first = packets[0].seq
-    assert [p.seq for p in packets] == [(first + i) % 256 for i in range(3)]
+    assert [p.seq for p in packets] == [(first + i) % 256 for i in range(len(packets))]
+
+
+def test_housekeeping_from_every_app(sim):
+    """Telemetry output sends each app's housekeeping in turn, one app a
+    second, and the ground decodes it with the dictionary (DS-61, DS-69)."""
+    dictionary = telemetry.load_dictionary()
+    apps = {app["name"] for app in dictionary["apps"]}
+    seen = {}
+    deadline = time.monotonic() + len(apps) + 1.5
+    while set(seen) != apps and time.monotonic() < deadline:
+        for packet in sim.receive(timeout=0.5, count=1):
+            decoded = telemetry.decode(dictionary, packet.payload)
+            if decoded["kind"] == "hk":
+                seen[decoded["app"]] = decoded
+    assert set(seen) == apps
+    assert sim.errors == []
+
+    # One packet a major frame; MET comes from the frame tick (DS-25).
+    order = sorted(seen.values(), key=lambda hk: hk["met_ms"])
+    gaps = [b["met_ms"] - a["met_ms"] for a, b in zip(order, order[1:])]
+    assert all(950 <= gap <= 1050 for gap in gaps), gaps
+    assert seen["frame_manager"]["fields"]["frame_count"] > 0
+    assert seen["radio"]["fields"]["frames_sent"] > 0
