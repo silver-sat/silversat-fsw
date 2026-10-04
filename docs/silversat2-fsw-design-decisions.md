@@ -67,7 +67,7 @@ zbus channels replace the software bus. Each app is one thread with one pending 
 
 **DS-13 Single address space: Specified.** This is accepted as the norm for microcontroller environments. Mitigations: the health app's heartbeat checks, the hardware watchdog, sanitizers in CI, and the MPU stack guard. Zephyr userspace/MPU isolation is held in reserve.
 
-**DS-14 App pattern: Proposed.** Every app has:
+**DS-14 App pattern: Specified.** Every app has:
 - a command channel
 - a housekeeping channel
 - a status channel carrying a step counter and accepted/rejected command counters
@@ -455,3 +455,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-02 | DS-65: frame layout (type, seq, len, payload, CRC) on every avionics serial link, implemented in `lib/link_codec` and `tools/link_codec.py`. DS-33: commands to a peer expect a response and are retried by the app; data frames are not acknowledged on the link. DS-66: radio not yet selected; no type byte values assigned |
 | 2026-10-04 | DS-07: UART assignments are devicetree aliases named in the resource map. DS-33: the radio app (every minor frame, interrupt-driven ring buffers). DS-66: ground traffic uses data frame 0x00 both ways. DS-90: the radio simulator and its fault menu. Open items: the radio's Nucleo pins |
 | 2026-10-04 | Telemetry output. DS-07: the pool no longer budgets housekeeping requests, which are dropped. DS-14: every app publishes housekeeping at least once per major frame. DS-61: generated housekeeping encoders and wire layouts in the dictionary. DS-66: downlink packet kind letters (`A`, `N`, `H`) and the housekeeping packet layout. DS-73: interim rate of one app per major frame |
+| 2026-10-04 | DS-14 confirmed and marked Specified |

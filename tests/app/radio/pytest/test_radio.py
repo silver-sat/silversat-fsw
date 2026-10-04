@@ -162,13 +162,16 @@ def test_link_counters(sim, dut):
     assert after["uplink_dropped"] == 0 and after["rx_overrun"] == 0
 
 
-def test_reply_sequence_numbers_count_up(sim):
+def test_downlink_sequence_numbers_count_up(sim):
+    """Every downlink packet takes the next sequence number, replies and
+    housekeeping alike. receive() can return more than count packets when
+    housekeeping arrives in the same read, so check all of them."""
     for _ in range(3):
         sim.send(signed()[0])
     packets = sim.receive(timeout=1.5, count=3)
-    assert len(packets) == 3
+    assert len(packets) >= 3
     first = packets[0].seq
-    assert [p.seq for p in packets] == [(first + i) % 256 for i in range(3)]
+    assert [p.seq for p in packets] == [(first + i) % 256 for i in range(len(packets))]
 
 
 def test_housekeeping_from_every_app(sim):
