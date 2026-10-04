@@ -1,0 +1,7 @@
+/*
+ * Application overlay for native_sim/native/64. Zephyr looks for an overlay
+ * named after the full board target, so this one exists only to use the
+ * same overlay as 32-bit native_sim.
+ */
+
+#include "native_sim.overlay"

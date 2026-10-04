@@ -40,8 +40,8 @@ test-quick: test-python  ## Run only the 64-bit tests (faster while iterating)
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
 	  $(VERBOSITY) $(SANITIZERS)
 
-test-python:  ## Run the Python tests: generator and tools (a second or two)
-	python3 -m pytest messages/tests tools/tests -q
+test-python:  ## Run the Python tests: generator, tools, simulators
+	python3 -m pytest messages/tests tools/tests sim/tests -q
 
 coverage:  ## Run the tests and write a coverage report
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \

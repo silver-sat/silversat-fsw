@@ -1,0 +1,14 @@
+/*
+ * The radio UART is uart1, a pseudo-terminal the Python radio simulator
+ * opens (DS-90). The same as app/boards/native_sim.overlay.
+ */
+
+/ {
+	aliases {
+		radio-uart = &uart1;
+	};
+};
+
+&uart1 {
+	status = "okay";
+};

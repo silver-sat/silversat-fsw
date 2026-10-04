@@ -1,8 +1,21 @@
 /*
  * Application overlay for native_sim.
  *
- * Empty for now. When the magnetometer driver lands, this gains an emulated
- * SPI bus with a mag node on it -- see tests/drivers/mag/app.overlay for
- * the shape. Keeping it present (and empty) means the file path is already
- * correct and nobody has to discover the boards/ convention under pressure.
+ * The radio's UART (DS-07, DS-90) is uart1, which native_sim connects to a
+ * pseudo-terminal. A Python simulator opens the PTY and plays the radio;
+ * native_sim prints the PTY's path at startup ("uart_1 connected to
+ * pseudotty: /dev/pts/N").
+ *
+ * When the magnetometer driver lands, this also gains an emulated SPI bus
+ * with a mag node on it -- see tests/drivers/mag/app.overlay for the shape.
  */
+
+/ {
+	aliases {
+		radio-uart = &uart1;
+	};
+};
+
+&uart1 {
+	status = "okay";
+};

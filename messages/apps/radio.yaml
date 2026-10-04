@@ -1,0 +1,52 @@
+# Radio app messages (DS-32, DS-33).
+#
+# The radio is not yet selected (DS-66), so the radio app only carries
+# ground traffic: it moves link frames between its UART and the uplink and
+# downlink queues. Radio-specific commands (beacon, status, frequency) are
+# added when the radio is chosen.
+
+app: radio
+id: 4
+description: Carries ground traffic between the radio's UART and the link queues.
+# Woken every minor frame to move frames both ways.
+wakeup: true
+
+housekeeping:
+  description: Radio link state, published at the start of every major frame.
+  fields:
+    - name: frames_received
+      type: uint32
+      description: Good frames received from the radio.
+    - name: frames_sent
+      type: uint32
+      description: Frames sent to the radio.
+    - name: bad_crc
+      type: uint32
+      description: Frames received whose CRC was wrong (DS-65).
+    - name: bad_length
+      type: uint32
+      description: Frames received too short, or with a wrong length byte.
+    - name: bad_escape
+      type: uint32
+      description: Frames received with a bad KISS escape.
+    - name: too_long
+      type: uint32
+      description: Frames received longer than the longest possible frame.
+    - name: frames_lost
+      type: uint32
+      description: Frames the radio sent that never arrived, counted from sequence gaps (DS-33).
+    - name: frames_repeated
+      type: uint32
+      description: Frames received twice in a row.
+    - name: unknown_type
+      type: uint32
+      description: Good frames with a type byte the radio app doesn't handle (DS-66).
+    - name: uplink_dropped
+      type: uint32
+      description: Ground frames lost because the uplink queue was full.
+    - name: rx_overrun
+      type: uint32
+      description: Bytes lost because the receive buffer was full.
+    - name: last_rx_met_ms
+      type: int64
+      description: When the last good frame arrived, so the ground can see how fresh the link is.

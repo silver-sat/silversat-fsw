@@ -18,6 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <zephyr/devicetree.h>
 #include <zephyr/sys/util.h>
 
 #include "msg/common.h"
@@ -58,14 +59,34 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 /* Woken every minor frame, so a ground command waits at most one frame. */
 #define COMMAND_INGEST_PRIORITY PRIORITY_10HZ
 
+/* Woken every minor frame to move frames to and from the radio. */
+#define RADIO_PRIORITY PRIORITY_10HZ
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 #define FRAME_MANAGER_STACK_SIZE 1024
 #define COMMAND_INGEST_STACK_SIZE 2048 /* BLAKE2s state, one link frame */
+#define RADIO_STACK_SIZE          2048 /* one decoded and one encoded link frame */
 
 /* ---- UART assignments --------------------------------------------------- */
 
-/* None yet; they arrive with the first subsystem app (DS-32). */
+/*
+ * Each subsystem's UART is a devicetree alias, bound to a real UART in each
+ * board's overlay (app/boards/). On native_sim it is a pseudo-terminal that
+ * a Python simulator connects to (DS-90).
+ *
+ *   radio-uart   native_sim: uart1 (PTY)
+ *                nucleo_f446re: usart1 on PA9/PA10, 19200 baud (SilverSat 1's
+ *                rate), pending the five-UART pin-mux check
+ */
+#define RADIO_UART_NODE DT_ALIAS(radio_uart)
+
+/*
+ * Bytes buffered between the UART interrupt and the radio app, each way.
+ * At 19200 baud, 1024 bytes is about half a second: five minor frames.
+ */
+#define RADIO_RX_RING_SIZE 1024
+#define RADIO_TX_RING_SIZE 1024
 
 /* ---- Link frame queues (DS-11) ------------------------------------------ */
 
@@ -185,6 +206,17 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 	 */
 	[APP_ID_COMMAND_INGEST] = {
 		.protected = true,
+		.stall_threshold = 0,
+		.reenable = REENABLE_NEVER,
+		.auto_retry_cap = 0,
+	},
+	/*
+	 * Not protected: DS-43's protected list is health, mode manager,
+	 * command ingest, and telemetry output. The stall threshold is set
+	 * when health is written.
+	 */
+	[APP_ID_RADIO] = {
+		.protected = false,
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
