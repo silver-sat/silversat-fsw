@@ -119,6 +119,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 - Never block. Waiting is a state in a per-frame state machine.
 - A shared link library handles framing, CRC, sequence numbers, and retries. Each subsystem app implements only its own message set.
 - The radio app, decided 2026-10-04: woken every minor frame, in the slot before command ingest. The UART interrupt only moves bytes between the UART and two static ring buffers, one each way; nothing is published from it. Each frame the app decodes what arrived, passes ground frames to the uplink queue, drops a repeated frame, counts lost ones from sequence gaps, and encodes waiting downlink frames for the interrupt to send.
+- Transmit inhibit, decided 2026-10-04: `radio set_transmit <true|false>` sets whether avionics transmits at all. While it is false the radio app throws away every downlink frame (replies, telemetry, and the beacon) and counts them, and keeps receiving, so ground commands still work. Frames already queued when the command arrives are sent first, so the ground sees the ACK and then silence. Only a ground command sets it back to true. The same command meets the licensing requirement that the ground can stop all emissions. Held in RAM until the FRAM service exists, so for now a reset turns transmission back on. When the radio is selected, the radio board's own transmitter (for example, a built-in beacon) must be silenced by the same state.
 - Acknowledgement, decided 2026-10-02: commands to a peer ("get status") expect a response, and the subsystem app's state machine retries on timeout. Data frames (uplink, downlink) are not acknowledged on the link; command ACKs are end-to-end already (DS-50), and telemetry is periodic.
 - Mirror the peer's state, including how fresh it is. After a link timeout, report "unknown."
 - Detect peer resets through a boot counter in the peer's telemetry.
@@ -164,7 +165,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 
 **DS-45 Launch timers: Specified.** Time since deployment is kept in FRAM, so a reset neither restarts the post-ejection waits nor skips them. Values come from the launch provider's interface document.
 
-**DS-46 Command-loss timer: Proposed.** Measures time since the last *accepted* ground command, not the health of the command ingest app (health covers that through its step counter, DS-43). Command ingest stores the MET of acceptance with the counter floor and publishes it in its status. The mode manager compares it against the timeout and requests safe mode. Because the value is in FRAM, resets do not restart the timer.
+**DS-46 Command-loss timer: Proposed.** Measures time since the last *accepted* ground command, not the health of the command ingest app (health covers that through its step counter, DS-43). Command ingest stores the MET of acceptance with the counter floor and publishes it in its status. The mode manager compares it against the timeout (7 days, from Kconfig) and, when it expires, requests safe mode and sends `radio set_transmit false` (DS-33). Transmission stays off until a ground command turns it on; an accepted command restarts the timer but does not turn transmission on. Because the value is in FRAM, resets do not restart the timer.
 
 ## 6. Commanding and security
 
@@ -456,3 +457,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-04 | DS-07: UART assignments are devicetree aliases named in the resource map. DS-33: the radio app (every minor frame, interrupt-driven ring buffers). DS-66: ground traffic uses data frame 0x00 both ways. DS-90: the radio simulator and its fault menu. Open items: the radio's Nucleo pins |
 | 2026-10-04 | Telemetry output. DS-07: the pool no longer budgets housekeeping requests, which are dropped. DS-14: every app publishes housekeeping at least once per major frame. DS-61: generated housekeeping encoders and wire layouts in the dictionary. DS-66: downlink packet kind letters (`A`, `N`, `H`) and the housekeeping packet layout. DS-73: interim rate of one app per major frame |
 | 2026-10-04 | DS-14 confirmed and marked Specified |
+| 2026-10-04 | DS-33: radio transmit inhibit (`set_transmit`), silencing replies, telemetry, and the beacon; only a ground command turns it back on. DS-46: the command-loss timeout is 7 days and also stops transmission |
