@@ -12,7 +12,7 @@ payload, and is computed before escaping (DS-65).
 
     python3 tools/link_codec.py --vectors VECTORS.yaml --c-vectors OUT.h
 
-writes the shared vectors as a C header for tests/unit/link_codec.
+writes the shared vectors as a C header for tests/unit/libs.
 """
 
 import argparse

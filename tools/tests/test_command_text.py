@@ -2,7 +2,7 @@
 """Tests for tools/command_text.py. Run with `make test-python`.
 
 The shared vectors are the same ones the flight decoder is tested against
-(tests/unit/command), so passing both means the ground and the satellite
+(tests/unit/libs), so passing both means the ground and the satellite
 agree on what every one of them means.
 """
 
@@ -16,8 +16,8 @@ sys.path.insert(0, str(REPO / "tools"))
 
 import command_text as ct  # noqa: E402
 
-ROUTE_TEST = REPO / "tests" / "unit" / "command"
-VECTORS = ct.load_vectors(ROUTE_TEST / "vectors.yaml")
+ROUTE_TEST = REPO / "tests" / "unit" / "libs"
+VECTORS = ct.load_vectors(ROUTE_TEST / "command_vectors.yaml")
 
 
 @pytest.fixture(scope="module")
@@ -92,5 +92,5 @@ def test_main(tmp_path, capsys):
     assert "bad arg count" in capsys.readouterr().err
 
     out = tmp_path / "v" / "route_vectors.h"
-    assert ct.main(["--vectors", str(ROUTE_TEST / "vectors.yaml"), "--c-vectors", str(out)]) == 0
+    assert ct.main(["--vectors", str(ROUTE_TEST / "command_vectors.yaml"), "--c-vectors", str(out)]) == 0
     assert "route_vectors[]" in out.read_text()

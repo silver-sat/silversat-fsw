@@ -19,7 +19,8 @@
  * is computed before escaping and checked after unescaping (DS-65).
  *
  * tools/link_codec.py is the Python twin, used by the simulators and the
- * ground (DS-91). The vectors in tests/unit/link_codec keep the two in step.
+ * ground (DS-91). The vectors in tests/unit/libs/link_vectors.yaml keep the two
+ * in step.
  */
 
 #ifndef SILVERSAT_LINK_CODEC_H_

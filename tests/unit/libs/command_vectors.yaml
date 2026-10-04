@@ -1,5 +1,5 @@
 # Command text vectors, shared by the ground (tools/tests/test_command_text.py)
-# and the satellite (tests/unit/command, src/route.c). Both must give every vector the
+# and the satellite (tests/unit/libs, src/route.c). Both must give every vector the
 # same result, so the ground never sends text the satellite rejects.
 #
 # result is one of: ok, bad_syntax, unknown_app, unknown_command,
