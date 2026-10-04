@@ -1,9 +1,0 @@
-common:
-  tags:
-    - link
-
-tests:
-  unit.link_codec:
-    platform_allow:
-      - native_sim
-      - native_sim/native/64

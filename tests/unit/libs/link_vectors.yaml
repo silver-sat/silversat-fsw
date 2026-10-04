@@ -1,4 +1,4 @@
-# Link codec vectors, shared by the C codec (tests/unit/link_codec) and its
+# Link codec vectors, shared by the C codec (tests/unit/libs, src/link_codec.c) and its
 # Python twin (tools/tests/test_link_codec.py). Python encodes each packet;
 # the C codec must produce the same bytes and decode them back. Each stream
 # is fed to both decoders, which must report the same results in order.

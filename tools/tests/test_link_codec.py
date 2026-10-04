@@ -2,7 +2,7 @@
 """Tests for tools/link_codec.py. Run with `make test-python`.
 
 The shared vectors are the same ones the C codec is tested against
-(tests/unit/link_codec), so passing both means the two agree.
+(tests/unit/libs), so passing both means the two agree.
 """
 
 import sys
@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO / "tools"))
 
 import link_codec as lc  # noqa: E402
 
-VECTORS = REPO / "tests" / "unit" / "link_codec" / "vectors.yaml"
+VECTORS = REPO / "tests" / "unit" / "libs" / "link_vectors.yaml"
 PACKETS, STREAMS = lc.load_vectors(VECTORS)
 
 

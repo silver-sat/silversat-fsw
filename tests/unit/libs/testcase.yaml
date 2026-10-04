@@ -1,9 +1,10 @@
 common:
   tags:
     - command
+    - link
 
 tests:
-  unit.command:
+  unit.libs:
     platform_allow:
       - native_sim
       - native_sim/native/64
