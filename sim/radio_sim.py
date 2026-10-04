@@ -55,6 +55,8 @@ class RadioSim:
         self.decoder = link_codec.Decoder()
         # Anything other than a good frame that arrives from avionics.
         self.errors = []
+        # Housekeeping packets that arrived while replies() was waiting.
+        self.housekeeping = []
 
     def close(self):
         os.close(self.fd)
@@ -115,9 +117,25 @@ class RadioSim:
         return packets
 
     def replies(self, timeout=1.0, count=1):
-        """The text of the replies in ground data frames, as strings."""
-        return [p.payload.decode("ascii") for p in self.receive(timeout, count)
-                if p.type == TYPE_DATA]
+        """Wait up to timeout seconds for count command replies, and return
+        their text as strings. The first byte of every downlink packet says
+        what it is: replies start with 'A' (ACK) or 'N' (NAK). Housekeeping
+        packets ('H') that arrive meanwhile go into self.housekeeping, so
+        telemetry never gets mistaken for a reply."""
+        texts = []
+        deadline = time.monotonic() + timeout
+        while len(texts) < count:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            for packet in self.receive(left, count=1):
+                if packet.type != TYPE_DATA:
+                    continue
+                if packet.payload[:1] == b"H":
+                    self.housekeeping.append(packet.payload)
+                else:
+                    texts.append(packet.payload.decode("ascii"))
+        return texts
 
 
 def main(argv=None):

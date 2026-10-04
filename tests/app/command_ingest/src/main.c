@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/ztest.h>
@@ -88,6 +89,21 @@ static void run_one_frame(void)
 	zassert_ok(app_test_wait_status(&command_ingest_status_chan, before.steps + 1, 0, WAIT,
 					NULL));
 }
+
+/*
+ * Counts command ingest's housekeeping publishes. A listener runs in the
+ * publishing thread, so the count is current by the time a step finishes.
+ */
+static atomic_t hk_publishes;
+
+static void count_hk(const struct zbus_channel *chan)
+{
+	ARG_UNUSED(chan);
+	atomic_inc(&hk_publishes);
+}
+
+ZBUS_LISTENER_DEFINE(hk_listener, count_hk);
+ZBUS_CHAN_ADD_OBS(command_ingest_hk_chan, hk_listener, 3);
 
 static void set_mode(uint8_t mode)
 {
@@ -544,4 +560,18 @@ ZTEST(command_ingest, test_no_floor_is_reset)
 	run_one_frame();
 	zassert_str_equal(next_reply(), expected("NAK", PKT_ARM_0_COUNTER, "replay"));
 	zassert_equal(floor_of(0), PKT_LEVEL_ABOVE_RETURN_COUNTER);
+}
+
+ZTEST(command_ingest, test_housekeeping_once_a_major_frame)
+{
+	/*
+	 * With nothing to do, command ingest still publishes its housekeeping
+	 * once a major frame, at slot 0, so the value telemetry output reads is
+	 * never more than a second old (DS-14).
+	 */
+	atomic_set(&hk_publishes, 0);
+	for (int i = 0; i < 2 * FRAME_SLOTS; i++) {
+		run_one_frame();
+	}
+	zassert_equal(atomic_get(&hk_publishes), 2);
 }

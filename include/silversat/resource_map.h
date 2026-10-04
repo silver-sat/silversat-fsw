@@ -62,11 +62,15 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 /* Woken every minor frame to move frames to and from the radio. */
 #define RADIO_PRIORITY PRIORITY_10HZ
 
+/* Woken once a major frame to send one app's housekeeping. */
+#define TELEMETRY_OUTPUT_PRIORITY PRIORITY_HOUSEKEEPING
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 #define FRAME_MANAGER_STACK_SIZE 1024
 #define COMMAND_INGEST_STACK_SIZE 2048 /* BLAKE2s state, one link frame */
 #define RADIO_STACK_SIZE          2048 /* one decoded and one encoded link frame */
+#define TELEMETRY_OUTPUT_STACK_SIZE 1024 /* one link frame */
 
 /* ---- UART assignments --------------------------------------------------- */
 
@@ -126,18 +130,17 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
  */
 #define CMD_MAX_PENDING 2
 
-/*
- * Housekeeping requests queued for an app. Proposed; the request channel
- * arrives with telemetry output.
- */
-#define HK_REQ_MAX_PENDING 1
-
 /* Each app is one thread, in at most one publish at a time (DS-10). */
 #define POOL_PUBLISHING_THREADS APP_COUNT
 
+/*
+ * There are no housekeeping requests: each app publishes its housekeeping
+ * at least once a major frame, and telemetry output reads the latest
+ * (DS-14).
+ */
 #define POOL_REQUIRED                                                                  \
-	(FRAME_MAX_PENDING * APP_WAKEUP_COUNT +                                            \
-	 (CMD_MAX_PENDING + HK_REQ_MAX_PENDING) * APP_COUNT + POOL_PUBLISHING_THREADS)
+	(FRAME_MAX_PENDING * APP_WAKEUP_COUNT + CMD_MAX_PENDING * APP_COUNT +              \
+	 POOL_PUBLISHING_THREADS)
 
 #if defined(CONFIG_ZBUS_MSG_SUBSCRIBER)
 BUILD_ASSERT(CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE >= POOL_REQUIRED,
@@ -217,6 +220,16 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 	 */
 	[APP_ID_RADIO] = {
 		.protected = false,
+		.stall_threshold = 0,
+		.reenable = REENABLE_NEVER,
+		.auto_retry_cap = 0,
+	},
+	/*
+	 * Protected (DS-43): without it the ground sees nothing. The stall
+	 * threshold is set when health is written.
+	 */
+	[APP_ID_TELEMETRY_OUTPUT] = {
+		.protected = true,
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,

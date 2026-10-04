@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20.0)
 
 # One build for the shared libraries' tests: signing (cmd_auth), replay
 # protection (cmd_counter), command text decoding and routing (cmd_route),
-# and the link codec (link_codec). Each keeps its own source file and test
+# the link codec (link_codec), and the housekeeping encoders (tlm_encode). Each keeps its own source file and test
 # suite; they share a build only to save CI time, since most of a test's
 # time is building Zephyr for it.
 
@@ -43,10 +43,23 @@ add_custom_command(
   COMMENT "Encoding the link codec vectors with tools/link_codec.py"
 )
 
+# Housekeeping packets, encoded by the ground decoder's Python.
+add_custom_command(
+  OUTPUT ${VECTOR_DIR}/tlm_vectors.h
+  COMMAND ${PYTHON_EXECUTABLE} ${TOOLS}/telemetry.py
+          --extra-apps ${CMAKE_CURRENT_SOURCE_DIR}/apps
+          --vectors ${CMAKE_CURRENT_SOURCE_DIR}/tlm_vectors.yaml
+          --c-vectors ${VECTOR_DIR}/tlm_vectors.h
+  DEPENDS ${TOOLS}/telemetry.py ${TOOLS}/command_text.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/tlm_vectors.yaml ${CMAKE_CURRENT_SOURCE_DIR}/apps/typed_app.yaml
+  COMMENT "Encoding the housekeeping vectors with tools/telemetry.py"
+)
+
 add_custom_target(libs_vectors
   DEPENDS ${VECTOR_DIR}/signed_vectors.h ${VECTOR_DIR}/route_vectors.h
-          ${VECTOR_DIR}/link_vectors.h)
+          ${VECTOR_DIR}/link_vectors.h ${VECTOR_DIR}/tlm_vectors.h)
 add_dependencies(app libs_vectors)
 
-target_sources(app PRIVATE src/auth.c src/counter.c src/route.c src/link_codec.c)
+target_sources(app PRIVATE src/auth.c src/counter.c src/route.c src/link_codec.c
+  src/tlm_encode.c)
 target_include_directories(app PRIVATE ${VECTOR_DIR})

@@ -44,7 +44,7 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 **DS-07 Resource map: Specified.** A single header defines all thread priorities, stack sizes, zbus message pool sizes, and UART assignments.
 - A UART assignment is a devicetree alias (for example `radio-uart`) named in the header and bound to a UART in each board's overlay: on native_sim a pseudo-terminal, on the Nucleo a USART and its pins.
 - It also holds one const attribute row per app: the protected flag, the stall threshold, and the re-enable policy (DS-43). The frame manager and health both read this row, so each app's attributes are stated once.
-- The zbus message pool size is computed in the header from the app counts: `FRAME_MAX_PENDING` for each frame-driven app, plus each app's command and housekeeping-request depths, plus one buffer for each thread that publishes, because every publish holds a buffer while it runs (DS-22). Zephyr takes the pool size from Kconfig, so a build check fails if the Kconfig value is smaller than the computed size.
+- The zbus message pool size is computed in the header from the app counts: `FRAME_MAX_PENDING` for each frame-driven app, plus `CMD_MAX_PENDING` for each app's command channel, plus one buffer for each thread that publishes, because every publish holds a buffer while it runs (DS-22). Zephyr takes the pool size from Kconfig, so a build check fails if the Kconfig value is smaller than the computed size.
 - Every buffer must hold the largest message on any channel, observed or not, because every publish takes one. The generated channel definitions fail the build if a message does not fit.
 
 ## 2. Architecture
@@ -74,6 +74,8 @@ zbus channels replace the software bus. Each app is one thread with one pending 
 - one thread
 
 Apps timestamp their data from the frame tick, not by calling the clock.
+
+Every app publishes its housekeeping at least once per major frame (at slot 0, or whenever it changes), so the latest value on the channel is never more than a second old. Telemetry output reads that latest value; nobody requests housekeeping.
 
 ## 3. Frame manager
 
@@ -234,6 +236,7 @@ Replies and scheduling, decided 2026-10-02:
 - a resolved JSON dictionary for other languages
 - a generated interface control document
 - golden vectors, checked by both the C and Python test suites
+- housekeeping encoders for telemetry output, and each app's housekeeping wire layout (field, type, offset, size, enum values) in the JSON dictionary for the ground decoder (`tools/telemetry.py`). Fields are written one by one, little-endian, with no padding (DS-64); each app's housekeeping must fit in one frame
 
 The dictionary version and hash are included in the beacon.
 
@@ -266,6 +269,7 @@ The dictionary version and hash are included in the beacon.
 - The golden vectors (DS-61) include CRC test frames for every link.
 
 **DS-66 KISS framing: Specified / Open.** The radio is not yet selected (2026-10-02), so the link codec is built generically. Ground traffic uses the standard data frame, `0x00`, in both directions (decided 2026-10-04); no other type byte is assigned yet.
+- The first payload byte of every packet avionics sends to the ground is a printable letter giving its kind (decided 2026-10-04): `A` and `N` for command replies (`ACK`, `NAK`, DS-50) and `H` for housekeeping. A housekeeping packet is `H`, the app id (one byte), MET in milliseconds (8 bytes, little-endian), then the app's housekeeping in its generated wire layout (DS-61).
 - *Specified:* keep KISS on all serial links.
 - *Specified:* support the standard data frame (0x00) if required.
 - *Specified:* command packets are under 256 bytes.
@@ -319,6 +323,7 @@ The dictionary version and hash are included in the beacon.
 - *Proposed:* log every time set as an event with old and new values.
 
 **DS-73 Telemetry budget and store-and-forward: Open.** To be determined after mission selection. It may require external flash and a data storage app.
+- *Interim (2026-10-04):* telemetry output sends one app's housekeeping per major frame, taking the apps in turn, so each app's housekeeping goes down every N seconds with N apps.
 
 **DS-74 FRAM ownership: Proposed.** FRAM records are data sharing, and follow the same rule as channels (DS-12): each region has exactly one owning app, which alone writes it. Other apps learn the contents through the owner's channels, never by reading the record.
 - The region map is controlled from a single file, `nvm_map.yaml`, maintained alongside the message definitions and processed by the same tooling (DS-61). For each region it gives the name, owner, record size and version, slot count, write-protect flag, and flash default (DS-75). The generator computes addresses and emits `nvm_map.h` (addresses, sizes, owners, and per-owner handle declarations), the ground dump decoder, and a table in the interface document. CI fails on overlap, on exceeding the FRAM size, on a changed record without a version bump, and on write-protected regions outside the protected block range. Nobody assigns addresses by hand.
@@ -449,3 +454,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-02 | DS-53: no floor is ever reset, including by rotation (the floor default no longer mentions rotation). DS-54: rotation commands, signing by the new slot, the 10-minute arm, replies for the spare key, and the active slot in RAM until FRAM. Rotation open item closed |
 | 2026-10-02 | DS-65: frame layout (type, seq, len, payload, CRC) on every avionics serial link, implemented in `lib/link_codec` and `tools/link_codec.py`. DS-33: commands to a peer expect a response and are retried by the app; data frames are not acknowledged on the link. DS-66: radio not yet selected; no type byte values assigned |
 | 2026-10-04 | DS-07: UART assignments are devicetree aliases named in the resource map. DS-33: the radio app (every minor frame, interrupt-driven ring buffers). DS-66: ground traffic uses data frame 0x00 both ways. DS-90: the radio simulator and its fault menu. Open items: the radio's Nucleo pins |
+| 2026-10-04 | Telemetry output. DS-07: the pool no longer budgets housekeeping requests, which are dropped. DS-14: every app publishes housekeeping at least once per major frame. DS-61: generated housekeeping encoders and wire layouts in the dictionary. DS-66: downlink packet kind letters (`A`, `N`, `H`) and the housekeeping packet layout. DS-73: interim rate of one app per major frame |

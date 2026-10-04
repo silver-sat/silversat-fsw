@@ -1,0 +1,24 @@
+# Telemetry output messages (DS-10, DS-69).
+#
+# Telemetry output sends housekeeping to the ground: once a major frame it
+# takes the next app in turn, encodes that app's latest housekeeping
+# (include/silversat/tlm_encode.h), and puts it in the downlink queue. The
+# beacon (DS-69) and events come later.
+
+app: telemetry_output
+id: 5
+description: Sends each app's housekeeping to the ground, one app per major frame.
+wakeup: true
+
+housekeeping:
+  description: Telemetry output state, published every major frame.
+  fields:
+    - name: sent
+      type: uint32
+      description: Housekeeping packets put in the downlink queue.
+    - name: dropped
+      type: uint32
+      description: Packets lost because the downlink queue was full.
+    - name: encode_errors
+      type: uint32
+      description: Turns skipped because an app's housekeeping could not be read or encoded.

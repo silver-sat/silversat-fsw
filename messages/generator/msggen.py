@@ -108,6 +108,17 @@ SIGNED_RANGE = {"int8": ("INT8_MIN", "INT8_MAX"), "int16": ("INT16_MIN", "INT16_
                 "int32": ("INT32_MIN", "INT32_MAX"), "int64": ("INT64_MIN", "INT64_MAX")}
 FLOAT_TYPES = ("float32", "float64")
 
+# Bytes each type takes on the downlink: little-endian, no padding (DS-64).
+WIRE_SIZE = {"bool": 1, "uint8": 1, "int8": 1, "uint16": 2, "int16": 2,
+             "uint32": 4, "int32": 4, "uint64": 8, "int64": 8,
+             "float32": 4, "float64": 8}
+CTYPE_WIRE_SIZE = {"uint8_t": 1, "uint16_t": 2, "uint32_t": 4}   # enum storage
+
+# A housekeeping packet: 'H', the app id, MET (8 bytes), then the fields. It
+# must fit in one link frame's payload (LINK_PAYLOAD_MAX in link_codec.h).
+TLM_HK_HEADER_LEN = 10
+LINK_PAYLOAD_MAX = 255
+
 APP_ID_MAX = 0xFF          # struct event carries the app as uint8
 COMMAND_ID_MAX = 0xFFFF    # struct <app>_cmd carries the id as uint16
 
@@ -140,6 +151,20 @@ class Field:
             return "signed"
         return None
 
+    @property
+    def wire_size(self):
+        """Bytes on the downlink (DS-64)."""
+        return CTYPE_WIRE_SIZE[self.ctype] if self.enum else WIRE_SIZE[self.type]
+
+    @property
+    def wire_kind(self):
+        """How the generated encoder writes the field."""
+        if self.type == "bool":
+            return "bool"
+        if self.type in FLOAT_TYPES:
+            return "f32" if self.type == "float32" else "f64"
+        return {1: "byte", 2: "le16", 4: "le32", 8: "le64"}[self.wire_size]
+
 
 @dataclass
 class EnumValue:
@@ -170,6 +195,19 @@ class Struct:
     name: str
     description: str
     fields: list[Field]
+
+    @property
+    def wire_layout(self):
+        """(field, offset) for each field, packed in order."""
+        layout, offset = [], 0
+        for f in self.fields:
+            layout.append((f, offset))
+            offset += f.wire_size
+        return layout
+
+    @property
+    def wire_size(self):
+        return sum(f.wire_size for f in self.fields)
 
 
 @dataclass
@@ -289,6 +327,11 @@ class Definitions:
     @property
     def enums_by_name(self):
         return {e.name: e for e in self.enums}
+
+    @property
+    def hk_wire_kinds(self):
+        """Every wire_kind some app's housekeeping uses."""
+        return {f.wire_kind for a in self.apps for f in a.housekeeping.fields}
 
     @property
     def command_enums(self):
@@ -561,6 +604,11 @@ def _parse_app(path, enums, structs, root):
     hk = data["housekeeping"]
     _check_keys(hk, hk_where, ("description", "fields"))
     housekeeping = _parse_struct({"name": f"{name}_hk", **hk}, hk_where, enums)
+    room = LINK_PAYLOAD_MAX - TLM_HK_HEADER_LEN
+    if housekeeping.wire_size > room:
+        raise DefinitionError(
+            f"{hk_where}: {housekeeping.wire_size} bytes on the downlink; housekeeping "
+            f"must fit in one frame, at most {room} bytes")
 
     data_channels = [_parse_data_channel(n, f"{where}: data_channels[{i}]", structs)
                      for i, n in enumerate(_sequence(data, "data_channels", where))]
@@ -670,6 +718,8 @@ def render(defs):
             env.get_template("app_channels.c.j2").render(app=app)
     outputs[Path("src/cmd_routes.c")] = \
         env.get_template("cmd_routes.c.j2").render(defs=defs)
+    outputs[Path("src/tlm_encode.c")] = \
+        env.get_template("tlm_encode.c.j2").render(defs=defs)
     return outputs
 
 
@@ -688,9 +738,21 @@ def _field_entry(field, defs):
     return entry
 
 
+def _hk_entry(field, offset, defs):
+    entry = {"name": field.name, "type": field.type, "offset": offset,
+             "size": field.wire_size}
+    if field.enum:
+        entry["values"] = [{"name": v.name, "value": v.value}
+                           for v in defs.enums_by_name[field.enum].values]
+    if field.description:
+        entry["description"] = field.description
+    return entry
+
+
 def command_dictionary(defs):
-    """Every command, resolved, as plain data (DS-61). The ground formats and
-    checks command text from this; --json writes it for other languages."""
+    """Every command and housekeeping layout, resolved, as plain data (DS-61).
+    The ground formats command text and decodes telemetry from this; --json
+    writes it for other languages."""
     return {
         "modes": [v.name for v in defs.enums_by_name["mode"].values],
         "apps": [{
@@ -703,6 +765,11 @@ def command_dictionary(defs):
                 "modes": c.modes,
                 "args": [_field_entry(f, defs) for f in c.fields],
             } for c in app.commands],
+            "housekeeping": {
+                "size": app.housekeeping.wire_size,
+                "fields": [_hk_entry(f, offset, defs)
+                           for f, offset in app.housekeeping.wire_layout],
+            },
         } for app in defs.apps],
     }
 

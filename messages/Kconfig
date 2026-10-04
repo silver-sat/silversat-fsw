@@ -19,6 +19,13 @@ config SS_CMD_ROUTES
 	  text and publishes it to the target app (DS-50 stages 6 and 7).
 	  Command ingest selects this.
 
+config SS_TLM_ENCODE
+	bool "Generated housekeeping encoders"
+	help
+	  Compile the generated tlm_encode.c, which encodes each app's
+	  housekeeping for the downlink (DS-61, DS-64). Telemetry output
+	  selects this.
+
 # No dynamic allocation after init: zbus takes message buffers from a
 # fixed pool, not the heap.
 configdefault ZBUS_PREFER_DYNAMIC_ALLOCATION
