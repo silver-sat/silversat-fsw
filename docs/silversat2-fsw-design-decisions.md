@@ -115,6 +115,7 @@ Apps timestamp their data from the frame tick, not by calling the clock.
 **DS-33 Subsystem app behavior: Proposed.**
 - Never block. Waiting is a state in a per-frame state machine.
 - A shared link library handles framing, CRC, sequence numbers, and retries. Each subsystem app implements only its own message set.
+- Acknowledgement, decided 2026-10-02: commands to a peer ("get status") expect a response, and the subsystem app's state machine retries on timeout. Data frames (uplink, downlink) are not acknowledged on the link; command ACKs are end-to-end already (DS-50), and telemetry is periodic.
 - Mirror the peer's state, including how fresh it is. After a link timeout, report "unknown."
 - Detect peer resets through a boot counter in the peer's telemetry.
 - Payload firmware must answer status requests while a job runs. The fallback is a declared job duration.
@@ -256,12 +257,13 @@ The dictionary version and hash are included in the beacon.
 | Check value (ASCII "123456789") | 0xE3069283 | 0xCBF43926 |
 | Implementations | Zephyr `crc32_c()`; Python `crc32c` package or a 20-line table | Zephyr `crc32_ieee()`; Python `zlib.crc32` |
 
+- Frame layout on every avionics serial link, decided 2026-10-02: `type` (1 byte, the KISS type byte), `seq` (1 byte, the sender's sequence number, wrapping after 255), `len` (1 byte, the payload length), the payload (0 to 255 bytes), then the CRC. The whole frame is KISS-escaped and wrapped in FEND bytes. The codec is `lib/link_codec` in C and `tools/link_codec.py` in Python (DS-91), kept in step by shared vectors (DS-92).
 - The CRC is transmitted as 4 bytes, little-endian (DS-64).
 - It is computed over the frame's sequence number, length, KISS command/type byte, and payload, before KISS escaping, and checked after unescaping.
 - The fallback, the common IEEE CRC-32 used by Ethernet and zlib, is used only if a subsystem cannot support CRC-32C. It is chosen per link and recorded in that link's interface document; there is no negotiation on the wire.
 - The golden vectors (DS-61) include CRC test frames for every link.
 
-**DS-66 KISS framing: Specified / Open.**
+**DS-66 KISS framing: Specified / Open.** The radio is not yet selected (2026-10-02), so the link codec is built generically and no type byte values are assigned yet.
 - *Specified:* keep KISS on all serial links.
 - *Specified:* support the standard data frame (0x00) if required.
 - *Specified:* command packets are under 256 bytes.
@@ -442,3 +444,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-02 | DS-50: command text syntax (`<app> <command> <arguments>`, single spaces, words for bool and enum), required `modes:` per command, floats deferred; decoding and routing generated from the YAML |
 | 2026-10-02 | DS-50: command ingest is woken every minor frame; one reply per authenticated command after routing (`ACK <counter> <result>` or `NAK <counter> <reason>`), none for shape or signature failures; `busy` when an app has `CMD_MAX_PENDING` unhandled ground commands. DS-54: keys from Kconfig key files, and a flight build refuses the published test keys. Open item for key rotation and floor reset |
 | 2026-10-02 | DS-53: no floor is ever reset, including by rotation (the floor default no longer mentions rotation). DS-54: rotation commands, signing by the new slot, the 10-minute arm, replies for the spare key, and the active slot in RAM until FRAM. Rotation open item closed |
+| 2026-10-02 | DS-65: frame layout (type, seq, len, payload, CRC) on every avionics serial link, implemented in `lib/link_codec` and `tools/link_codec.py`. DS-33: commands to a peer expect a response and are retried by the app; data frames are not acknowledged on the link. DS-66: radio not yet selected; no type byte values assigned |

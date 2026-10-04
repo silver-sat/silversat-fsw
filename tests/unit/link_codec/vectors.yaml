@@ -1,0 +1,70 @@
+# Link codec vectors, shared by the C codec (tests/unit/link_codec) and its
+# Python twin (tools/tests/test_link_codec.py). Python encodes each packet;
+# the C codec must produce the same bytes and decode them back. Each stream
+# is fed to both decoders, which must report the same results in order.
+
+packets:
+  - {name: empty, type: 0x00, seq: 0}
+  - {name: text, type: 0x00, seq: 1, payload_text: "hello"}
+  # The type and seq bytes are FEND and FESC, and the payload has every
+  # special byte, so all of them must be escaped.
+  - {name: escapes, type: 0xc0, seq: 0xdb, payload_hex: "c0dbdcdd00ff"}
+  # Its CRC is dbd9b3c0: the escaping must reach the CRC too.
+  - {name: crc_escapes, type: 0x00, seq: 2, payload_text: "crc 4574"}
+  - {name: largest, type: 0x41, seq: 255, payload_fill: [0x41, 255]}
+  # The worst case: every payload byte doubles when escaped.
+  - {name: largest_all_fend, type: 0x01, seq: 254, payload_fill: [0xc0, 255]}
+
+streams:
+  - name: one_frame
+    parts: [{packet: text}]
+    expect: [{packet: text}]
+  - name: every_packet
+    parts:
+      - {packet: empty}
+      - {packet: text}
+      - {packet: escapes}
+      - {packet: crc_escapes}
+      - {packet: largest}
+      - {packet: largest_all_fend}
+    expect:
+      - {packet: empty}
+      - {packet: text}
+      - {packet: escapes}
+      - {packet: crc_escapes}
+      - {packet: largest}
+      - {packet: largest_all_fend}
+  - name: noise_before_the_first_frame
+    parts: [{hex: "414243dbdd"}, {packet: text}]
+    expect: [{packet: text}]
+  - name: frames_sharing_a_fend
+    parts: [{packet: text}, {continues: escapes}]
+    expect: [{packet: text}, {packet: escapes}]
+  - name: extra_fends_are_ignored
+    parts: [{hex: "c0c0c0"}, {packet: text}, {hex: "c0c0"}]
+    expect: [{packet: text}]
+  - name: bad_crc
+    # The first payload byte, 'h', becomes 'H' after the CRC was computed.
+    parts: [{damaged: text, set: {3: 0x48}}]
+    expect: [bad_crc]
+  - name: too_short
+    parts: [{hex: "c0000105c0"}]
+    expect: [bad_length]
+  - name: length_byte_wrong
+    # The length byte says 9, with a CRC that matches, but 5 bytes follow.
+    parts: [{damaged: text, set: {2: 9}, fix_crc: true}]
+    expect: [bad_length]
+  - name: bad_escape
+    parts: [{hex: "c0000105db41c0"}]
+    expect: [bad_escape]
+  - name: escape_at_the_end
+    parts: [{hex: "c0000105dbc0"}]
+    expect: [bad_escape]
+  - name: too_long
+    # 263 bytes, one more than the longest possible frame.
+    parts: [{hex: "c0"}, {fill: [0x41, 263]}, {hex: "c0"}]
+    expect: [too_long]
+  - name: recovers_after_a_bad_frame
+    parts: [{hex: "c000db41c0"}, {packet: text}, {damaged: text, set: {3: 0x48}},
+            {packet: escapes}]
+    expect: [bad_escape, {packet: text}, bad_crc, {packet: escapes}]
