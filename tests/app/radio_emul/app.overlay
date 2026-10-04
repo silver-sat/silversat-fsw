@@ -1,0 +1,20 @@
+/*
+ * The radio UART is an emulated UART: the tests put bytes in its receive
+ * side and read what the radio app sends, in simulated time, with no
+ * Python simulator. tests/app/radio covers the real-time path through a
+ * pseudo-terminal.
+ */
+
+/ {
+	aliases {
+		radio-uart = &radio_uart_emul;
+	};
+
+	radio_uart_emul: radio-uart-emul {
+		compatible = "zephyr,uart-emul";
+		status = "okay";
+		current-speed = <19200>;
+		rx-fifo-size = <256>;
+		tx-fifo-size = <2048>;
+	};
+};

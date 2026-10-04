@@ -2,8 +2,8 @@
 #
 # The radio is not yet selected (DS-66), so the radio app only carries
 # ground traffic: it moves link frames between its UART and the uplink and
-# downlink queues. Radio-specific commands (beacon, status, frequency) are
-# added when the radio is chosen.
+# downlink queues, and can stop transmitting (set_transmit). Radio-specific
+# commands (beacon, status, frequency) are added when the radio is chosen.
 
 app: radio
 id: 4
@@ -11,8 +11,24 @@ description: Carries ground traffic between the radio's UART and the link queues
 # Woken every minor frame to move frames both ways.
 wakeup: true
 
+commands:
+  - name: set_transmit
+    id: 1
+    # Both: the ground must be able to silence the spacecraft in any mode.
+    modes: [safe, nominal]
+    description: >
+      Allow or stop all transmission to the ground: replies, telemetry, and
+      the beacon. Sets the state rather than toggling it (DS-35). While
+      transmission is stopped the radio still receives, so ground commands
+      keep working; only a ground command turns transmission back on
+      (DS-46).
+    fields:
+      - name: enabled
+        type: bool
+        description: True to transmit, false to stop.
+
 housekeeping:
-  description: Radio link state, published at the start of every major frame.
+  description: Radio link state, published at the start of every major frame and when it changes.
   fields:
     - name: frames_received
       type: uint32
@@ -50,3 +66,9 @@ housekeeping:
     - name: last_rx_met_ms
       type: int64
       description: When the last good frame arrived, so the ground can see how fresh the link is.
+    - name: transmit_enabled
+      type: bool
+      description: False while transmission is stopped by set_transmit.
+    - name: frames_discarded
+      type: uint32
+      description: Downlink frames thrown away because transmission was stopped.

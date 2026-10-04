@@ -18,8 +18,14 @@
  * ring buffers. Nothing is published from it. Everything else happens here,
  * in the app's thread, once per minor frame, and nothing waits: a full
  * queue drops and counts (DS-33).
+ *
+ * set_transmit stops all transmission to the ground (DS-46). Every packet
+ * avionics sends, replies, telemetry, and later the beacon, goes out
+ * through transmit() below, so this one switch silences them all. The
+ * radio keeps receiving, so the ground can always turn it back on.
  */
 
+#include <errno.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -57,7 +63,7 @@ static atomic_t rx_overrun;
 static struct link_decoder decoder;
 static struct link_seq seq;
 static struct app_status status;
-static struct radio_hk hk;
+static struct radio_hk hk = {.transmit_enabled = true};
 
 /* ---- The UART interrupt: bytes only ------------------------------------ */
 
@@ -182,12 +188,61 @@ static void transmit(void)
 	}
 }
 
+/*
+ * While transmission is stopped, throw away what's waiting. Holding it
+ * would fill the downlink queue, and turning transmission back on would
+ * then send a burst of stale packets.
+ */
+static void discard(void)
+{
+	struct link_frame frame;
+
+	while (k_msgq_get(&downlink_msgq, &frame, K_NO_WAIT) == 0) {
+		hk.frames_discarded++;
+	}
+}
+
 static void step(const struct frame_tick *tick)
 {
 	receive(tick->met_ms);
-	transmit();
+	if (hk.transmit_enabled) {
+		transmit();
+	} else {
+		discard();
+	}
 	if (tick->slot == 0) {
 		zbus_chan_pub(&radio_hk_chan, &hk, K_NO_WAIT);
+	}
+}
+
+/* ---- Commands ----------------------------------------------------------- */
+
+/*
+ * Until FRAM, this state is in RAM, so a reset turns transmission back on
+ * (DS-41, DS-46).
+ */
+static void set_transmit(const struct radio_set_transmit *args)
+{
+	if (!args->enabled && hk.transmit_enabled) {
+		/*
+		 * Send what is already queued before stopping. Command ingest
+		 * runs at this app's priority in the same slot, after it, so the
+		 * reply to this command is already in the queue: the ground sees
+		 * the ACK, then silence.
+		 */
+		transmit();
+	}
+	hk.transmit_enabled = args->enabled;
+}
+
+static int handle_command(const struct radio_cmd *cmd)
+{
+	switch (cmd->id) {
+	case RADIO_CMD_SET_TRANSMIT:
+		set_transmit(&cmd->args.set_transmit);
+		return 0;
+	default:
+		return -ENOTSUP;
 	}
 }
 
@@ -212,12 +267,21 @@ static void radio_main(void *a, void *b, void *c)
 	 * sees frames_received stay at zero.
 	 */
 
+	/* So the channel never shows the zeroed default, transmission off. */
+	zbus_chan_pub(&radio_hk_chan, &hk, K_NO_WAIT);
+
 	while (zbus_sub_wait_msg(&radio_sub, &chan, &msg, K_FOREVER) == 0) {
 		if (chan == &radio_wakeup_chan) {
 			step(&msg.tick);
 			status.steps++;
 		} else if (chan == &radio_cmd_chan) {
-			status.cmd_rejected++; /* no commands until the radio is chosen */
+			if (handle_command(&msg.cmd) == 0) {
+				status.cmd_accepted++;
+			} else {
+				status.cmd_rejected++;
+			}
+			/* The state changed: publish now, not at the next slot 0 (DS-14). */
+			zbus_chan_pub(&radio_hk_chan, &hk, K_NO_WAIT);
 		}
 		zbus_chan_pub(&radio_status_chan, &status, K_NO_WAIT);
 	}

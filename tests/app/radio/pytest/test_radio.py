@@ -195,3 +195,20 @@ def test_housekeeping_from_every_app(sim):
     assert all(950 <= gap <= 1050 for gap in gaps), gaps
     assert seen["frame_manager"]["fields"]["frame_count"] > 0
     assert seen["radio"]["fields"]["frames_sent"] > 0
+
+
+def test_transmit_stop_and_start(sim):
+    """radio set_transmit stops everything avionics sends, replies and
+    telemetry alike, and only a ground command starts it again (DS-46). The
+    radio keeps receiving while stopped."""
+    packet, counter = signed("radio set_transmit false")
+    sim.send(packet)
+    assert sim.replies(timeout=1.0) == [ack(counter)], "the ACK, then silence"
+    try:
+        sim.receive(timeout=0.3, count=100)  # anything already on its way
+        sim.send(signed()[0])
+        assert sim.receive(timeout=1.5, count=1) == [], "no reply, no telemetry"
+    finally:
+        packet, counter = signed("radio set_transmit true")
+        sim.send(packet)
+        assert sim.replies(timeout=1.0) == [ack(counter)]
