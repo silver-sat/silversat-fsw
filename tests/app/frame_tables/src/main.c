@@ -44,10 +44,26 @@ ZTEST(frame_tables, test_deploy_has_nothing_that_transmits_or_takes_commands)
 	zassert_true(table_has(MODE_DEPLOY, APP_ID_MODE_MANAGER));
 }
 
-ZTEST(frame_tables, test_the_mode_manager_runs_in_every_mode)
+ZTEST(frame_tables, test_the_mode_manager_and_health_run_in_every_mode)
 {
+	/* Without health, nothing feeds the watchdog, and it resets (DS-43). */
 	for (uint8_t mode = 0; mode <= MODE_MAX; mode++) {
 		zassert_true(table_has(mode, APP_ID_MODE_MANAGER), "mode %u", mode);
+		zassert_true(table_has(mode, APP_ID_HEALTH), "mode %u", mode);
+	}
+}
+
+ZTEST(frame_tables, test_health_runs_in_slot_0)
+{
+	/* The frame manager publishes its report at the start of slot 0. */
+	for (uint8_t mode = 0; mode <= MODE_MAX; mode++) {
+		const struct frame_table *table = &frame_tables[mode];
+
+		for (uint8_t i = 0; i < table->len; i++) {
+			if (table->entries[i].app == APP_ID_HEALTH) {
+				zassert_equal(table->entries[i].slot, 0, "mode %u", mode);
+			}
+		}
 	}
 }
 

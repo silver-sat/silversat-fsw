@@ -45,7 +45,7 @@ def test_packet_layout(dictionary):
     values = dict(VECTORS[2]["values"])
     packet = tm.encode_hk(dictionary, "typed_app", -1, values)
     assert packet[0] == ord("H")
-    assert packet[1] == 150, "typed_app's id"
+    assert packet[1] == 50, "typed_app's id"
     assert packet[2:10] == b"\xff" * 8, "MET -1, little-endian"
     body = packet[10:]
     assert body[0:4] == (1).to_bytes(4, "little"), "commands"
@@ -74,9 +74,9 @@ def test_replies(dictionary):
 @pytest.mark.parametrize("payload, message", [
     (b"", "empty"),
     (b"Zhello", "unknown packet kind"),
-    (b"H\x96\x00", "too short"),
+    (b"H\x32\x00", "too short"),
     (b"H\xfe" + bytes(8), "no app with id 254"),
-    (b"H\x96" + bytes(8) + b"\x00", "typed_app housekeeping is"),
+    (b"H\x32" + bytes(8) + b"\x00", "typed_app housekeeping is"),
 ])
 def test_bad_packets(dictionary, payload, message):
     with pytest.raises(ValueError, match=message):

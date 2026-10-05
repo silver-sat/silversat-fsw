@@ -2,7 +2,7 @@
 # test reads its command channel itself, standing in for the app.
 
 app: target_app
-id: 160
+id: 51
 description: Receives routed commands in the command ingest tests.
 wakeup: false
 

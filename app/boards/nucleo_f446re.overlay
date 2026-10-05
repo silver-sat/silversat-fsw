@@ -33,7 +33,13 @@
 		 * until the real external signal is chosen.
 		 */
 		test-mode-signal = &user_button;
+		/* The hardware watchdog, fed only by health (DS-43). */
+		watchdog0 = &iwdg;
 	};
+};
+
+&iwdg {
+	status = "okay";
 };
 
 &usart1 {

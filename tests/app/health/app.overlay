@@ -1,0 +1,15 @@
+/*
+ * The watchdog is a fake (src/fake_watchdog.c) that counts feeds and never
+ * resets, so the tests can see when health stops feeding it.
+ */
+
+/ {
+	aliases {
+		watchdog0 = &fake_watchdog;
+	};
+
+	fake_watchdog: fake-watchdog {
+		compatible = "silversat,fake-watchdog";
+		status = "okay";
+	};
+};

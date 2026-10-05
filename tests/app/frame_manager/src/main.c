@@ -442,3 +442,101 @@ ZTEST(frame_manager, test_frame_table_check)
 	table.len = 1;
 	zassert_equal(frame_table_check(&table), -EINVAL, "no entries array");
 }
+
+/* ---- The frame report and set_app_enabled (DS-43) ----------------------- */
+
+static struct frame_report frame_report(void)
+{
+	struct frame_report r;
+
+	zassert_ok(zbus_chan_read(&frame_report_chan, &r, K_MSEC(10)));
+	return r;
+}
+
+static bool set_app_enabled(uint8_t app, bool enabled)
+{
+	const struct frame_manager_cmd cmd = {
+		.id = FRAME_MANAGER_CMD_SET_APP_ENABLED,
+		.args.set_app_enabled = {.app = app, .enabled = enabled},
+	};
+
+	return send_command(&cmd);
+}
+
+#define STUCK_APP BIT64(APP_ID_STUCK_APP)
+#define COUNTER_APP BIT64(APP_ID_COUNTER_APP)
+
+/*
+ * The test apps' bits only. The safe table's mode manager entry never
+ * steps here (no mode manager runs in this test), so its bit is set too.
+ */
+#define TEST_APPS (STUCK_APP | COUNTER_APP)
+
+ZTEST(frame_manager, test_report_shows_an_app_a_major_frame_behind)
+{
+	struct frame_report r;
+
+	settle_in(MODE_NOMINAL);
+	sleep_to_slot(0);
+	r = frame_report();
+	zassert_equal(r.stuck & TEST_APPS, 0, "both test apps are keeping up");
+	zassert_equal(r.major_frame, fm_hk().frame_count / FRAME_SLOTS);
+
+	/* stuck_app takes its slot-1 wakeup and never finishes it. */
+	stuck_app_hold(true);
+	sleep_to_slot(0);
+	zassert_equal(frame_report().stuck & STUCK_APP, 0,
+		      "it has had less than a major frame to finish");
+	sleep_to_slot(0);
+	r = frame_report();
+	zassert_equal(r.stuck & TEST_APPS, STUCK_APP,
+		      "a whole major frame behind; counter_app is not");
+
+	/* Released, it catches up, and the next report clears it. */
+	stuck_app_hold(false);
+	sleep_to_slot(0);
+	sleep_to_slot(0);
+	zassert_equal(frame_report().stuck & TEST_APPS, 0);
+}
+
+ZTEST(frame_manager, test_set_app_enabled_stops_every_wakeup)
+{
+	settle_in(MODE_NOMINAL);
+	zassert_true(set_app_enabled(APP_ID_COUNTER_APP, false));
+	fresh_major_frames(1);
+	zassert_equal(counter_app_seen.len, 0, "neither of its two nominal entries runs");
+	zassert_equal(frame_report().disabled, COUNTER_APP);
+	zassert_equal(fm_hk().disabled_apps, COUNTER_APP);
+
+	/* Stopped in every mode, not just the current one. */
+	settle_in(MODE_SAFE);
+	fresh_major_frames(1);
+	zassert_equal(counter_app_seen.len, 0);
+
+	zassert_true(set_app_enabled(APP_ID_COUNTER_APP, true));
+	fresh_major_frames(1);
+	zassert_equal(counter_app_seen.len, 1, "its safe-table entry runs again");
+	sleep_to_slot(0);
+	zassert_equal(frame_report().disabled, 0);
+}
+
+ZTEST(frame_manager, test_set_app_enabled_refuses_a_protected_app)
+{
+	uint32_t rejected = fm_hk().rejected_protected;
+
+	zassert_false(set_app_enabled(APP_ID_MODE_MANAGER, false));
+	zassert_true(set_app_enabled(APP_ID_MODE_MANAGER, true), "starting it is harmless");
+	sleep_to_slot(0);
+	zassert_equal(fm_hk().rejected_protected - rejected, 1);
+	zassert_equal(frame_report().disabled, 0);
+}
+
+ZTEST(frame_manager, test_set_app_enabled_refuses_an_app_in_no_table)
+{
+	uint32_t rejected = fm_hk().rejected_bad_index;
+
+	zassert_false(set_app_enabled(APP_ID_RADIO, false), "not in the test tables");
+	zassert_false(set_app_enabled(APP_ID_MAX + 1, false), "no such app");
+	sleep_to_slot(0);
+	zassert_equal(fm_hk().rejected_bad_index - rejected, 2);
+}

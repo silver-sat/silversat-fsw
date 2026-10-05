@@ -68,6 +68,13 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 /* Woken once a major frame to check its triggers (DS-40, DS-46). */
 #define MODE_MANAGER_PRIORITY PRIORITY_1HZ
 
+/*
+ * Woken once a major frame, in slot 0, to check the apps and feed the
+ * watchdog (DS-43). The lowest app priority on purpose: an app that hogs
+ * the CPU starves health too, and the watchdog resets the spacecraft.
+ */
+#define HEALTH_PRIORITY PRIORITY_HOUSEKEEPING
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 #define FRAME_MANAGER_STACK_SIZE 1024
@@ -75,6 +82,7 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define RADIO_STACK_SIZE          2048 /* one decoded and one encoded link frame */
 #define TELEMETRY_OUTPUT_STACK_SIZE 1024 /* one link frame */
 #define MODE_MANAGER_STACK_SIZE     1024
+#define HEALTH_STACK_SIZE           1024
 
 /* ---- UART assignments --------------------------------------------------- */
 
@@ -99,6 +107,15 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
  *                      reset, until the real signal is chosen
  */
 #define TEST_SIGNAL_NODE DT_ALIAS(test_mode_signal)
+
+/*
+ * The hardware watchdog (DS-43), fed only by health. A board without the
+ * alias has no watchdog; health still watches the apps.
+ *
+ *   watchdog0   nucleo_f446re: the independent watchdog (IWDG)
+ *               native_sim: none (tests use a fake that counts feeds)
+ */
+#define WATCHDOG_NODE DT_ALIAS(watchdog0)
 
 /*
  * Bytes buffered between the UART interrupt and the radio app, each way.
@@ -203,6 +220,11 @@ struct app_attr {
 	uint8_t auto_retry_cap;
 };
 
+/*
+ * Stall thresholds (DS-43) are in major frames: how many frame reports in a
+ * row must show an app a whole major frame behind before health acts. Three
+ * tolerates one slow frame and acts within about four seconds.
+ */
 static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 	/*
 	 * The frame manager has no wakeups, so health cannot compare its
@@ -216,42 +238,45 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.auto_retry_cap = 0,
 	},
 	/*
-	 * Protected (DS-43): without it the ground cannot command the
-	 * spacecraft. The stall threshold is set when health is written.
+	 * Protected (DS-43): it is the only publisher of the mode, and runs
+	 * the separation delay and the command-loss timer (DS-42, DS-46).
 	 */
+	[APP_ID_MODE_MANAGER] = {
+		.protected = true,
+		.stall_threshold = 3,
+		.reenable = REENABLE_NEVER,
+		.auto_retry_cap = 0,
+	},
+	/* Protected (DS-43): without it the ground cannot command the spacecraft. */
 	[APP_ID_COMMAND_INGEST] = {
 		.protected = true,
-		.stall_threshold = 0,
+		.stall_threshold = 3,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
 	},
 	/*
 	 * Not protected: DS-43's protected list is health, mode manager,
-	 * command ingest, and telemetry output. The stall threshold is set
-	 * when health is written.
+	 * command ingest, and telemetry output. A stalled radio is stopped;
+	 * re-enable policies come with the next health change.
 	 */
 	[APP_ID_RADIO] = {
 		.protected = false,
-		.stall_threshold = 0,
-		.reenable = REENABLE_NEVER,
+		.stall_threshold = 3,
+		.reenable = REENABLE_GROUND,
 		.auto_retry_cap = 0,
 	},
-	/*
-	 * Protected (DS-43): without it the ground sees nothing. The stall
-	 * threshold is set when health is written.
-	 */
+	/* Protected (DS-43): without it the ground sees nothing. */
 	[APP_ID_TELEMETRY_OUTPUT] = {
 		.protected = true,
-		.stall_threshold = 0,
+		.stall_threshold = 3,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
 	},
 	/*
-	 * Protected (DS-43): it is the only publisher of the mode, and runs
-	 * the command-loss timer (DS-46). The stall threshold is set when
-	 * health is written.
+	 * Protected (DS-43). Health can't watch itself: if it stalls, it
+	 * stops feeding the watchdog, which resets the spacecraft.
 	 */
-	[APP_ID_MODE_MANAGER] = {
+	[APP_ID_HEALTH] = {
 		.protected = true,
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,

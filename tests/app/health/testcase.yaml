@@ -1,0 +1,17 @@
+common:
+  tags:
+    - app
+    - health
+
+tests:
+  app.health:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+  # A protected app's stall stops the watchdog for good, so it needs its own
+  # boot. One platform keeps CI short.
+  app.health.protected_stall:
+    extra_args:
+      - EXTRA_CFLAGS=-DPROTECTED_STALL
+    platform_allow:
+      - native_sim

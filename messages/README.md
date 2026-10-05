@@ -114,6 +114,10 @@ channel. `include/silversat/resource_map.h` uses `APP_COUNT` and
 
 ## Test-only apps
 
+App ids run from 1 to 63: the frame manager's report to health has one
+bit per app (DS-43). Flight apps count up from 1; test-only apps use 48 to
+63, so they never collide with a flight app.
+
 An app test can define apps of its own, generated exactly like flight apps
 but only into that test's build. Put their YAML files in a directory in the
 test and name it in the test's `CMakeLists.txt` before `find_package(Zephyr)`:

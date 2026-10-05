@@ -3,7 +3,7 @@
 # and overrun counting (DS-22).
 
 app: stuck_app
-id: 101
+id: 49
 description: Stalls inside its step on request.
 wakeup: true
 

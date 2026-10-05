@@ -54,19 +54,30 @@
 	{.slot = (n), .app = APP_ID_MODE_MANAGER, .wakeup_chan = &mode_manager_wakeup_chan,    \
 	 .status_chan = &mode_manager_status_chan}
 
+/*
+ * Health runs once a major frame, in slot 0, in every mode: it reads the
+ * frame manager's report, published at the start of slot 0, and feeds the
+ * watchdog (DS-43). Without it in a table, the watchdog would reset the
+ * spacecraft.
+ */
+#define HEALTH_IN_SLOT(n)                                                                      \
+	{.slot = (n), .app = APP_ID_HEALTH, .wakeup_chan = &health_wakeup_chan,                \
+	 .status_chan = &health_status_chan}
+
 static const struct frame_entry safe_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
-	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
+	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9), HEALTH_IN_SLOT(0),
 };
 
 /*
  * Deploy mode (DS-42): nothing that transmits runs, and nothing takes
  * ground commands, so neither the radio, command ingest, nor telemetry
- * output is here. The mode manager runs to end the separation delay.
+ * output is here. The mode manager runs to end the separation delay, and
+ * health to feed the watchdog.
  */
 static const struct frame_entry deploy_entries[] = {
-	MODE_MANAGER_IN_SLOT(9),
+	MODE_MANAGER_IN_SLOT(9), HEALTH_IN_SLOT(0),
 };
 
 /*
@@ -76,13 +87,13 @@ static const struct frame_entry deploy_entries[] = {
 static const struct frame_entry test_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
-	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
+	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9), HEALTH_IN_SLOT(0),
 };
 
 static const struct frame_entry nominal_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
-	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
+	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9), HEALTH_IN_SLOT(0),
 };
 
 BUILD_ASSERT(ARRAY_SIZE(safe_entries) <= FRAME_ENTRIES_MAX);

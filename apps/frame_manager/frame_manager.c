@@ -15,14 +15,21 @@
  * effect at once; any other change waits for the next major frame, so one
  * major frame never mixes two tables.
  *
+ * At the start of each major frame it publishes frame_report_chan for
+ * health: which apps are a whole major frame behind, and which it has been
+ * told to stop (DS-43). Health decides what to do; the frame manager only
+ * reports what it already counts.
+ *
  * Unlike other apps, the frame manager's one pending point is its timer,
  * not zbus. It collects its commands without waiting, at the start of each
  * minor frame, so a command takes effect within one minor frame.
  */
 
 #include <errno.h>
+#include <stdint.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/sys/__assert.h>
 #include <zephyr/zbus/zbus.h>
 
@@ -45,6 +52,19 @@ static bool entry_enabled[MODE_MAX + 1][FRAME_ENTRIES_MAX];
  */
 static uint32_t delivered[APP_ID_MAX + 1];
 static uint32_t overruns[APP_ID_MAX + 1];
+
+/* Whether each app's wakeups are delivered at all (set_app_enabled). */
+static bool app_enabled[APP_ID_MAX + 1];
+
+/*
+ * For the frame report (DS-43): each app's status channel, found in the
+ * tables at start, and the wakeups delivered to it by the start of the
+ * last major frame.
+ */
+static const struct zbus_channel *status_chans[APP_ID_MAX + 1];
+static uint32_t delivered_at_last_report[APP_ID_MAX + 1];
+
+BUILD_ASSERT(APP_ID_MAX < 64, "the frame report has one bit per app in a uint64");
 
 /*
  * The mode whose table is in use. Set at start from mode_chan's initial
@@ -103,6 +123,27 @@ static int set_entry_enabled(const struct frame_manager_set_entry_enabled *args)
 	return 0;
 }
 
+static int set_app_enabled(const struct frame_manager_set_app_enabled *args)
+{
+	/* Only an app in some table has wakeups to start or stop. */
+	if (args->app > APP_ID_MAX || status_chans[args->app] == NULL) {
+		hk.rejected_bad_index++;
+		return -EINVAL;
+	}
+	/* A protected app's wakeups are never stopped (DS-23, DS-43). */
+	if (!args->enabled && app_attrs[args->app].protected) {
+		hk.rejected_protected++;
+		return -EPERM;
+	}
+	app_enabled[args->app] = args->enabled;
+	if (args->enabled) {
+		hk.disabled_apps &= ~BIT64(args->app);
+	} else {
+		hk.disabled_apps |= BIT64(args->app);
+	}
+	return 0;
+}
+
 /* Handle every command waiting for us, without waiting for more. */
 static void handle_commands(void)
 {
@@ -115,6 +156,9 @@ static void handle_commands(void)
 		switch (msg.cmd.id) {
 		case FRAME_MANAGER_CMD_SET_ENTRY_ENABLED:
 			rc = set_entry_enabled(&msg.cmd.args.set_entry_enabled);
+			break;
+		case FRAME_MANAGER_CMD_SET_APP_ENABLED:
+			rc = set_app_enabled(&msg.cmd.args.set_app_enabled);
 			break;
 		default:
 			hk.rejected_bad_command++;
@@ -153,7 +197,8 @@ static void deliver(const struct frame_tick *tick)
 		const struct frame_entry *e = &table->entries[i];
 		struct app_status app;
 
-		if (e->slot != tick->slot || !entry_enabled[active_mode][i]) {
+		if (e->slot != tick->slot || !entry_enabled[active_mode][i] ||
+		    !app_enabled[e->app]) {
 			continue;
 		}
 		/*
@@ -178,6 +223,36 @@ static void deliver(const struct frame_tick *tick)
 	}
 }
 
+/*
+ * At the start of each major frame, before any wakeup: which apps are still
+ * not finished with the wakeups delivered before the last report (DS-43).
+ * An app working normally finishes a wakeup within the major frame it was
+ * delivered in, even one delivered in the last slot. If an app's status
+ * can't be read without waiting, it isn't reported this time.
+ */
+static void report(uint32_t major_frame)
+{
+	struct frame_report report = {
+		.major_frame = major_frame,
+		.disabled = hk.disabled_apps,
+	};
+
+	for (uint8_t app = 0; app <= APP_ID_MAX; app++) {
+		struct app_status app_status;
+
+		if (status_chans[app] == NULL) {
+			continue;
+		}
+		/* Signed difference: steps may lag delivered, and both wrap. */
+		if (zbus_chan_read(status_chans[app], &app_status, K_NO_WAIT) == 0 &&
+		    (int32_t)(delivered_at_last_report[app] - app_status.steps) > 0) {
+			report.stuck |= BIT64(app);
+		}
+		delivered_at_last_report[app] = delivered[app];
+	}
+	zbus_chan_pub(&frame_report_chan, &report, K_NO_WAIT);
+}
+
 static void frame_manager_main(void *a, void *b, void *c)
 {
 	struct frame_tick tick = {0};
@@ -193,6 +268,14 @@ static void frame_manager_main(void *a, void *b, void *c)
 		for (uint8_t i = 0; i < FRAME_ENTRIES_MAX; i++) {
 			entry_enabled[mode][i] = true;
 		}
+		for (uint8_t i = 0; i < frame_tables[mode].len; i++) {
+			const struct frame_entry *e = &frame_tables[mode].entries[i];
+
+			status_chans[e->app] = e->status_chan;
+		}
+	}
+	for (uint8_t app = 0; app <= APP_ID_MAX; app++) {
+		app_enabled[app] = true;
 	}
 
 	/* The first minor frame starts now; the timer keeps the rest in step. */
@@ -223,6 +306,9 @@ static void frame_manager_main(void *a, void *b, void *c)
 
 		handle_commands();
 		follow_mode(tick.slot);
+		if (tick.slot == 0) {
+			report(tick.count / FRAME_SLOTS);
+		}
 		deliver(&tick);
 
 		if (tick.slot == 0) {

@@ -1,0 +1,9 @@
+# Copyright (c) 2026 SilverSat
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  A test-only watchdog that counts feeds and never resets (tests/app/health).
+
+compatible: "silversat,fake-watchdog"
+
+include: base.yaml
