@@ -49,6 +49,10 @@ jobs:
           # Not used by native_sim (which builds with the host compiler),
           # but cached here so the target-build job below is fast.
           toolchains: arm-zephyr-eabi
+          # Each job builds different code, so each keeps its own compiler
+          # cache; sharing one key restored another job's cache, all misses.
+          ccache-cache-key: native-sim-tests
+          ccache-max-size: 1GB
 
       - name: Install message generator requirements
         run: pip install -r silversat-fsw/messages/requirements.txt
@@ -95,6 +99,10 @@ jobs:
         with:
           app-path: silversat-fsw
           toolchains: arm-zephyr-eabi
+          # Each job builds different code, so each keeps its own compiler
+          # cache; sharing one key restored another job's cache, all misses.
+          ccache-cache-key: native-sim-coverage
+          ccache-max-size: 1GB
 
       - name: Install message generator requirements
         run: pip install -r silversat-fsw/messages/requirements.txt
@@ -132,6 +140,10 @@ jobs:
         with:
           app-path: silversat-fsw
           toolchains: arm-zephyr-eabi
+          # Each job builds different code, so each keeps its own compiler
+          # cache; sharing one key restored another job's cache, all misses.
+          ccache-cache-key: nucleo-build
+          ccache-max-size: 256MB
 
       - name: Install message generator requirements
         run: pip install -r silversat-fsw/messages/requirements.txt

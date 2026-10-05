@@ -22,24 +22,14 @@ manifest:
       # Check https://github.com/zephyrproject-rtos/zephyr/releases for tags.
       revision: v4.4.0
       import:
-        # Trim the module set once CI is green. Removing HALs you do not use
-        # cuts several GB and a minute or two off every cold `west update`.
-        # Start permissive; optimize later.
-        name-blocklist:
-          - hal_altera
-          - hal_espressif
-          - hal_infineon
-          - hal_microchip
-          - hal_nordic
-          - hal_nxp
-          - hal_quicklogic
-          - hal_renesas
-          - hal_rpi_pico
-          - hal_silabs
-          - hal_telink
-          - hal_ti
-          - hal_xtensa
-          - nrf_hw_models      # depends on hal_nordic
+        # Only the modules the builds use: the STM32 HAL and CMSIS for the
+        # Nucleo. native_sim needs none. An allowlist rather than a
+        # blocklist, so a new upstream module is not fetched by default;
+        # that keeps every cold `west update`, in CI and in a new Codespace,
+        # short. A new board or library may need a module added here.
+        name-allowlist:
+          - cmsis_6
+          - hal_stm32
 
   self:
     # Must match the directory name in every environment. Codespaces clones
