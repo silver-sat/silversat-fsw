@@ -2,7 +2,7 @@
 # of argument, one with none, and one allowed only in nominal mode.
 
 app: typed_app
-id: 150
+id: 50
 description: Has a command for every kind of argument.
 wakeup: false
 

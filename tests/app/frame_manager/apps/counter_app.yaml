@@ -1,7 +1,7 @@
 # Test-only app for the frame manager tests: records every tick it gets.
 
 app: counter_app
-id: 100
+id: 48
 description: Records the ticks it receives, so tests can check which slots it ran in.
 wakeup: true
 

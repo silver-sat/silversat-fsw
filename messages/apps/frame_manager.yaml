@@ -34,6 +34,27 @@ commands:
       - name: enabled
         type: bool
         description: True to deliver the entry's wakeups, false to stop.
+  - name: set_app_enabled
+    id: 2
+    # Every mode with ground commands. Health sends it too (DS-43).
+    modes: [safe, nominal, test]
+    description: >
+      Start or stop all of one app's wakeups, in every mode. Health stops a
+      stalled app with this; the ground can start it again. Sets the state
+      rather than toggling it (DS-35). Stopping a protected app is rejected
+      (DS-23, DS-43).
+    fields:
+      - name: app
+        type: uint8
+        description: The app's id (enum app_id).
+      - name: enabled
+        type: bool
+        description: True to deliver the app's wakeups, false to stop.
+
+data_channels:
+  - name: frame_report_chan
+    type: frame_report
+    description: Which apps are a major frame behind, and which are stopped, for health (DS-43).
 
 housekeeping:
   description: Frame manager state, published at the start of every major frame.
@@ -62,3 +83,6 @@ housekeeping:
     - name: rejected_protected
       type: uint32
       description: Commands rejected for disabling a protected app's entry (DS-23).
+    - name: disabled_apps
+      type: uint64
+      description: Apps whose wakeups set_app_enabled has stopped; bit n is app n.

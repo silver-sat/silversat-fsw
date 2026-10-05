@@ -1,0 +1,40 @@
+# Health messages (DS-43).
+#
+# Health watches every app's progress through the frame manager's report,
+# stops a stalled app's wakeups, and is the only feeder of the hardware
+# watchdog. When a protected app stalls, it stops feeding the watchdog, and
+# the watchdog resets the spacecraft.
+
+app: health
+id: 6
+description: Watches the apps and feeds the hardware watchdog.
+# Woken once a major frame, in slot 0, to read the frame manager's report.
+wakeup: true
+
+# Its response to a stalled app (DS-43).
+sends:
+  - frame_manager.set_app_enabled
+
+housekeeping:
+  description: Health state, published every major frame.
+  fields:
+    - name: watchdog
+      type: bool
+      description: True if there is a hardware watchdog and health set it up.
+    - name: feeds
+      type: uint32
+      description: Times health has fed the watchdog.
+    - name: stalls
+      type: uint32
+      description: Stalls detected, each counted once when it reaches the app's threshold.
+    - name: disabled_by_health
+      type: uint64
+      description: Apps health has stopped; bit n is app n.
+    - name: reset_app
+      type: uint8
+      description: >
+        The protected app whose stall made health stop feeding the
+        watchdog, or 0. The watchdog resets the spacecraft soon after.
+    - name: action_failures
+      type: uint32
+      description: Times set_app_enabled could not be sent; retried at the next report.

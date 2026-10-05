@@ -119,7 +119,9 @@ CTYPE_WIRE_SIZE = {"uint8_t": 1, "uint16_t": 2, "uint32_t": 4}   # enum storage
 TLM_HK_HEADER_LEN = 10
 LINK_PAYLOAD_MAX = 255
 
-APP_ID_MAX = 0xFF          # struct event carries the app as uint8
+# Bit n of the frame manager's stall mask is app n (DS-43), a uint64.
+# Flight apps count up from 1; test-only apps use 48 to 63.
+APP_ID_MAX = 63
 COMMAND_ID_MAX = 0xFFFF    # struct <app>_cmd carries the id as uint16
 
 

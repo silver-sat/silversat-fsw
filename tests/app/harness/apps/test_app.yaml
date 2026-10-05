@@ -3,7 +3,7 @@
 # CMakeLists.txt). The id is far from the flight apps' ids.
 
 app: test_app
-id: 200
+id: 52
 description: Stand-in app used to test the app test harness.
 wakeup: true
 

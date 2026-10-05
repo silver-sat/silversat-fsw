@@ -133,6 +133,24 @@ structs:
         type: int64
         description: Mission elapsed time when this mode was entered.
 
+  - name: frame_report
+    description: >
+      Published by the frame manager on frame_report_chan at the start of
+      each major frame, for health (DS-43). Bit n of each mask is app n
+      (enum app_id).
+    fields:
+      - name: major_frame
+        type: uint32
+        description: Major frames since boot, so a reader can tell a new report from an old one.
+      - name: stuck
+        type: uint64
+        description: >
+          Apps still not finished with the wakeups delivered before the last
+          major frame began: a whole major frame behind.
+      - name: disabled
+        type: uint64
+        description: Apps whose wakeups are stopped by set_app_enabled.
+
   - name: ground_contact
     description: >
       When the ground was last heard from, published by command ingest on

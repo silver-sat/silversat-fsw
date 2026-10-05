@@ -1,0 +1,23 @@
+# Health (DS-43).
+
+config SS_HEALTH
+	bool "Health"
+	depends on SS_MESSAGES
+	select WATCHDOG if $(dt_alias_enabled,watchdog0)
+	help
+	  Watches every app's progress through the frame manager's report,
+	  stops a stalled app's wakeups, and is the only feeder of the
+	  hardware watchdog.
+
+if SS_HEALTH
+
+config SS_WATCHDOG_TIMEOUT_MS
+	int "Hardware watchdog timeout (ms)"
+	default 3000
+	range 1500 30000
+	help
+	  Health feeds the watchdog once a major frame (1 s). 3 s tolerates
+	  one late or missed feed and resets within a few seconds of a hang
+	  (DS-43).
+
+endif # SS_HEALTH

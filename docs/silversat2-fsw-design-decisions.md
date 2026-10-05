@@ -92,7 +92,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 - Overruns are therefore detected by per-wakeup counting. The frame manager counts the wakeups it has delivered to each app and reads the app's step counter from its status channel. The counts are per app, not per table entry, because an app that runs in several slots has one step counter. If delivered minus steps has reached `FRAME_MAX_PENDING` (initially 2, the same for every app), the frame manager skips the publish and counts an overrun for that app. This bounds each app's share of the pool.
 - If the frame manager itself falls behind, so that more than one minor frame has started since it last ran, it skips the minor frames it missed and counts them. The slot stays in step with time, and the skipped slots' wakeups are not sent.
 
-**DS-23 Enable/disable entries: Specified.** Table entries can be enabled and disabled by command, for recovery and power management. Entries for protected apps (DS-43) cannot be disabled; the command is rejected. There is one table per mode (see DS-40), and table switches happen at major-frame boundaries, except entry into safe mode.
+**DS-23 Enable/disable entries: Specified.** Table entries can be enabled and disabled by command, for recovery and power management. All of one app's entries, in every mode, can be stopped or started at once (`set_app_enabled`, used by health, DS-43). Entries for protected apps (DS-43) cannot be disabled; the command is rejected. There is one table per mode (see DS-40), and table switches happen at major-frame boundaries, except entry into safe mode.
 
 **DS-24 Thread priorities: Proposed.** Rate-monotonic assignment: the shorter an app's period, the higher its priority. The frame manager is highest, then 10 Hz apps (for example, ADCS), then 1 Hz apps, then housekeeping and telemetry output. Event-driven apps (command ingest, subsystem receive paths) are placed by required response time. All values live in the resource map (DS-07).
 
@@ -156,11 +156,13 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 - No transition leads into `deploy` or `test`, so each is used at most once per boot. Deploy mode must be used only once in the mission: when FRAM exists, a persisted "deployment complete" record makes later boots start in safe mode. Until then, every reset re-enters deploy mode and waits out the delay again (accepted 2026-10-05).
 
 **DS-43 Health and watchdog: Proposed.**
-- Health checks each app's step counter against the number of wakeups the frame manager delivered.
-- Graded response: event, then disable the app by commanding the frame manager to stop delivering its wakeups, then reset if a protected app stalled. Individual threads are not restarted.
-- Protected apps are never disabled; a stall goes straight to reset. The protected apps are health, mode manager, command ingest, and telemetry output.
-- Re-enable policy is per app, from the app's attribute row (DS-07): `NEVER`, `GROUND` (ground command only), or `AUTO` (after a cooldown, re-enable and watch; after a set number of automatic re-enables, fall back to `GROUND` with an event).
-- Health is the only feeder of the hardware watchdog (IWDG), which forms the chain frame manager, then health, then IWDG.
+- Health checks each app's step counter against the number of wakeups the frame manager delivered. Decided 2026-10-05: at the start of each major frame the frame manager publishes `frame_report_chan`, one bit per app (bit n is app n, so app ids are 1 to 63): `stuck`, set when an app has still not finished the wakeups delivered before the previous report, a whole major frame behind; and `disabled`, the apps it has been told to stop. If an app's status can't be read without waiting at that moment (the app is part-way through publishing it), its bit stays as it was in the last report, so bad timing never resets health's count. The message stays small however many apps there are, and the frame manager only reports what it already counts; the policy stays in health.
+- Health runs once a major frame, in slot 0 of every mode's table, at the lowest app priority, so an app that hogs the CPU starves health too. It counts how many reports in a row show each app stuck; when the count reaches the app's `stall_threshold` (its attribute row, DS-07; 3 for the flight apps so far, 0 for apps health can't watch), it responds.
+- Graded response: event, then disable the app by commanding the frame manager to stop delivering its wakeups (`frame_manager set_app_enabled <app> false`, also a ground command), then reset if a protected app stalled. Individual threads are not restarted. Until the events channel exists (DS-10), health counts stalls in housekeeping.
+- Protected apps are never disabled (the frame manager refuses); a stall goes straight to reset. The protected apps are health, mode manager, command ingest, radio, and telemetry output. Rule, decided 2026-10-05: an app on the path a ground command takes (the radio, command ingest) is protected, because once stopped the ground could never send the command to start it again; a reset brings it back.
+- Reset, decided 2026-10-05: health stops feeding the watchdog, and the watchdog resets the spacecraft. That is the same path as health or the frame manager stalling, so one reset path serves every fault, and it can be tested on native_sim.
+- Re-enable policy is per app, from the app's attribute row (DS-07): `NEVER`, `GROUND` (ground command only), or `AUTO` (after a cooldown, re-enable and watch; after a set number of automatic re-enables, fall back to `GROUND` with an event). Still to come, with the safe-mode request for a critical app (DS-41, through `mode_req_chan`). Meanwhile, the ground restarts a stopped app with `set_app_enabled <app> true`, and health gives it its whole threshold again.
+- Health is the only feeder of the hardware watchdog (IWDG, the `watchdog0` alias), which forms the chain frame manager, then health, then IWDG. The timeout is 3 s (`CONFIG_SS_WATCHDOG_TIMEOUT_MS`, decided 2026-10-05), so one late feed is tolerated. A board without a watchdog still has health watching the apps.
 - Use `WDT_OPT_PAUSE_HALTED_BY_DBG` on the flatsat.
 
 **DS-44 Boot handling: Proposed.**
@@ -423,7 +425,6 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | ID | Item |
 |---|---|
 | DS-36 | Payload radio routing |
-| DS-42 | Boot promotion policy |
 | DS-51 | Image size versus F446 flash layout for updates |
 | DS-63 | Message definitions repository timing |
 | DS-66 | Printable KISS command bytes versus off-the-shelf radio compatibility |
@@ -433,7 +434,6 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | — | Minor frame rate once ADCS requirements are known |
 | — | Pin mux check for five UARTs on the Nucleo-F446RE. So far: radio on USART1 at PA9/PA10, because the default PB6 is reserved for the magnetometer's chip select |
 | — | Driver and emulator support for the selected IMU and FRAM parts in the pinned Zephyr version |
-| DS-43 | How health gets each app's delivered and overrun counts from the frame manager, without large housekeeping messages (DS-07, DS-11) |
 | DS-10 | The events channel: owner, how its queued copies are bounded, and its effect on the zbus pool. Until then, apps count rejections in housekeeping |
 | DS-07 | A separate zbus pool for command channels (`CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_ISOLATION`), so telemetry can never starve commands |
 | DS-68 | Data channel types that only some apps read. For now a data channel's type must be in `common.yaml` |
@@ -467,3 +467,5 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-04 | DS-33: radio transmit inhibit (`set_transmit`), silencing replies, telemetry, and the beacon; only a ground command turns it back on. DS-46: the command-loss timeout is 7 days and also stops transmission |
 | 2026-10-04 | Mode manager. DS-40: transition and action tables, trigger routing, `set_mode`; `mode_req_chan` deferred to the first requester. DS-41: mode in RAM until FRAM. DS-42 decided (boot waits in safe mode) and marked Specified. DS-46: `ground_contact_chan`; the timer starts at first contact. DS-68: internal commands through generated senders (`sends:`). DS-07: the pool budgets `CMD_MAX_PENDING` per sending pair. DS-33: post-deployment transmit wait noted as still to come |
 | 2026-10-05 | DS-42 rewritten: boot and deployment modes. Every boot starts in `deploy` (`mode_chan`'s initial value; nothing transmits, no ground commands), which ends after a 45-minute separation delay in safe mode; `test` mode from an external signal read once at boot skips the delay and accepts ground commands; neither can be re-entered; deploy only once per mission when FRAM exists. Antenna gating of the deploy exit still to decide. DS-33: full-power transmit only with the antenna deployed or in antenna-failure recovery |
+| 2026-10-05 | DS-43: health, first part. The frame manager's `frame_report_chan` (stuck and disabled masks, one bit per app; app ids 1 to 63) closes the open item on how health learns each app's progress. Stall thresholds in major frames; stalled apps stopped with `frame_manager set_app_enabled`; a protected app's stall stops the watchdog feed; 3 s watchdog timeout. Open items: DS-42 row removed (Specified since 2026-10-04) |
+| 2026-10-05 | DS-43: the radio is protected, and the rule: an app on the ground command path is protected, since a stopped one could never be restarted from the ground |
