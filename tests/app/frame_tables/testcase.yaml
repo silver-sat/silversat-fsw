@@ -1,0 +1,10 @@
+common:
+  tags:
+    - app
+    - frame
+
+tests:
+  app.frame_tables:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64

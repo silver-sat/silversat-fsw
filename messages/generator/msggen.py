@@ -227,6 +227,15 @@ class DataChannel:
     name: str
     struct: str               # a struct from common.yaml
     description: str
+    # (field, C expression) for each field given under initial:, the value
+    # the channel holds before its owner first publishes. Other fields are 0.
+    initial: list = field(default_factory=list)
+
+    @property
+    def init_expr(self):
+        if not self.initial:
+            return "0"
+        return ", ".join(f".{name} = {expr}" for name, expr in self.initial)
 
 
 @dataclass
@@ -597,8 +606,32 @@ def _parse_command(node, where, app_name, enums):
     )
 
 
-def _parse_data_channel(node, where, structs):
-    _check_keys(node, where, ("name", "type", "description"))
+def _initial_value(f, value, where, enums):
+    """The C expression for one field's initial value."""
+    if f.enum:
+        names = {v.name: v.constant for v in enums[f.enum].values}
+        if value not in names:
+            raise DefinitionError(
+                f"{where}: {value!r} is not a {f.enum}; use one of {', '.join(names)}")
+        return names[value]
+    if f.type == "bool":
+        if not isinstance(value, bool):
+            raise DefinitionError(f"{where}: expected true or false, got {value!r}")
+        return "true" if value else "false"
+    if f.type in FLOAT_TYPES:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise DefinitionError(f"{where}: expected a number, got {value!r}")
+        return repr(float(value))
+    if f.type in UNSIGNED_MAX:
+        lowest, highest = 0, 2**int(f.type[4:]) - 1
+    else:
+        bits = int(f.type[3:])
+        lowest, highest = -(2**(bits - 1)), 2**(bits - 1) - 1
+    return str(_integer(value, where, lowest, highest))
+
+
+def _parse_data_channel(node, where, structs, enums):
+    _check_keys(node, where, ("name", "type", "description"), ("initial",))
     name = _name(node["name"], f"{where}.name")
     if not name.endswith("_chan"):
         raise DefinitionError(f"{where}.name: a channel name must end in _chan")
@@ -607,7 +640,23 @@ def _parse_data_channel(node, where, structs):
             f"{where}.type: {node['type']!r} is not a struct in common.yaml. Other apps "
             "read a data channel, and an app includes only its own header and "
             "msg/common.h (DS-68), so the type must be shared")
-    return DataChannel(name, node["type"], _text(node["description"], f"{where}.description"))
+    initial = []
+    given = node.get("initial", {})
+    if not isinstance(given, dict):
+        raise DefinitionError(f"{where}.initial: expected field: value pairs")
+    fields = {f.name: f for f in structs[node["type"]].fields}
+    for key in given:
+        if key not in fields:
+            raise DefinitionError(
+                f"{where}.initial: {node['type']} has no field {key!r} "
+                f"(its fields: {', '.join(fields)})")
+    # In the struct's field order, whatever order the YAML gives them in.
+    for field_name, f in fields.items():
+        if field_name in given:
+            initial.append((field_name, _initial_value(f, given[field_name],
+                                                       f"{where}.initial.{field_name}", enums)))
+    return DataChannel(name, node["type"], _text(node["description"], f"{where}.description"),
+                       initial)
 
 
 def _source_label(path, root):
@@ -649,7 +698,7 @@ def _parse_app(path, enums, structs, root):
             f"{hk_where}: {housekeeping.wire_size} bytes on the downlink; housekeeping "
             f"must fit in one frame, at most {room} bytes")
 
-    data_channels = [_parse_data_channel(n, f"{where}: data_channels[{i}]", structs)
+    data_channels = [_parse_data_channel(n, f"{where}: data_channels[{i}]", structs, enums)
                      for i, n in enumerate(_sequence(data, "data_channels", where))]
     _check_unique(data_channels, "name", "data channel", f"{where}: data_channels")
 
@@ -726,8 +775,8 @@ def load_definitions(defs_dir, extra_app_dirs=()):
             raise DefinitionError(f"{extra}: extra app directory not found")
         app_paths += sorted(extra.glob("*.yaml"))
     root = defs_dir.parent
-    struct_names = {s.name for s in structs}
-    apps = [_parse_app(p, by_name, struct_names, root) for p in app_paths]
+    structs_by_name = {s.name: s for s in structs}
+    apps = [_parse_app(p, by_name, structs_by_name, root) for p in app_paths]
 
     names = {}
     for app in apps:

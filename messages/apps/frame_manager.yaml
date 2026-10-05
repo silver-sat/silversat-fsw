@@ -17,8 +17,9 @@ wakeup: false
 commands:
   - name: set_entry_enabled
     id: 1
-    # Both: disabling an app's wakeups is part of recovery in safe mode.
-    modes: [safe, nominal]
+    # Every mode with ground commands: disabling an app's wakeups is part of
+    # recovery in safe mode.
+    modes: [safe, nominal, test]
     description: >
       Enable or disable one entry in a frame table. Sets the state rather
       than toggling it (DS-35). Disabling an entry that belongs to a

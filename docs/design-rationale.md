@@ -126,6 +126,14 @@ If each app reacted to faults by commanding other apps, the answer to "what does
 
 Actions are keyed by event, not only by mode change, because a trigger can fire when the mode is already right. The spacecraft boots in safe mode and waits for the ground, so the command-loss timer may well fire in safe mode; it must still stop transmission.
 
+### Why deploy mode silences by leaving apps out
+
+In deploy mode the radio, command ingest, and telemetry output are not in the frame table at all. A gate inside the radio would have to be right in every code path; an app that is never woken can't transmit, and anyone can check that by reading one table. For the same reason `mode_chan` starts as `deploy`: before the mode manager has published anything, the frame manager runs the most restrictive table, never one with the radio in it.
+
+### Why the test signal is read only at boot
+
+Test mode skips the separation delay, so entering it in flight would be dangerous. The signal is read once, at the mode manager's first wakeup, and no transition leads into test mode afterwards, so a glitch on the pin later can't reach it.
+
 ### Why the command-loss timer waits for first contact
 
 Counting from deployment would silence a spacecraft the ground hasn't found yet, which makes it harder to find. The timer exists to stop a spacecraft that has lost its ground station, and there is nothing to lose before first contact.

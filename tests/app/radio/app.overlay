@@ -1,11 +1,19 @@
 /*
  * The radio UART is uart1, a pseudo-terminal the Python radio simulator
- * opens (DS-90). The same as app/boards/native_sim.overlay.
+ * opens (DS-90). The test signal is an emulated pin, active low, so it is
+ * present and the spacecraft boots into test mode (DS-42). Both the same as
+ * app/boards/native_sim.overlay.
  */
 
 / {
 	aliases {
 		radio-uart = &uart1;
+		test-mode-signal = &test_mode_signal;
+	};
+
+	test_mode_signal: test-mode-signal {
+		compatible = "silversat,test-mode-signal";
+		gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
 	};
 };
 

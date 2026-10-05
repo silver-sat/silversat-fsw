@@ -13,6 +13,18 @@
 / {
 	aliases {
 		radio-uart = &uart1;
+		test-mode-signal = &test_mode_signal;
+	};
+
+	/*
+	 * The test signal (DS-42) is an emulated GPIO pin, active low. An
+	 * emulated input reads low until something drives it, so the signal is
+	 * present: `make run` boots into test mode, with the radio and command
+	 * ingest running, instead of waiting out the separation delay.
+	 */
+	test_mode_signal: test-mode-signal {
+		compatible = "silversat,test-mode-signal";
+		gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
 	};
 };
 

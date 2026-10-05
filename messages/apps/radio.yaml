@@ -14,8 +14,9 @@ wakeup: true
 commands:
   - name: set_transmit
     id: 1
-    # Both: the ground must be able to silence the spacecraft in any mode.
-    modes: [safe, nominal]
+    # Every mode with ground commands: the ground must be able to silence
+    # the spacecraft. In deploy nothing transmits anyway.
+    modes: [safe, nominal, test]
     description: >
       Allow or stop all transmission to the ground: replies, telemetry, and
       the beacon. Sets the state rather than toggling it (DS-35). While

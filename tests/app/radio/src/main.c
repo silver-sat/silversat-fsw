@@ -14,13 +14,24 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/zbus/zbus.h>
 
+#include "msg/frame_manager.h"
 #include "msg/radio.h"
 
 int main(void)
 {
+	struct frame_manager_hk fm;
 	struct radio_hk hk;
 
-	/* The apps start themselves; this only tells the test it can begin. */
+	/*
+	 * The apps start themselves. The spacecraft boots in deploy mode, in
+	 * which the radio doesn't run, and the mode manager moves to test mode
+	 * at the end of the first major frame. Tell the test it can begin once
+	 * the frame manager is running the test table.
+	 */
+	do {
+		k_sleep(K_MSEC(100));
+	} while (zbus_chan_read(&frame_manager_hk_chan, &fm, K_MSEC(10)) != 0 ||
+		 fm.mode != MODE_TEST);
 	printk("radio test ready\n");
 	for (;;) {
 		k_sleep(K_SECONDS(1));

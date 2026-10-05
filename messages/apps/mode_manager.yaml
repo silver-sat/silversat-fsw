@@ -15,8 +15,9 @@ wakeup: true
 commands:
   - name: set_mode
     id: 1
-    # Both: the ground leaves safe mode with this, and may enter it too.
-    modes: [safe, nominal]
+    # Not in deploy, where no ground command is accepted (DS-42). The ground
+    # leaves safe or test mode with this.
+    modes: [safe, nominal, test]
     description: >
       Set the spacecraft mode. Sets the state rather than toggling it
       (DS-35): setting the current mode changes nothing. The only way out of
@@ -34,6 +35,11 @@ data_channels:
   - name: mode_chan
     type: mode_state
     description: The current mode. Published only by the mode manager (DS-40).
+    # The boot mode (DS-42). The frame manager reads this before the mode
+    # manager first publishes, so it must never be a mode that transmits.
+    initial:
+      mode: deploy
+      reason: boot
 
 housekeeping:
   description: Mode manager state, published at the start of every major frame and when it changes.

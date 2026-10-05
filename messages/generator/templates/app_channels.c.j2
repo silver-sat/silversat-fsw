@@ -34,7 +34,7 @@ ZBUS_CHAN_DEFINE({{ app.wakeup_chan }}, struct frame_tick,
 
 {{ d.description | comment }}
 ZBUS_CHAN_DEFINE({{ d.name }}, struct {{ d.struct }},
-		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
+		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT({{ d.init_expr }}));
 {% endfor %}
 {% if app.sends %}
 

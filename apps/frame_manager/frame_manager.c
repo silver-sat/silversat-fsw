@@ -46,8 +46,11 @@ static bool entry_enabled[MODE_MAX + 1][FRAME_ENTRIES_MAX];
 static uint32_t delivered[APP_ID_MAX + 1];
 static uint32_t overruns[APP_ID_MAX + 1];
 
-/* The mode whose table is in use. A zeroed mode_chan reads as safe. */
-static uint8_t active_mode = MODE_SAFE;
+/*
+ * The mode whose table is in use. Set at start from mode_chan's initial
+ * value, deploy, before the mode manager has published (DS-42).
+ */
+static uint8_t active_mode;
 
 static struct app_status status;
 static struct frame_manager_hk hk;
@@ -193,6 +196,12 @@ static void frame_manager_main(void *a, void *b, void *c)
 	}
 
 	/* The first minor frame starts now; the timer keeps the rest in step. */
+	{
+		struct mode_state boot;
+
+		(void)zbus_chan_read(&mode_chan, &boot, K_FOREVER);
+		active_mode = boot.mode <= MODE_MAX ? boot.mode : MODE_DEPLOY;
+	}
 	k_timer_start(&minor_frame_timer, K_NO_WAIT, K_MSEC(FRAME_MINOR_MS));
 
 	for (;;) {

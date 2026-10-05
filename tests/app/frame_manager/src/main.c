@@ -169,13 +169,13 @@ ZTEST_SUITE(frame_manager, NULL, record_boot, NULL, NULL, NULL);
 
 /* ---- Tests ------------------------------------------------------------- */
 
-ZTEST(frame_manager, test_boots_into_the_safe_table)
+ZTEST(frame_manager, test_boots_into_the_deploy_table)
 {
-	/* mode_chan reads as zero, MODE_SAFE, until the mode manager publishes. */
-	zassert_equal(boot_hk.mode, MODE_SAFE);
-	zassert_equal(boot_seen.len, 1, "only the safe table's slot-2 entry runs");
-	zassert_equal(boot_seen.ticks[0].slot, 2);
-	zassert_equal(boot_seen.ticks[0].count, 2);
+	/* mode_chan starts as deploy until the mode manager publishes (DS-42). */
+	zassert_equal(boot_hk.mode, MODE_DEPLOY);
+	zassert_equal(boot_seen.len, 1, "only the deploy table's slot-3 entry runs");
+	zassert_equal(boot_seen.ticks[0].slot, 3);
+	zassert_equal(boot_seen.ticks[0].count, 3);
 	zassert_true(frame_offset_ms() >= 0 && frame_offset_ms() < FRAME_MINOR_MS / 2,
 		     "frames start %lld ms late", frame_offset_ms());
 }

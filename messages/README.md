@@ -45,6 +45,25 @@ Field types are `bool`, `uint8` to `uint64`, `int8` to `int64`, `float32`,
 `float64`, or the name of an enum in `common.yaml`. Command arguments can't
 be floats yet.
 
+## Data channels and initial values
+
+A data channel (`data_channels:`) is a last-value channel carrying a type
+from `common.yaml`, which any app may read. Until its owner first publishes,
+it holds zeros, or the values given under `initial:`:
+
+```yaml
+data_channels:
+  - name: mode_chan
+    type: mode_state
+    description: The current mode.
+    initial:
+      mode: deploy
+      reason: boot
+```
+
+Give an initial value when zero would be the wrong thing for a reader to see
+before the first publish.
+
 ## Sending a command to another app
 
 An app sends internal commands only through functions the generator writes
