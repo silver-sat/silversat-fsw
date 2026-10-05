@@ -65,6 +65,12 @@ static struct link_seq seq;
 static struct app_status status;
 static struct radio_hk hk = {.transmit_enabled = true};
 
+/*
+ * Set by set_transmit false: send what is queued at the next step, then
+ * stop. See set_transmit().
+ */
+static bool final_send;
+
 /* ---- The UART interrupt: bytes only ------------------------------------ */
 
 static void uart_isr(const struct device *dev, void *user_data)
@@ -205,8 +211,9 @@ static void discard(void)
 static void step(const struct frame_tick *tick)
 {
 	receive(tick->met_ms);
-	if (hk.transmit_enabled) {
+	if (hk.transmit_enabled || final_send) {
 		transmit();
+		final_send = false;
 	} else {
 		discard();
 	}
@@ -223,15 +230,14 @@ static void step(const struct frame_tick *tick)
  */
 static void set_transmit(const struct radio_set_transmit *args)
 {
-	if (!args->enabled && hk.transmit_enabled) {
-		/*
-		 * Send what is already queued before stopping. Command ingest
-		 * runs at this app's priority in the same slot, after it, so the
-		 * reply to this command is already in the queue: the ground sees
-		 * the ACK, then silence.
-		 */
-		transmit();
-	}
+	/*
+	 * Stopping waits for one more step, which sends what is queued by
+	 * then. Command ingest queues its reply to this command after routing
+	 * it, in the same minor frame, so by the radio's next step the reply
+	 * is there, whichever of the two threads ran first: the ground sees the
+	 * ACK, then silence.
+	 */
+	final_send = !args->enabled && hk.transmit_enabled;
 	hk.transmit_enabled = args->enabled;
 }
 

@@ -184,6 +184,8 @@ ZTEST(radio_emul, test_stopped_sends_nothing_and_counts)
 
 	set_transmit(false);
 	zassert_false(radio_hk().transmit_enabled, "published when it changes, not at slot 0");
+	wake(); /* the last send; nothing is queued */
+	zassert_equal(sent(NULL), 0);
 
 	downlink("H telemetry");
 	downlink("ACK 2 ok");
@@ -199,15 +201,33 @@ ZTEST(radio_emul, test_reply_to_stop_still_goes_out)
 {
 	struct link_packet packet;
 
-	/* Command ingest queues its reply before the radio handles the command. */
-	downlink("ACK 3 ok");
+	/*
+	 * Command ingest queues its reply after routing the command, so the
+	 * radio may handle the command before the reply is queued. What is
+	 * queued by the next step still goes out.
+	 */
 	set_transmit(false);
+	zassert_equal(sent(NULL), 0, "nothing is sent until the next step");
+	downlink("ACK 3 ok");
+	wake();
 	zassert_equal(sent(&packet), 1, "the ground sees the ACK, then silence");
 	zassert_mem_equal(packet.payload, "ACK 3 ok", packet.len);
 
 	downlink("ACK 4 ok");
 	wake();
 	zassert_equal(sent(NULL), 0);
+}
+
+ZTEST(radio_emul, test_start_before_the_last_send_cancels_the_stop)
+{
+	/* Stopped and started again within one minor frame: still transmitting. */
+	set_transmit(false);
+	set_transmit(true);
+	downlink("ACK 6 ok");
+	wake();
+	downlink("ACK 7 ok");
+	wake();
+	zassert_equal(sent(NULL), 2);
 }
 
 ZTEST(radio_emul, test_receives_while_stopped)
@@ -241,8 +261,12 @@ ZTEST(radio_emul, test_sets_rather_than_toggles)
 {
 	/* The same command twice leaves the same state (DS-35). */
 	set_transmit(false);
+	wake();
 	set_transmit(false);
 	zassert_false(radio_hk().transmit_enabled);
+	downlink("ACK 8 ok");
+	wake();
+	zassert_equal(sent(NULL), 0, "stopping again doesn't allow another send");
 	set_transmit(true);
 	set_transmit(true);
 	zassert_true(radio_hk().transmit_enabled);
