@@ -255,14 +255,14 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.auto_retry_cap = 0,
 	},
 	/*
-	 * Not protected: DS-43's protected list is health, mode manager,
-	 * command ingest, and telemetry output. A stalled radio is stopped;
-	 * re-enable policies come with the next health change.
+	 * Protected (DS-43): it carries every ground command in. Stopped, the
+	 * spacecraft could never be told to start it again; a stall resets
+	 * instead.
 	 */
 	[APP_ID_RADIO] = {
-		.protected = false,
+		.protected = true,
 		.stall_threshold = 3,
-		.reenable = REENABLE_GROUND,
+		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
 	},
 	/* Protected (DS-43): without it the ground sees nothing. */
@@ -282,6 +282,14 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
 	},
+#if defined(SS_TEST_APP_ATTRS)
+	/*
+	 * Tests only: rows for a test's own apps. A test that needs them sets
+	 * SS_TEST_APP_ATTRS to a header of rows in its CMakeLists.txt
+	 * (tests/app/health). Never set in a flight build.
+	 */
+#include SS_TEST_APP_ATTRS
+#endif
 };
 
 #endif /* SILVERSAT_RESOURCE_MAP_H_ */

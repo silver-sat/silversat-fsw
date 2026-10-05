@@ -8,9 +8,10 @@
  * publish frame_report_chan, wake health, and receive the commands health
  * sends it, counting them handled only when a test says so.
  *
- * The apps and their stall thresholds are the flight ones, from
- * app_attrs[] in the resource map: the radio is not protected, command
- * ingest is.
+ * Stall thresholds come from app_attrs[] in the resource map. Every flight
+ * app health watches is protected, so the tests use watched_app, a test
+ * app with its own row (src/test_app_attrs.h), for an app health stops;
+ * command ingest stands for a protected app.
  *
  * Built with PROTECTED_STALL (testcase.yaml), only the protected-app test
  * runs: it stops the watchdog for good, so it needs its own boot.
@@ -94,7 +95,7 @@ static uint32_t feeds(void)
 	return fake_watchdog_state(watchdog).feeds;
 }
 
-#define RADIO BIT64(APP_ID_RADIO)
+#define WATCHED BIT64(APP_ID_WATCHED_APP)
 #define COMMAND_INGEST BIT64(APP_ID_COMMAND_INGEST)
 
 static void *setup(void)
@@ -148,24 +149,24 @@ ZTEST(health, test_stalled_app_is_stopped_at_its_threshold)
 {
 	struct frame_manager_cmd cmd;
 	uint32_t stalls = health_hk().stalls;
-	uint8_t threshold = app_attrs[APP_ID_RADIO].stall_threshold;
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
 
 	zassert_true(threshold > 1, "this test needs a threshold above one");
 	for (uint8_t i = 1; i < threshold; i++) {
-		report(RADIO, 0);
+		report(WATCHED, 0);
 		zassert_false(frame_manager_next(&cmd, true), "report %u: too early", i);
 	}
-	report(RADIO, 0);
+	report(WATCHED, 0);
 	zassert_true(frame_manager_next(&cmd, true));
 	zassert_equal(cmd.id, FRAME_MANAGER_CMD_SET_APP_ENABLED);
-	zassert_equal(cmd.args.set_app_enabled.app, APP_ID_RADIO);
+	zassert_equal(cmd.args.set_app_enabled.app, APP_ID_WATCHED_APP);
 	zassert_false(cmd.args.set_app_enabled.enabled);
 	zassert_equal(health_hk().stalls - stalls, 1);
-	zassert_true((health_hk().disabled_by_health & RADIO) != 0);
+	zassert_true((health_hk().disabled_by_health & WATCHED) != 0);
 
 	/* The frame manager stopped it: health doesn't ask again. */
-	report(RADIO, RADIO);
-	report(RADIO, RADIO);
+	report(WATCHED, WATCHED);
+	report(WATCHED, WATCHED);
 	zassert_false(frame_manager_next(&cmd, true));
 	zassert_equal(health_hk().stalls - stalls, 1, "one stall, counted once");
 }
@@ -173,12 +174,12 @@ ZTEST(health, test_stalled_app_is_stopped_at_its_threshold)
 ZTEST(health, test_stalls_must_be_in_a_row)
 {
 	struct frame_manager_cmd cmd;
-	uint8_t threshold = app_attrs[APP_ID_RADIO].stall_threshold;
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
 
 	/* Behind in every report but one: never enough in a row. */
 	for (int round = 0; round < 3; round++) {
 		for (uint8_t i = 1; i < threshold; i++) {
-			report(RADIO, 0);
+			report(WATCHED, 0);
 		}
 		report(0, 0);
 	}
@@ -188,8 +189,8 @@ ZTEST(health, test_stalls_must_be_in_a_row)
 ZTEST(health, test_a_report_is_counted_once)
 {
 	struct frame_manager_cmd cmd;
-	const struct frame_report r = {.major_frame = major_frame, .stuck = RADIO};
-	uint8_t threshold = app_attrs[APP_ID_RADIO].stall_threshold;
+	const struct frame_report r = {.major_frame = major_frame, .stuck = WATCHED};
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
 
 	/* The same report, read at every wakeup, counts as one. */
 	zassert_ok(zbus_chan_pub(&frame_report_chan, &r, K_NO_WAIT));
@@ -207,20 +208,20 @@ ZTEST(health, test_a_report_is_counted_once)
 ZTEST(health, test_started_again_by_the_ground_gets_a_fresh_count)
 {
 	struct frame_manager_cmd cmd;
-	uint8_t threshold = app_attrs[APP_ID_RADIO].stall_threshold;
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
 
 	for (uint8_t i = 0; i < threshold; i++) {
-		report(RADIO, 0);
+		report(WATCHED, 0);
 	}
 	zassert_true(frame_manager_next(&cmd, true));
-	report(RADIO, RADIO);
+	report(WATCHED, WATCHED);
 
 	/* The ground starts it again; it is still behind at first. */
 	for (uint8_t i = 1; i < threshold; i++) {
-		report(RADIO, 0);
+		report(WATCHED, 0);
 		zassert_false(frame_manager_next(&cmd, true), "report %u: too early", i);
 	}
-	report(RADIO, 0);
+	report(WATCHED, 0);
 	zassert_true(frame_manager_next(&cmd, true), "stopped again after a whole threshold");
 }
 
@@ -229,7 +230,7 @@ ZTEST(health, test_keeps_asking_until_the_frame_manager_acts)
 	struct frame_manager_cmd cmd;
 	uint32_t failures = health_hk().action_failures;
 	uint32_t stalls = health_hk().stalls;
-	uint8_t threshold = app_attrs[APP_ID_RADIO].stall_threshold;
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
 
 	/*
 	 * The frame manager has stalled too: it doesn't handle the command,
@@ -237,12 +238,12 @@ ZTEST(health, test_keeps_asking_until_the_frame_manager_acts)
 	 * has CMD_MAX_PENDING waiting; after that each try fails and counts.
 	 */
 	for (uint8_t i = 0; i < threshold; i++) {
-		report(RADIO, 0);
+		report(WATCHED, 0);
 	}
 	for (int i = 1; i < CMD_MAX_PENDING; i++) {
-		report(RADIO, 0);
+		report(WATCHED, 0);
 	}
-	report(RADIO, 0);
+	report(WATCHED, 0);
 	zassert_equal(health_hk().action_failures - failures, 1);
 	zassert_equal(health_hk().stalls - stalls, 1, "still one stall, however long it lasts");
 	for (int i = 0; i < CMD_MAX_PENDING; i++) {
@@ -253,7 +254,20 @@ ZTEST(health, test_keeps_asking_until_the_frame_manager_acts)
 	/* The frame manager catches up and stops it. */
 	frame_manager_status.cmd_accepted += CMD_MAX_PENDING;
 	zassert_ok(zbus_chan_pub(&frame_manager_status_chan, &frame_manager_status, K_NO_WAIT));
-	report(RADIO, RADIO);
+	report(WATCHED, WATCHED);
+	zassert_false(frame_manager_next(&cmd, true));
+}
+
+ZTEST(health, test_the_radio_is_never_stopped)
+{
+	struct frame_manager_cmd cmd;
+
+	/*
+	 * It carries the ground's commands in: stopped, it could never be told
+	 * to start again. A radio stall resets instead (DS-43).
+	 */
+	zassert_true(app_attrs[APP_ID_RADIO].protected);
+	zassert_true(app_attrs[APP_ID_COMMAND_INGEST].protected);
 	zassert_false(frame_manager_next(&cmd, true));
 }
 

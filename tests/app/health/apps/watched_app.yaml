@@ -1,0 +1,14 @@
+# A test-only app that health watches but that isn't protected, so the
+# health tests can see an app stopped (DS-43). Every flight app health
+# watches is protected. Its attribute row is in src/test_app_attrs.h.
+
+app: watched_app
+id: 53
+description: A test app for health to watch.
+wakeup: true
+
+housekeeping:
+  description: Nothing; the tests only report it stuck.
+  fields:
+    - name: unused
+      type: uint8
