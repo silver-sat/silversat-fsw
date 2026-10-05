@@ -79,7 +79,7 @@ QUIET = {
 }
 
 
-def write_defs(root, common=None, apps=None, raw=None):
+def write_defs(root, common=None, apps=None, raw=None, nvm=None):
     """Write definitions under root and return root.
 
     common and apps default to the valid set above. raw maps a relative
@@ -89,6 +89,8 @@ def write_defs(root, common=None, apps=None, raw=None):
     (root / "common.yaml").write_text(yaml.safe_dump(COMMON if common is None else common))
     for app in [SENSOR, QUIET] if apps is None else apps:
         (root / "apps" / f"{app['app']}.yaml").write_text(yaml.safe_dump(app))
+    if nvm is not None:
+        (root / "nvm_map.yaml").write_text(yaml.safe_dump(nvm))
     for rel, text in (raw or {}).items():
         (root / rel).write_text(text)
     return root
@@ -130,6 +132,8 @@ def test_outputs_one_header_and_one_source_per_app(tmp_path):
         "include/msg/common.h",
         "include/msg/quiet.h",
         "include/msg/sensor.h",
+        "include/nvm/quiet.h",
+        "include/nvm/sensor.h",
         "src/cmd_routes.c",
         "src/msg_quiet.c",
         "src/msg_sensor.c",
@@ -282,7 +286,7 @@ def test_multiline_description_becomes_one_comment(tmp_path):
 REPO_INCLUDE = MESSAGES_DIR.parent / "include"
 
 
-def compile_generated(tmp_path, data_size, apps=None, common=None):
+def compile_generated(tmp_path, data_size, apps=None, common=None, nvm=None):
     """Generate the test definitions and compile each source with strict
     warnings against stand-in Zephyr headers. Returns {file name: gcc result}.
 
@@ -293,7 +297,11 @@ def compile_generated(tmp_path, data_size, apps=None, common=None):
     """
     out = tmp_path / "out"
     msggen.write_outputs(
-        generate_paths(write_defs(tmp_path / "defs", common=common, apps=apps)), out)
+        generate_paths(write_defs(tmp_path / "defs", common=common, apps=apps, nvm=nvm)), out)
+    # Headers compile only when included: one source includes every FRAM header.
+    (out / "src" / "nvm_headers.c").write_text("".join(
+        f'#include "nvm/{h.name}"\n' for h in sorted((out / "include" / "nvm").glob("*.h")))
+        + "typedef int never_empty; /* ISO C forbids an empty file */\n")
     stub = out / "include" / "zephyr"
     (stub / "zbus").mkdir(parents=True)
     (stub / "sys").mkdir()
@@ -314,6 +322,11 @@ def compile_generated(tmp_path, data_size, apps=None, common=None):
         "#pragma once\n#define CMD_MAX_PENDING 2\n")
     (stub / "sys" / "byteorder.h").write_text(
         "#pragma once\n#include <stdint.h>\n"
+        "static inline uint16_t sys_get_le16(const uint8_t *s) { return s[0] | s[1] << 8; }\n"
+        "static inline uint32_t sys_get_le32(const uint8_t *s) "
+        "{ return sys_get_le16(s) | (uint32_t)sys_get_le16(s + 2) << 16; }\n"
+        "static inline uint64_t sys_get_le64(const uint8_t *s) "
+        "{ return sys_get_le32(s) | (uint64_t)sys_get_le32(s + 4) << 32; }\n"
         "static inline void sys_put_le16(uint16_t v, uint8_t *d) { d[0] = v; d[1] = v >> 8; }\n"
         "static inline void sys_put_le32(uint32_t v, uint8_t *d) "
         "{ sys_put_le16(v, d); sys_put_le16(v >> 16, d + 2); }\n"
@@ -783,3 +796,104 @@ def test_data_channel_initial_value_compiles(tmp_path):
                                       "description": "d", "initial": {"mode": "nominal"}}])
     results = compile_generated(tmp_path, data_size=64, apps=[sensor, QUIET], common=common)
     assert results["msg_sensor.c"].returncode == 0, results["msg_sensor.c"].stderr
+
+
+# --- FRAM regions (DS-71, DS-74) --------------------------------------------
+
+NVM = {
+    "fram_size": 1024,
+    "regions": [
+        {"name": "sensor_cal", "owner": "sensor", "version": 2, "description": "Calibration.",
+         "fields": [{"name": "gain", "type": "int8", "default": -3},
+                    {"name": "offset", "type": "uint64", "default": 258},
+                    {"name": "enabled", "type": "bool", "default": True},
+                    {"name": "level", "type": "severity", "default": "error"}]},
+        {"name": "sensor_count", "owner": "sensor", "version": 1, "description": "A count.",
+         "fields": [{"name": "count", "type": "uint32"}]},
+    ],
+}
+
+
+def nvm_defs(tmp_path, nvm=None):
+    return msggen.load_definitions(write_defs(tmp_path, nvm=NVM if nvm is None else nvm))
+
+
+def test_nvm_layout(tmp_path):
+    cal, count = nvm_defs(tmp_path).nvm.regions
+    assert (cal.size, cal.slot_size, cal.address) == (11, 23, 0)
+    assert count.address == 48, "after two 23-byte slots, on a 16-byte boundary"
+    assert (count.size, count.slot_size) == (4, 16)
+
+
+def test_nvm_default_bytes(tmp_path):
+    defs = nvm_defs(tmp_path)
+    cal, count = defs.nvm.regions
+    assert cal.default_bytes(defs.enums_by_name) == \
+        bytes([0xfd]) + (258).to_bytes(8, "little") + bytes([1, 3])
+    assert count.default_bytes(defs.enums_by_name) == bytes(4)
+
+
+def test_nvm_headers(tmp_path):
+    out = generate(write_defs(tmp_path, nvm=NVM))
+    sensor = out["include/nvm/sensor.h"]
+    assert "struct nvm_sensor_cal {" in sensor
+    assert ".address = 0x0030," in sensor, "sensor_count's region"
+    assert "static const uint8_t nvm_sensor_cal_defaults[11] = {" in sensor
+    assert "253, 2, 1, 0, 0, 0, 0, 0, 0, 1, 3," in sensor
+    assert "sys_put_le64((uint64_t)record->offset, &out[1]);" in sensor
+    assert "record->gain = (int8_t)in[0];" in sensor
+    assert "static inline int nvm_sensor_cal_write(" in sensor
+    assert "has no FRAM records" in out["include/nvm/quiet.h"]
+    assert "nvm_sensor" not in out["include/nvm/quiet.h"], "only the owner gets them"
+
+
+def test_nvm_dictionary(tmp_path):
+    nvm = msggen.command_dictionary(nvm_defs(tmp_path))["nvm"]
+    assert nvm["fram_size"] == 1024
+    assert [(r["name"], r["owner"], r["address"]) for r in nvm["regions"]] == \
+        [("sensor_cal", "sensor", 0), ("sensor_count", "sensor", 48)]
+    assert nvm["regions"][0]["fields"][1] == {"name": "offset", "type": "uint64", "offset": 1,
+                                              "size": 8}
+
+
+def test_no_nvm_map_means_no_regions(tmp_path):
+    defs = msggen.load_definitions(write_defs(tmp_path))
+    assert defs.nvm.regions == []
+
+
+@needs_gcc
+def test_nvm_headers_compile(tmp_path):
+    results = compile_generated(tmp_path, data_size=64, nvm=NVM)
+    assert results["nvm_headers.c"].returncode == 0, results["nvm_headers.c"].stderr
+
+
+def nvm_with(**changes):
+    nvm = copy.deepcopy(NVM)
+    nvm["regions"][0].update(changes)
+    return nvm
+
+
+@pytest.mark.parametrize("nvm, expected", [
+    (nvm_with(owner="nobody"), "there is no app 'nobody'"),
+    (nvm_with(version=0), "outside 1..255"),
+    (nvm_with(fields=[{"name": "x", "type": "float32"}]), "not supported in FRAM records"),
+    (nvm_with(fields=[{"name": "x", "type": "uint8", "default": 300}]), "outside 0..255"),
+    (nvm_with(fields=[{"name": "x", "type": "severity", "default": "loud"}]),
+     "'loud' is not a severity"),
+    (nvm_with(fields=[{"name": f"x{i}", "type": "uint64"} for i in range(17)]),
+     "at most 128"),
+    (nvm_with(name="sensor_count"), "duplicate region 'sensor_count'"),
+    (nvm_with(colour="red"), "unknown key colour"),
+    ({"fram_size": 40, "regions": NVM["regions"]}, "more than fram_size (40)"),
+    ({"fram_size": 0x10001, "regions": []}, "outside 1..65536"),
+])
+def test_invalid_nvm_map(tmp_path, nvm, expected):
+    with pytest.raises(msggen.DefinitionError, match="nvm_map.yaml") as e:
+        nvm_defs(tmp_path, nvm)
+    assert expected in str(e.value)
+
+
+def test_flight_nvm_map():
+    defs = msggen.load_definitions(MESSAGES_DIR)
+    assert defs.nvm.fram_size == 32768
+    assert {r.owner.name for r in defs.nvm.regions} <= {a.name for a in defs.apps}

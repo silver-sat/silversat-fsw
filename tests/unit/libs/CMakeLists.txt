@@ -2,12 +2,17 @@ cmake_minimum_required(VERSION 3.20.0)
 
 # One build for the shared libraries' tests: signing (cmd_auth), replay
 # protection (cmd_counter), command text decoding and routing (cmd_route),
-# the link codec (link_codec), and the housekeeping encoders (tlm_encode). Each keeps its own source file and test
-# suite; they share a build only to save CI time, since most of a test's
-# time is building Zephyr for it.
+# the link codec (link_codec), the housekeeping encoders (tlm_encode), and
+# the FRAM service (nvm). Each keeps its own source file and test suite;
+# they share a build only to save CI time, since most of a test's time is
+# building Zephyr for it.
 
 # typed_app has a command for every argument kind.
 set(SS_MESSAGES_EXTRA_APPS ${CMAKE_CURRENT_SOURCE_DIR}/apps)
+
+# The fake FRAM's binding (app.overlay puts it behind the fram alias).
+set(FAKES ${CMAKE_CURRENT_SOURCE_DIR}/../../fakes)
+list(APPEND DTS_ROOT ${FAKES})
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(libs_test LANGUAGES C)
@@ -61,5 +66,5 @@ add_custom_target(libs_vectors
 add_dependencies(app libs_vectors)
 
 target_sources(app PRIVATE src/auth.c src/counter.c src/route.c src/link_codec.c
-  src/tlm_encode.c)
-target_include_directories(app PRIVATE ${VECTOR_DIR})
+  src/tlm_encode.c src/nvm.c ${FAKES}/fake_fram.c)
+target_include_directories(app PRIVATE ${VECTOR_DIR} ${FAKES})

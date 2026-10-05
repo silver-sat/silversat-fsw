@@ -228,6 +228,14 @@ They are designed around flash (erase blocks, wear leveling, garbage collection)
 
 Power can fail mid-write and tear a multi-byte record. Writing alternately to the older slot means a torn write can only damage the slot being written; the other still holds the previous good value. The commit point is when the new slot's CRC becomes valid.
 
+### Why a record of another version reads as its default
+
+When a record's fields change, its version changes, and the new software can't read the old bytes. Treating them as a fault would mark FRAM degraded after every software update. They read as no record, so the record starts from its flash default, and the next write replaces them.
+
+### Why every write is read back
+
+A part that has failed can accept a write and store nothing. Reading the slot back before reporting success turns that into a detected failure, so command ingest never sends an ACK for a floor that wasn't stored.
+
 ### Why the boot log has no head pointer
 
 A separate head index is a second value that can tear independently of the entry it points to. Each entry carries its own boot number; the newest valid entry is found by scanning.

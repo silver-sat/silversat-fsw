@@ -4,6 +4,9 @@ build-*/
 twister-out/
 twister-out.*/
 
+# native_sim's simulated FRAM (make run)
+eeprom.bin
+
 # Zephyr compliance checks (check_compliance.py)
 compliance.xml
 *Lint.txt

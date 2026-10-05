@@ -37,6 +37,18 @@ config SS_CMD_TEXT
 	  Splits ground command text into words and reads typed arguments.
 	  Used by the generated command routing (DS-50).
 
+config SS_NVM
+	bool "FRAM service"
+	depends on SS_MESSAGES
+	select CRC
+	select EEPROM if $(dt_alias_enabled,fram)
+	help
+	  Records that survive a reset, in FRAM through Zephyr's EEPROM
+	  API: two slots per record with generation and CRC, and the
+	  record's default whenever it can't be read (DS-70, DS-71,
+	  DS-75). A board without the fram alias runs with FRAM
+	  unavailable.
+
 config SS_LINK
 	bool "Link frame queues"
 	depends on SS_MESSAGES
