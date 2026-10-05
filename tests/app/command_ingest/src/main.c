@@ -575,3 +575,38 @@ ZTEST(command_ingest, test_housekeeping_once_a_major_frame)
 	}
 	zassert_equal(atomic_get(&hk_publishes), 2);
 }
+
+static struct ground_contact contact_now(void)
+{
+	struct ground_contact contact;
+
+	zassert_ok(zbus_chan_read(&ground_contact_chan, &contact, K_MSEC(10)));
+	return contact;
+}
+
+ZTEST(command_ingest, test_accepted_command_is_ground_contact)
+{
+	const struct ground_contact never = {0};
+
+	/* Standing in for the boot state: the ground not yet heard from. */
+	zassert_ok(zbus_chan_pub(&ground_contact_chan, &never, K_NO_WAIT));
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_true(contact_now().contacted, "the mode manager's timer starts (DS-46)");
+	zassert_equal(contact_now().last_accepted_met_ms, ci_hk().last_accepted_met_ms);
+}
+
+ZTEST(command_ingest, test_refused_command_is_not_ground_contact)
+{
+	const struct ground_contact never = {0};
+
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_ok(zbus_chan_pub(&ground_contact_chan, &never, K_NO_WAIT));
+
+	/* A replay and a forgery: anyone can send those, so they prove nothing. */
+	uplink(PKT_SET_LEVEL_7);
+	uplink(PKT_FORGED);
+	run_one_frame();
+	zassert_false(contact_now().contacted);
+}

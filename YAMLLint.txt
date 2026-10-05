@@ -1,0 +1,10 @@
+Check YAML files with YAMLLint.
+
+ YAMLLint (line-length):line too long (108 > 100 characters)
+File:messages/apps/mode_manager.yaml
+Line:58
+Column:101
+ YAMLLint (line-length):line too long (111 > 100 characters)
+File:messages/common.yaml
+Line:125
+Column:101

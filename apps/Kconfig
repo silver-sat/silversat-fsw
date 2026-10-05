@@ -9,5 +9,6 @@ rsource "frame_manager/Kconfig"
 rsource "command_ingest/Kconfig"
 rsource "radio/Kconfig"
 rsource "telemetry_output/Kconfig"
+rsource "mode_manager/Kconfig"
 
 endmenu

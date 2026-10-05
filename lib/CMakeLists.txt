@@ -3,6 +3,7 @@
 add_subdirectory_ifdef(CONFIG_SS_BLAKE2S blake2s)
 add_subdirectory_ifdef(CONFIG_SS_CMD_AUTH cmd_auth)
 add_subdirectory_ifdef(CONFIG_SS_CMD_COUNTER cmd_counter)
+add_subdirectory_ifdef(CONFIG_SS_CMD_DELIVER cmd_deliver)
 add_subdirectory_ifdef(CONFIG_SS_CMD_TEXT cmd_text)
 add_subdirectory_ifdef(CONFIG_SS_LINK link)
 add_subdirectory_ifdef(CONFIG_SS_LINK_CODEC link_codec)
