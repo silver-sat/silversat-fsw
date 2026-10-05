@@ -46,16 +46,24 @@
 	 .wakeup_chan = &telemetry_output_wakeup_chan,                                         \
 	 .status_chan = &telemetry_output_status_chan}
 
+/*
+ * The mode manager runs once a major frame, in the last slot, so a mode
+ * change it makes takes effect at the next major frame (DS-23).
+ */
+#define MODE_MANAGER_IN_SLOT(n)                                                                \
+	{.slot = (n), .app = APP_ID_MODE_MANAGER, .wakeup_chan = &mode_manager_wakeup_chan,    \
+	 .status_chan = &mode_manager_status_chan}
+
 static const struct frame_entry safe_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
-	TELEMETRY_OUTPUT_IN_SLOT(5),
+	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
 };
 
 static const struct frame_entry nominal_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
-	TELEMETRY_OUTPUT_IN_SLOT(5),
+	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
 };
 
 BUILD_ASSERT(ARRAY_SIZE(safe_entries) <= FRAME_ENTRIES_MAX);

@@ -188,6 +188,20 @@ static const char *rotate(uint16_t command, const struct cmd_text *words, uint8_
 	return "ok";
 }
 
+/*
+ * Tell the mode manager the ground was heard from, for the command-loss
+ * timer (DS-46). Every accepted command counts, whatever it does.
+ */
+static void heard_from_ground(int64_t met_ms)
+{
+	const struct ground_contact contact = {
+		.contacted = true,
+		.last_accepted_met_ms = met_ms,
+	};
+
+	zbus_chan_pub(&ground_contact_chan, &contact, K_NO_WAIT);
+}
+
 /* Take one uplink frame through the pipeline. */
 static void ingest(const struct link_frame *frame, int64_t met_ms)
 {
@@ -246,6 +260,7 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 	}
 	hk.last_counter = packet.counter;
 	hk.last_accepted_met_ms = met_ms;
+	heard_from_ground(met_ms);
 
 	if (rotation != 0) {
 		int bad_arg = -1;

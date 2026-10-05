@@ -120,6 +120,20 @@ The payload app never stops stepping, even during a long job; waiting is a state
 
 Anything can enter safe mode; only the ground exits it. Autonomy's job is to reach a stable state and wait, because the triggering fault may still be present. Safe mode is sticky across resets so a reset doesn't erase the ground's decision to hold.
 
+### Why triggers go through the mode manager
+
+If each app reacted to faults by commanding other apps, the answer to "what does the spacecraft do when the battery is low?" would be scattered across every app that noticed. The mode manager's two tables (transitions and actions) put every cross-app response in one place a student can read. An app still acts at once on its own hardware when waiting would do harm, such as cutting an over-current load, because that response involves nobody else.
+
+Actions are keyed by event, not only by mode change, because a trigger can fire when the mode is already right. The spacecraft boots in safe mode and waits for the ground, so the command-loss timer may well fire in safe mode; it must still stop transmission.
+
+### Why the command-loss timer waits for first contact
+
+Counting from deployment would silence a spacecraft the ground hasn't found yet, which makes it harder to find. The timer exists to stop a spacecraft that has lost its ground station, and there is nothing to lose before first contact.
+
+### Why internal commands are generated
+
+The sender lists what it sends in its YAML, and the generator writes a typed function for each (DS-68). The alternative, action rows written as command text and decoded at run time by the ground router, read nicely but found a typo only when the row ran, needed the router made safe for a second thread, and hid who commands whom. Declaring sends also lets the resource map budget the zbus pool for them.
+
 ---
 
 ## 5. Commanding and security

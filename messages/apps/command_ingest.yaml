@@ -36,6 +36,13 @@ commands:
         type: uint8
         description: The armed slot.
 
+data_channels:
+  - name: ground_contact_chan
+    type: ground_contact
+    description: >
+      When a command was last accepted, for the mode manager's command-loss
+      timer (DS-46). Published each time a command is accepted.
+
 housekeeping:
   description: Command ingest state, published after every minor frame that handled a frame.
   fields:

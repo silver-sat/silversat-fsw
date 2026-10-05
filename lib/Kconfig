@@ -22,6 +22,15 @@ config SS_CMD_COUNTER
 	  and the per-key-slot floor (DS-50 stage 3, DS-53). The floor is
 	  held in RAM until the FRAM service exists.
 
+config SS_CMD_DELIVER
+	bool "Command delivery"
+	depends on SS_MESSAGES
+	help
+	  Publishes a command to an app's command channel, keeping at most
+	  CMD_MAX_PENDING unhandled commands from each sender so the zbus
+	  pool stays within its budget (DS-07). Used by the generated ground
+	  command routing and internal command senders.
+
 config SS_CMD_TEXT
 	bool "Command text"
 	help

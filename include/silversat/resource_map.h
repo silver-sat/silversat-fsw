@@ -65,12 +65,16 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 /* Woken once a major frame to send one app's housekeeping. */
 #define TELEMETRY_OUTPUT_PRIORITY PRIORITY_HOUSEKEEPING
 
+/* Woken once a major frame to check its triggers (DS-40, DS-46). */
+#define MODE_MANAGER_PRIORITY PRIORITY_1HZ
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 #define FRAME_MANAGER_STACK_SIZE 1024
 #define COMMAND_INGEST_STACK_SIZE 2048 /* BLAKE2s state, one link frame */
 #define RADIO_STACK_SIZE          2048 /* one decoded and one encoded link frame */
 #define TELEMETRY_OUTPUT_STACK_SIZE 1024 /* one link frame */
+#define MODE_MANAGER_STACK_SIZE     1024
 
 /* ---- UART assignments --------------------------------------------------- */
 
@@ -125,8 +129,10 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define FRAME_MAX_PENDING 2
 
 /*
- * Ground commands queued for an app. Command routing enforces it: once an
- * app has this many it hasn't handled, the next gets "busy" (DS-50).
+ * Commands queued for an app from one sender. Command routing enforces it
+ * for ground commands: once an app has this many it hasn't handled, the
+ * next gets "busy" (DS-50). The generated internal command senders enforce
+ * it for each app that sends (sends: in its YAML), returning -EBUSY.
  */
 #define CMD_MAX_PENDING 2
 
@@ -140,7 +146,7 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
  */
 #define POOL_REQUIRED                                                                  \
 	(FRAME_MAX_PENDING * APP_WAKEUP_COUNT + CMD_MAX_PENDING * APP_COUNT +              \
-	 POOL_PUBLISHING_THREADS)
+	 CMD_MAX_PENDING * APP_SEND_PAIR_COUNT + POOL_PUBLISHING_THREADS)
 
 #if defined(CONFIG_ZBUS_MSG_SUBSCRIBER)
 BUILD_ASSERT(CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE >= POOL_REQUIRED,
@@ -199,11 +205,6 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.auto_retry_cap = 0,
 	},
 	/*
-	 * Protected (DS-43): its frame entries cannot be disabled. The stall
-	 * threshold is set when health is written; until then health does not
-	 * exist to watch it.
-	 */
-	/*
 	 * Protected (DS-43): without it the ground cannot command the
 	 * spacecraft. The stall threshold is set when health is written.
 	 */
@@ -234,6 +235,11 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
 	},
+	/*
+	 * Protected (DS-43): it is the only publisher of the mode, and runs
+	 * the command-loss timer (DS-46). The stall threshold is set when
+	 * health is written.
+	 */
 	[APP_ID_MODE_MANAGER] = {
 		.protected = true,
 		.stall_threshold = 0,

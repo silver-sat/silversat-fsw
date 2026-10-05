@@ -44,7 +44,7 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 **DS-07 Resource map: Specified.** A single header defines all thread priorities, stack sizes, zbus message pool sizes, and UART assignments.
 - A UART assignment is a devicetree alias (for example `radio-uart`) named in the header and bound to a UART in each board's overlay: on native_sim a pseudo-terminal, on the Nucleo a USART and its pins.
 - It also holds one const attribute row per app: the protected flag, the stall threshold, and the re-enable policy (DS-43). The frame manager and health both read this row, so each app's attributes are stated once.
-- The zbus message pool size is computed in the header from the app counts: `FRAME_MAX_PENDING` for each frame-driven app, plus `CMD_MAX_PENDING` for each app's command channel, plus one buffer for each thread that publishes, because every publish holds a buffer while it runs (DS-22). Zephyr takes the pool size from Kconfig, so a build check fails if the Kconfig value is smaller than the computed size.
+- The zbus message pool size is computed in the header from the app counts: `FRAME_MAX_PENDING` for each frame-driven app, plus `CMD_MAX_PENDING` for each app's command channel (ground commands) and for each pair of sending app and target app (internal commands, DS-68), plus one buffer for each thread that publishes, because every publish holds a buffer while it runs (DS-22). Zephyr takes the pool size from Kconfig, so a build check fails if the Kconfig value is smaller than the computed size.
 - Every buffer must hold the largest message on any channel, observed or not, because every publish takes one. The generated channel definitions fail the build if a message does not fit.
 
 ## 2. Architecture
@@ -119,7 +119,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 - Never block. Waiting is a state in a per-frame state machine.
 - A shared link library handles framing, CRC, sequence numbers, and retries. Each subsystem app implements only its own message set.
 - The radio app, decided 2026-10-04: woken every minor frame, in the slot before command ingest. The UART interrupt only moves bytes between the UART and two static ring buffers, one each way; nothing is published from it. Each frame the app decodes what arrived, passes ground frames to the uplink queue, drops a repeated frame, counts lost ones from sequence gaps, and encodes waiting downlink frames for the interrupt to send.
-- Transmit inhibit, decided 2026-10-04: `radio set_transmit <true|false>` sets whether avionics transmits at all. While it is false the radio app throws away every downlink frame (replies, telemetry, and the beacon) and counts them, and keeps receiving, so ground commands still work. Stopping takes effect after one more radio step, which sends what is queued by then. Command ingest queues the reply after routing, in the same minor frame, so the ground sees the ACK and then silence, whichever of the two equal-priority threads runs first. Only a ground command sets it back to true. The same command meets the licensing requirement that the ground can stop all emissions. Held in RAM until the FRAM service exists, so for now a reset turns transmission back on. When the radio is selected, the radio board's own transmitter (for example, a built-in beacon) must be silenced by the same state.
+- Transmit inhibit, decided 2026-10-04: `radio set_transmit <true|false>` sets whether avionics transmits at all. While it is false the radio app throws away every downlink frame (replies, telemetry, and the beacon) and counts them, and keeps receiving, so ground commands still work. Stopping takes effect after one more radio step, which sends what is queued by then. Command ingest queues the reply after routing, in the same minor frame, so the ground sees the ACK and then silence, whichever of the two equal-priority threads runs first. Only a ground command sets it back to true. The same command meets the licensing requirement that the ground can stop all emissions. Held in RAM until the FRAM service exists, so for now a reset turns transmission back on. When the radio is selected, the radio board's own transmitter (for example, a built-in beacon) must be silenced by the same state. Still to come: the deployment conditions (DS-34, DS-45). After ejection the spacecraft waits before deploying the antenna, and does not transmit until the antenna is deployed (for example, the ISS deployment inhibit). `set_transmit` is only the ground's gate; the radio transmits only when the deployment conditions are met and `set_transmit` is true.
 - Acknowledgement, decided 2026-10-02: commands to a peer ("get status") expect a response, and the subsystem app's state machine retries on timeout. Data frames (uplink, downlink) are not acknowledged on the link; command ACKs are end-to-end already (DS-50), and telemetry is periodic.
 - Mirror the peer's state, including how fresh it is. After a link timeout, report "unknown."
 - Detect peer resets through a boot counter in the peer's telemetry.
@@ -135,19 +135,20 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 ## 5. Health, modes, and safe mode
 
 **DS-40 Mode manager: Proposed.**
-- It is the sole publisher of `mode_chan`. Requests arrive on `mode_req_chan`, which uses a message subscriber.
-- Transitions are defined in a const table: from, to, allowed sources, and a guard function.
-- Entry and exit actions are commands published to other apps.
-- The frame manager selects its table from `mode_chan`.
+- It is the sole publisher of `mode_chan`. Requests from other apps arrive on `mode_req_chan`, which uses a message subscriber; the channel is added with the first app that requests (health). The ground sets the mode with `mode_manager set_mode <mode>`.
+- Transitions are defined in a const table: from, to, and the reasons (`mode_reason`) allowed to cause it. A guard function column is added with the first guard (for example, battery state from the power app).
+- Actions are defined in a second const table, keyed by event: entering a mode, leaving a mode, or a trigger firing. Each action sends an internal command (DS-68). A trigger's actions run whether or not the mode changes, and are retried each major frame until they have all been sent, so each must be safe to repeat (DS-35).
+- Routing triggers, decided 2026-10-04: a condition whose response changes the mode or commands other apps goes through the mode manager, so the response is stated once, in its tables. Other apps send a request with a reason; the mode manager's own timers (command loss) are checked there each major frame. An app may still act at once on its own condition when the response stays inside that app (the power app cutting an over-current load, the radio reinitialising its UART), reporting it in housekeeping, and also requesting a mode change if one is needed. An app does not command a different app in response to a fault.
+- The frame manager selects its table from `mode_chan`. The mode manager runs in the last slot of each major frame and republishes the mode every major frame.
 
 **DS-41 Safe mode: Proposed.**
 - Any source may request entry. Only a ground command exits.
-- Safe mode is sticky across resets: the mode manager persists the current mode and reason in a two-slot FRAM record on every transition, and reads it at boot.
+- Safe mode is sticky across resets: the mode manager persists the current mode and reason in a two-slot FRAM record on every transition, and reads it at boot. Until the FRAM service exists the mode is in RAM, so every reset returns to safe mode.
 - The safe frame table contains only trusted apps.
 - Triggers: low battery (with hysteresis), reset loop, critical app failure, command-loss timer, ground command.
 - The beacon carries the mode and the reason for it.
 
-**DS-42 Boot promotion: Open.** Either boot waits in safe mode for the ground, or it promotes itself to nominal after a clean reset with good power. The recommendation is to start conservative and make the promotion row enable-able by command.
+**DS-42 Boot promotion: Specified.** Decided 2026-10-04: boot waits in safe mode for the ground. There is no promotion row in the transition table; only `mode_manager set_mode nominal` leaves safe mode. (The alternative considered was promoting to nominal after a clean reset with good power, with the promotion row enable-able by command.)
 
 **DS-43 Health and watchdog: Proposed.**
 - Health checks each app's step counter against the number of wakeups the frame manager delivered.
@@ -165,7 +166,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 
 **DS-45 Launch timers: Specified.** Time since deployment is kept in FRAM, so a reset neither restarts the post-ejection waits nor skips them. Values come from the launch provider's interface document.
 
-**DS-46 Command-loss timer: Proposed.** Measures time since the last *accepted* ground command, not the health of the command ingest app (health covers that through its step counter, DS-43). Command ingest stores the MET of acceptance with the counter floor and publishes it in its status. The mode manager compares it against the timeout (7 days, from Kconfig) and, when it expires, requests safe mode and sends `radio set_transmit false` (DS-33). Transmission stays off until a ground command turns it on; an accepted command restarts the timer but does not turn transmission on. Because the value is in FRAM, resets do not restart the timer.
+**DS-46 Command-loss timer: Proposed.** Measures time since the last *accepted* ground command, not the health of the command ingest app (health covers that through its step counter, DS-43). Command ingest stores the MET of acceptance with the counter floor and publishes it on `ground_contact_chan` (a data channel, since the mode manager may not include command ingest's header, DS-68). Every command that passes the counter check counts, whatever it does; replays and forgeries do not. The timer starts at first contact, so the spacecraft keeps transmitting until the ground has found it. The mode manager compares it against the timeout (7 days, from Kconfig) and, when it expires, requests safe mode and sends `radio set_transmit false` (DS-33). Transmission stays off until a ground command turns it on; an accepted command restarts the timer but does not turn transmission on. Because the value is in FRAM, resets do not restart the timer.
 
 ## 6. Commanding and security
 
@@ -280,6 +281,7 @@ The dictionary version and hash are included in the beacon.
 - The generator emits one header per app containing only that app's messages, plus a shared header for common types (tick, status, events).
 - The generator also emits the channel definitions (in the owner's module) and command ingest's routing table, so ownership is stated once.
 - CI lint: an app includes only its own generated header and the shared one, and only the owner publishes its telemetry and housekeeping channels. Publishing to another app's *command* channel remains allowed; that is how internal commands work.
+- Internal commands, decided 2026-10-04: an app lists the commands it sends under `sends:` in its YAML (`radio.set_transmit`). The generator writes `send_<app>_<command>()` into the sender's own header, so the sender never includes the target's header, a misspelled command fails the build, and the dictionary shows who commands whom. Each sender keeps at most `CMD_MAX_PENDING` unhandled commands to each target (`-EBUSY` otherwise), the same bound command routing uses for ground commands (DS-07).
 
 **DS-69 Beacon contents: Proposed.** The beacon answers, in one reception, "is the spacecraft alive, what state is it in, and can I command it?" It is defined in the message definitions like any other telemetry (DS-60), transmitted unencrypted, and generated by telemetry output from housekeeping channels, so no app builds beacon bytes itself. Contents, in priority order so a truncated or short beacon keeps the most important fields:
 
@@ -458,3 +460,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-04 | Telemetry output. DS-07: the pool no longer budgets housekeeping requests, which are dropped. DS-14: every app publishes housekeeping at least once per major frame. DS-61: generated housekeeping encoders and wire layouts in the dictionary. DS-66: downlink packet kind letters (`A`, `N`, `H`) and the housekeeping packet layout. DS-73: interim rate of one app per major frame |
 | 2026-10-04 | DS-14 confirmed and marked Specified |
 | 2026-10-04 | DS-33: radio transmit inhibit (`set_transmit`), silencing replies, telemetry, and the beacon; only a ground command turns it back on. DS-46: the command-loss timeout is 7 days and also stops transmission |
+| 2026-10-04 | Mode manager. DS-40: transition and action tables, trigger routing, `set_mode`; `mode_req_chan` deferred to the first requester. DS-41: mode in RAM until FRAM. DS-42 decided (boot waits in safe mode) and marked Specified. DS-46: `ground_contact_chan`; the timer starts at first contact. DS-68: internal commands through generated senders (`sends:`). DS-07: the pool budgets `CMD_MAX_PENDING` per sending pair. DS-33: post-deployment transmit wait noted as still to come |

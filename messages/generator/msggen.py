@@ -33,7 +33,7 @@ import re
 import shutil
 import sys
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import jinja2
@@ -230,6 +230,25 @@ class DataChannel:
 
 
 @dataclass
+class Send:
+    """An internal command one app sends to another (DS-68): the generator
+    writes send_<target>_<command>() into the sender's header."""
+    target: "App"
+    command: Command
+
+    @property
+    def function(self):
+        return f"send_{self.target.name}_{self.command.name}"
+
+    @property
+    def params(self):
+        """The C parameter list: one per argument, in YAML order."""
+        if not self.command.fields:
+            return "void"
+        return ", ".join(f"{f.ctype} {f.name}" for f in self.command.fields)
+
+
+@dataclass
 class App:
     """One app, and every C name the generator derives from it (DS-14)."""
 
@@ -241,6 +260,10 @@ class App:
     housekeeping: Struct
     data_channels: list[DataChannel]
     source: str               # the YAML file, for the generated banner and errors
+    # "app.command" strings from the YAML; load_definitions resolves them
+    # into sends once every app is known.
+    send_names: list[str] = field(default_factory=list)
+    sends: list[Send] = field(default_factory=list)
 
     @property
     def id_constant(self):
@@ -297,6 +320,15 @@ class App:
     def commands_with_args(self):
         return [c for c in self.commands if c.fields]
 
+    @property
+    def send_targets(self):
+        """The apps this app sends internal commands to, each once."""
+        targets = []
+        for s in self.sends:
+            if s.target not in targets:
+                targets.append(s.target)
+        return targets
+
     def generated_names(self):
         """Every C identifier this app's generated code defines."""
         names = [self.id_constant, self.cmd_id_enum, self.cmd_struct,
@@ -311,6 +343,7 @@ class App:
             names += [c.constant, f"{c.constant}_NAME"]
             if c.fields:
                 names.append(c.struct)
+        names += [f"send_{n.replace('.', '_')}" for n in self.send_names]
         return names
 
 
@@ -323,6 +356,12 @@ class Definitions:
     @property
     def wakeup_apps(self):
         return [a for a in self.apps if a.wakeup]
+
+    @property
+    def send_pair_count(self):
+        """(sender, target app) pairs. Each may have CMD_MAX_PENDING
+        commands waiting, so the resource map budgets the pool for them."""
+        return sum(len(a.send_targets) for a in self.apps)
 
     @property
     def enums_by_name(self):
@@ -583,7 +622,7 @@ def _parse_app(path, enums, structs, root):
     data = _load_yaml(path)
     where = str(path)
     _check_keys(data, where, ("app", "id", "description", "wakeup", "housekeeping"),
-                ("commands", "data_channels"))
+                ("commands", "data_channels", "sends"))
 
     name = _name(data["app"], f"{where}: app")
     if name != path.stem:
@@ -614,6 +653,23 @@ def _parse_app(path, enums, structs, root):
                      for i, n in enumerate(_sequence(data, "data_channels", where))]
     _check_unique(data_channels, "name", "data channel", f"{where}: data_channels")
 
+    send_names = []
+    for i, entry in enumerate(_sequence(data, "sends", where)):
+        swhere = f"{where}: sends[{i}]"
+        parts = entry.split(".") if isinstance(entry, str) else []
+        if len(parts) != 2:
+            raise DefinitionError(
+                f"{swhere}: {entry!r} should be <app>.<command>, for example "
+                "radio.set_transmit")
+        _name(parts[0], swhere)
+        _name(parts[1], swhere)
+        if parts[0] == name:
+            raise DefinitionError(
+                f"{swhere}: an app doesn't send commands to itself; call the code directly")
+        if entry in send_names:
+            raise DefinitionError(f"{swhere}: {entry!r} is listed twice")
+        send_names.append(entry)
+
     return App(
         name=name,
         id=_integer(data["id"], f"{where}: id", 1, APP_ID_MAX),
@@ -623,7 +679,32 @@ def _parse_app(path, enums, structs, root):
         housekeeping=housekeeping,
         data_channels=data_channels,
         source=_source_label(path, root),
+        send_names=send_names,
     )
+
+
+def _resolve_sends(apps):
+    """Turn each app's "app.command" strings into Sends, now that every app
+    is known."""
+    by_name = {a.name: a for a in apps}
+    for app in apps:
+        for i, entry in enumerate(app.send_names):
+            where = f"{app.source}: sends[{i}]"
+            target_name, command_name = entry.split(".")
+            target = by_name.get(target_name)
+            if target is None:
+                raise DefinitionError(f"{where}: there is no app {target_name!r}")
+            command = next((c for c in target.commands if c.name == command_name), None)
+            if command is None:
+                known = ", ".join(c.name for c in target.commands) or "none"
+                raise DefinitionError(
+                    f"{where}: {target_name} has no command {command_name!r} "
+                    f"(its commands: {known})")
+            if any(f.name == "cmd" for f in command.fields):
+                raise DefinitionError(
+                    f"{where}: {entry} has an argument named 'cmd', which the generated "
+                    "sender uses for the command itself; rename the argument")
+            app.sends.append(Send(target, command))
 
 
 def load_definitions(defs_dir, extra_app_dirs=()):
@@ -655,6 +736,8 @@ def load_definitions(defs_dir, extra_app_dirs=()):
                 f"app {app.name!r} is defined in both {names[app.name]} and {app.source}")
         names[app.name] = app.source
 
+    _resolve_sends(apps)
+
     owners = {}
     for app in apps:
         if app.id in owners:
@@ -668,7 +751,7 @@ def load_definitions(defs_dir, extra_app_dirs=()):
     defined = {}
     common_names = [s.name for s in structs] + [e.name for e in enums] + \
         [v.constant for e in enums for v in e.values] + [e.max_constant for e in enums] + \
-        ["app_id", "APP_COUNT", "APP_WAKEUP_COUNT", "APP_ID_MAX"]
+        ["app_id", "APP_COUNT", "APP_WAKEUP_COUNT", "APP_ID_MAX", "APP_SEND_PAIR_COUNT"]
     for source, names in [("common.yaml", common_names)] + \
             [(a.source, a.generated_names()) for a in apps]:
         for n in names:
@@ -765,6 +848,7 @@ def command_dictionary(defs):
                 "modes": c.modes,
                 "args": [_field_entry(f, defs) for f in c.fields],
             } for c in app.commands],
+            "sends": app.send_names,
             "housekeeping": {
                 "size": app.housekeeping.wire_size,
                 "fields": [_hk_entry(f, offset, defs)

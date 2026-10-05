@@ -5,6 +5,12 @@
 #include <zephyr/zbus/zbus.h>
 
 #include "msg/{{ app.name }}.h"
+{% for target in app.send_targets %}
+#include "msg/{{ target.name }}.h"
+{% endfor %}
+{% if app.sends %}
+#include "silversat/cmd_deliver.h"
+{% endif %}
 
 /*
  * The channels {{ app.name }} owns (DS-14, DS-68). Each is defined with no
@@ -30,6 +36,31 @@ ZBUS_CHAN_DEFINE({{ app.wakeup_chan }}, struct frame_tick,
 ZBUS_CHAN_DEFINE({{ d.name }}, struct {{ d.struct }},
 		 NULL, NULL, ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));
 {% endfor %}
+{% if app.sends %}
+
+/*
+ * Internal commands {{ app.name }} sends (DS-68). This generated file may
+ * include the target apps' headers; {{ app.name }}'s own code never does.
+ * Only {{ app.name }}'s thread calls these, so each pending count has one
+ * user.
+ */
+{% for target in app.send_targets %}
+static struct cmd_pending pending_{{ target.name }};
+{% endfor %}
+{% for send in app.sends %}
+
+int {{ send.function }}({{ send.params }})
+{
+	struct {{ send.target.cmd_struct }} cmd = {.id = {{ send.command.constant }}};
+
+{% for f in send.command.fields %}
+	cmd.args.{{ send.command.name }}.{{ f.name }} = {{ f.name }};
+{% endfor %}
+	return cmd_deliver(&pending_{{ send.target.name }}, &{{ send.target.cmd_chan }},
+			   &{{ send.target.status_chan }}, &cmd);
+}
+{% endfor %}
+{% endif %}
 
 #if defined(CONFIG_ZBUS_MSG_SUBSCRIBER_BUF_ALLOC_STATIC)
 /*
