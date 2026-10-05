@@ -16,20 +16,27 @@
  *   actions[]      what to do on entering or leaving a mode, or when a
  *                  trigger fires: internal commands to other apps (DS-40).
  *
- * The spacecraft boots in safe mode and waits for the ground (DS-42).
+ * Boot (DS-42): the spacecraft starts in deploy mode, in which nothing that
+ * transmits runs and no ground command is accepted. After the separation
+ * delay it enters safe mode and waits for the ground. If the test signal is
+ * present at boot, it enters test mode instead, for ground testing: no
+ * delay, no antenna deployment, and ground commands accepted. Nothing
+ * leads back into deploy or test, so each is used at most once per boot.
  *
- * Triggers: the mode manager checks its own once a major frame. So far that
- * is the command-loss timer (DS-46). Triggers that other apps detect (low
- * battery, a failed app) will arrive as requests, starting with health.
+ * Triggers: the mode manager checks its own once a major frame: the
+ * separation delay and the command-loss timer (DS-46). Triggers that other
+ * apps detect (low battery, a failed app) will arrive as requests, starting
+ * with health.
  *
- * Until FRAM, the mode is held in RAM, so every reset returns to safe mode
- * (DS-41 asks for it to persist).
+ * Until FRAM, the mode is held in RAM, so every reset starts in deploy mode
+ * again and waits out the delay (DS-41, DS-45 ask for it to persist).
  */
 
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/zbus/zbus.h>
@@ -43,6 +50,14 @@ ZBUS_CHAN_ADD_OBS(mode_manager_wakeup_chan, mode_manager_sub, 3);
 ZBUS_CHAN_ADD_OBS(mode_manager_cmd_chan, mode_manager_sub, 3);
 
 #define COMMAND_LOSS_TIMEOUT_MS ((int64_t)CONFIG_SS_COMMAND_LOSS_TIMEOUT_HOURS * 60 * 60 * 1000)
+#define SEPARATION_DELAY_MS ((int64_t)CONFIG_SS_SEPARATION_DELAY_MINUTES * 60 * 1000)
+
+/*
+ * The test signal (DS-42), from the test-mode-signal devicetree alias in the
+ * resource map. A board without the alias never enters test mode: .port is
+ * NULL.
+ */
+static const struct gpio_dt_spec test_signal = GPIO_DT_SPEC_GET_OR(TEST_SIGNAL_NODE, gpios, {0});
 
 /* ---- Transitions (DS-40, DS-41) ----------------------------------------- */
 
@@ -59,15 +74,22 @@ struct transition {
 BUILD_ASSERT(MODE_REASON_MAX < 32, "the reasons mask has 32 bits");
 
 /*
- * A mode change not listed here is refused. There is no row out of safe
- * mode except by ground command: the spacecraft boots in safe mode and
- * waits for the ground (DS-42).
+ * A mode change not listed here is refused. No row leads into deploy or
+ * test: the spacecraft starts in deploy at boot, and only the test signal
+ * at boot leads to test (DS-42).
  */
 static const struct transition transitions[] = {
+	/* After separation, wait out the delay, then wait for the ground (DS-42). */
+	{MODE_DEPLOY, MODE_SAFE, BIT(MODE_REASON_DEPLOYMENT_COMPLETE)},
+	/* On the ground, the test signal skips the delay. */
+	{MODE_DEPLOY, MODE_TEST, BIT(MODE_REASON_TEST_SIGNAL)},
 	/* Anything may put the spacecraft in safe mode (DS-41). */
 	{MODE_NOMINAL, MODE_SAFE, ANY_REASON},
+	{MODE_TEST, MODE_SAFE, ANY_REASON},
 	/* Only the ground takes it out (DS-41). */
 	{MODE_SAFE, MODE_NOMINAL, BIT(MODE_REASON_GROUND_COMMAND)},
+	/* The ground may test nominal operation from test mode. */
+	{MODE_TEST, MODE_NOMINAL, BIT(MODE_REASON_GROUND_COMMAND)},
 };
 
 /* ---- Actions (DS-40) ----------------------------------------------------- */
@@ -112,8 +134,11 @@ static const struct action actions[] = {
 static struct app_status status;
 static struct mode_manager_hk hk;
 
-/* The current mode. All zeros is safe mode, entered at boot. */
+/* The current mode. Read from mode_chan's initial value at start: deploy. */
 static struct mode_state state;
+
+/* The test signal is read once, at the first wakeup after boot. */
+static bool boot_checked;
 
 /* MET from the latest tick. Commands carry no time of their own (DS-25). */
 static int64_t now_met_ms;
@@ -185,6 +210,38 @@ static int change_mode(uint8_t to, uint8_t reason)
 
 /* ---- Triggers --------------------------------------------------------------- */
 
+static bool test_signal_present(void)
+{
+	if (test_signal.port == NULL || !gpio_is_ready_dt(&test_signal) ||
+	    gpio_pin_configure_dt(&test_signal, GPIO_INPUT) != 0) {
+		return false; /* no signal: fly, don't test */
+	}
+	return gpio_pin_get_dt(&test_signal) == 1;
+}
+
+/*
+ * Once, at the first wakeup: the test signal. Read only then, so a glitch
+ * on the pin in flight can never put the spacecraft in test mode.
+ */
+static void check_boot(void)
+{
+	if (boot_checked) {
+		return;
+	}
+	boot_checked = true;
+	if (test_signal_present()) {
+		(void)change_mode(MODE_TEST, MODE_REASON_TEST_SIGNAL);
+	}
+}
+
+/* The separation delay (DS-42, DS-45), timed from MET. */
+static void check_separation_delay(void)
+{
+	if (state.mode == MODE_DEPLOY && now_met_ms >= SEPARATION_DELAY_MS) {
+		(void)change_mode(MODE_SAFE, MODE_REASON_DEPLOYMENT_COMPLETE);
+	}
+}
+
 static void check_command_loss(void)
 {
 	struct ground_contact contact;
@@ -237,6 +294,8 @@ static void publish_hk(void)
 static void step(const struct frame_tick *tick)
 {
 	now_met_ms = tick->met_ms;
+	check_boot();
+	check_separation_delay();
 	check_command_loss();
 	/*
 	 * Once a major frame, publish the mode again even if it hasn't
@@ -255,7 +314,8 @@ static void mode_manager_main(void *a, void *b, void *c)
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
-	/* Safe mode, because of the boot (DS-42). */
+	/* The boot mode is mode_chan's initial value, deploy (DS-42). */
+	(void)zbus_chan_read(&mode_chan, &state, K_FOREVER);
 	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
 	publish_hk();
 

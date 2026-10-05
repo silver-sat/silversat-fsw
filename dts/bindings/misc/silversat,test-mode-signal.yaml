@@ -1,0 +1,16 @@
+# Copyright (c) 2026 SilverSat
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  The external signal that puts the spacecraft in test mode at boot (DS-42).
+  The mode manager reads it once, at its first wakeup. Point the
+  test-mode-signal alias at a node with this compatible, or at any node with
+  a gpios property, such as a gpio-keys button.
+
+compatible: "silversat,test-mode-signal"
+
+properties:
+  gpios:
+    type: phandle-array
+    required: true
+    description: The signal's pin. Active means test mode.

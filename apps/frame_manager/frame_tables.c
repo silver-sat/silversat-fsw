@@ -60,6 +60,25 @@ static const struct frame_entry safe_entries[] = {
 	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
 };
 
+/*
+ * Deploy mode (DS-42): nothing that transmits runs, and nothing takes
+ * ground commands, so neither the radio, command ingest, nor telemetry
+ * output is here. The mode manager runs to end the separation delay.
+ */
+static const struct frame_entry deploy_entries[] = {
+	MODE_MANAGER_IN_SLOT(9),
+};
+
+/*
+ * Test mode (DS-42): everything nominal runs, for ground testing. The
+ * antenna app, when it exists, stays out, so test mode never deploys it.
+ */
+static const struct frame_entry test_entries[] = {
+	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
+	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
+	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9),
+};
+
 static const struct frame_entry nominal_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
@@ -68,9 +87,13 @@ static const struct frame_entry nominal_entries[] = {
 
 BUILD_ASSERT(ARRAY_SIZE(safe_entries) <= FRAME_ENTRIES_MAX);
 BUILD_ASSERT(ARRAY_SIZE(nominal_entries) <= FRAME_ENTRIES_MAX);
+BUILD_ASSERT(ARRAY_SIZE(deploy_entries) <= FRAME_ENTRIES_MAX);
+BUILD_ASSERT(ARRAY_SIZE(test_entries) <= FRAME_ENTRIES_MAX);
 BUILD_ASSERT(FRAME_SLOTS == 10, "the radio and command ingest have one entry per slot");
 
 const struct frame_table frame_tables[MODE_MAX + 1] = {
 	[MODE_SAFE] = {.entries = safe_entries, .len = ARRAY_SIZE(safe_entries)},
 	[MODE_NOMINAL] = {.entries = nominal_entries, .len = ARRAY_SIZE(nominal_entries)},
+	[MODE_DEPLOY] = {.entries = deploy_entries, .len = ARRAY_SIZE(deploy_entries)},
+	[MODE_TEST] = {.entries = test_entries, .len = ARRAY_SIZE(test_entries)},
 };

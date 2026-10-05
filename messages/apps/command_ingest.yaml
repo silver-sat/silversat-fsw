@@ -20,7 +20,7 @@ commands:
     description: >
       Arm a switch to the given key slot. Must be signed with that slot's
       key. The arm lasts 10 minutes of mission elapsed time.
-    modes: [safe, nominal]
+    modes: [safe, nominal, test]
     fields:
       - name: slot
         type: uint8
@@ -30,7 +30,7 @@ commands:
     description: >
       Switch to the armed key slot. Must be signed with that slot's key,
       within 10 minutes of the arm. No counter floor is reset (DS-53).
-    modes: [safe, nominal]
+    modes: [safe, nominal, test]
     fields:
       - name: slot
         type: uint8

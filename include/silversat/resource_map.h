@@ -90,6 +90,17 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define RADIO_UART_NODE DT_ALIAS(radio_uart)
 
 /*
+ * The test signal (DS-42): present at boot, it puts the spacecraft in test
+ * mode. A devicetree alias, like the UARTs; a board without it never enters
+ * test mode.
+ *
+ *   test-mode-signal   native_sim: an emulated GPIO pin (app/boards/)
+ *                      nucleo_f446re: the blue user button, held during
+ *                      reset, until the real signal is chosen
+ */
+#define TEST_SIGNAL_NODE DT_ALIAS(test_mode_signal)
+
+/*
  * Bytes buffered between the UART interrupt and the radio app, each way.
  * At 19200 baud, 1024 bytes is about half a second: five minor frames.
  */

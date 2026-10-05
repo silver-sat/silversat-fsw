@@ -1,0 +1,15 @@
+/*
+ * The test signal (DS-42) is an emulated GPIO pin, active high, so it reads
+ * absent until a test drives it.
+ */
+
+/ {
+	aliases {
+		test-mode-signal = &test_mode_signal;
+	};
+
+	test_mode_signal: test-mode-signal {
+		compatible = "silversat,test-mode-signal";
+		gpios = <&gpio0 1 GPIO_ACTIVE_HIGH>;
+	};
+};

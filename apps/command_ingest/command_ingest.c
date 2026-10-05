@@ -64,8 +64,11 @@ ZBUS_CHAN_ADD_OBS(command_ingest_cmd_chan, command_ingest_sub, 3);
 static struct app_status status;
 static struct command_ingest_hk hk;
 
-/* Until mode_chan says otherwise, assume safe mode, the most restrictive. */
-static uint8_t mode = MODE_SAFE;
+/*
+ * Until mode_chan is read, assume deploy, the most restrictive: no command
+ * is allowed in it (DS-42).
+ */
+static uint8_t mode = MODE_DEPLOY;
 
 /*
  * The key slot in use, and any armed rotation. Held in RAM until the FRAM

@@ -282,7 +282,7 @@ def test_multiline_description_becomes_one_comment(tmp_path):
 REPO_INCLUDE = MESSAGES_DIR.parent / "include"
 
 
-def compile_generated(tmp_path, data_size, apps=None):
+def compile_generated(tmp_path, data_size, apps=None, common=None):
     """Generate the test definitions and compile each source with strict
     warnings against stand-in Zephyr headers. Returns {file name: gcc result}.
 
@@ -292,7 +292,8 @@ def compile_generated(tmp_path, data_size, apps=None):
     tests/unit/libs check the output against real zbus.
     """
     out = tmp_path / "out"
-    msggen.write_outputs(generate_paths(write_defs(tmp_path / "defs", apps=apps)), out)
+    msggen.write_outputs(
+        generate_paths(write_defs(tmp_path / "defs", common=common, apps=apps)), out)
     stub = out / "include" / "zephyr"
     (stub / "zbus").mkdir(parents=True)
     (stub / "sys").mkdir()
@@ -730,3 +731,55 @@ def test_send_argument_named_cmd(tmp_path):
     root = write_defs(tmp_path, apps=[sensor, {**QUIET, "sends": ["sensor.go"]}])
     with pytest.raises(msggen.DefinitionError, match="argument named 'cmd'"):
         msggen.load_definitions(root)
+
+
+# --- Initial values for data channels -------------------------------------
+
+STATE = {"name": "state", "description": "A state.", "fields": [
+    {"name": "mode", "type": "mode"}, {"name": "on", "type": "bool"},
+    {"name": "level", "type": "int8"}, {"name": "gain", "type": "float32"},
+]}
+
+
+def defs_with_initial(tmp_path, initial):
+    common = copy.deepcopy(COMMON)
+    common["structs"].append(STATE)
+    sensor = app_with(data_channels=[{"name": "state_chan", "type": "state",
+                                      "description": "d", "initial": initial}])
+    return write_defs(tmp_path, common=common, apps=[sensor, QUIET])
+
+
+def test_data_channel_initial_value(tmp_path):
+    out = generate(defs_with_initial(
+        tmp_path, {"mode": "nominal", "on": True, "level": -3, "gain": 2}))
+    assert ("ZBUS_MSG_INIT(.mode = MODE_NOMINAL, .on = true, .level = -3, .gain = 2.0)"
+            in out["src/msg_sensor.c"])
+
+
+def test_data_channel_without_initial_value_is_zero(tmp_path):
+    out = generate(write_defs(tmp_path, apps=[app_with(data_channels=DATA), QUIET]))
+    assert "ZBUS_MSG_INIT(0)" in out["src/msg_sensor.c"]
+
+
+@pytest.mark.parametrize("initial, expected", [
+    ({"speed": 1}, "state has no field 'speed' (its fields: mode, on, level, gain)"),
+    ({"mode": "standby"}, "'standby' is not a mode; use one of safe, nominal"),
+    ({"on": 1}, "expected true or false"),
+    ({"level": 200}, "200 is outside -128..127"),
+    ({"gain": "loud"}, "expected a number"),
+    (["mode"], "expected field: value pairs"),
+])
+def test_data_channel_initial_value_errors(tmp_path, initial, expected):
+    with pytest.raises(msggen.DefinitionError, match="sensor.yaml") as e:
+        msggen.load_definitions(defs_with_initial(tmp_path, initial))
+    assert expected in str(e.value)
+
+
+@needs_gcc
+def test_data_channel_initial_value_compiles(tmp_path):
+    common = copy.deepcopy(COMMON)
+    common["structs"].append(STATE)
+    sensor = app_with(data_channels=[{"name": "state_chan", "type": "state",
+                                      "description": "d", "initial": {"mode": "nominal"}}])
+    results = compile_generated(tmp_path, data_size=64, apps=[sensor, QUIET], common=common)
+    assert results["msg_sensor.c"].returncode == 0, results["msg_sensor.c"].stderr

@@ -3,12 +3,23 @@
 config SS_MODE_MANAGER
 	bool "Mode manager"
 	depends on SS_MESSAGES
+	select GPIO if $(dt_alias_enabled,test-mode-signal)
 	help
 	  The only publisher of the spacecraft mode. Changes mode on ground
 	  command or when a trigger fires, from a transition table, and runs
 	  the actions table.
 
 if SS_MODE_MANAGER
+
+config SS_SEPARATION_DELAY_MINUTES
+	int "Separation delay (minutes)"
+	default 45
+	range 1 1440
+	help
+	  How long after separation the spacecraft stays in deploy mode, in
+	  which nothing transmits and the antenna is not deployed (DS-42,
+	  DS-45). Timed from MET. The value comes from the launch provider's
+	  interface document. The test signal at boot skips it.
 
 config SS_COMMAND_LOSS_TIMEOUT_HOURS
 	int "Command-loss timeout (hours)"

@@ -1,0 +1,17 @@
+common:
+  tags:
+    - app
+    - mode
+
+tests:
+  # The ground leaves test mode for nominal.
+  app.mode_manager_test_signal:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+  # The ground leaves test mode for safe. One platform keeps CI short.
+  app.mode_manager_test_signal.to_safe:
+    extra_args:
+      - EXTRA_CFLAGS=-DLEAVE_TEST_FOR=MODE_SAFE
+    platform_allow:
+      - native_sim

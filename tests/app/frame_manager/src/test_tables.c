@@ -34,10 +34,17 @@ static const struct frame_entry nominal_entries[] = {
 				   .status_chan = &counter_app_status_chan},
 };
 
+/* The boot table: mode_chan starts as deploy (DS-42). Slot 3, unlike safe's slot 2. */
+static const struct frame_entry deploy_entries[] = {
+	{.slot = 3, .app = APP_ID_COUNTER_APP, .wakeup_chan = &counter_app_wakeup_chan,
+	 .status_chan = &counter_app_status_chan},
+};
+
 BUILD_ASSERT(ARRAY_SIZE(safe_entries) == SAFE_ENTRIES);
 BUILD_ASSERT(ARRAY_SIZE(nominal_entries) == NOMINAL_ENTRIES);
 
 const struct frame_table frame_tables[MODE_MAX + 1] = {
 	[MODE_SAFE] = {.entries = safe_entries, .len = ARRAY_SIZE(safe_entries)},
 	[MODE_NOMINAL] = {.entries = nominal_entries, .len = ARRAY_SIZE(nominal_entries)},
+	[MODE_DEPLOY] = {.entries = deploy_entries, .len = ARRAY_SIZE(deploy_entries)},
 };

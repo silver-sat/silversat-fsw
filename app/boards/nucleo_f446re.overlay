@@ -27,6 +27,12 @@
 / {
 	aliases {
 		radio-uart = &usart1;
+		/*
+		 * The test signal (DS-42): hold the blue user button (B1, PC13)
+		 * while the board resets to boot into test mode. A stand-in
+		 * until the real external signal is chosen.
+		 */
+		test-mode-signal = &user_button;
 	};
 };
 

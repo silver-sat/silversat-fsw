@@ -33,9 +33,10 @@ enums:
   - name: mode
     type: uint8
     description: >
-      Spacecraft mode (DS-40, DS-41). Each mode has its own frame table
-      (DS-23). Safe is zero, so a mode channel that has never been published
-      reads as safe.
+      Spacecraft mode (DS-40, DS-41, DS-42). Each mode has its own frame
+      table (DS-23). mode_chan starts as deploy (its initial value in
+      apps/mode_manager.yaml), so a mode channel that has never been
+      published reads as the most restrictive mode.
     values:
       - name: safe
         value: 0
@@ -43,6 +44,18 @@ enums:
       - name: nominal
         value: 1
         description: Normal operations.
+      - name: deploy
+        value: 2
+        description: >
+          After separation, until the deployment wait is over. Nothing that
+          transmits runs, and no ground commands are accepted. Entered only
+          at boot.
+      - name: test
+        value: 3
+        description: >
+          Ground testing, entered at boot by an external signal. Skips the
+          deployment wait, doesn't deploy the antenna, and accepts ground
+          commands.
 
   - name: mode_reason
     type: uint8
@@ -63,6 +76,12 @@ enums:
       - name: command_loss
         value: 5
         description: No ground command accepted within the timeout (DS-46).
+      - name: deployment_complete
+        value: 6
+        description: The wait after separation is over (DS-42, DS-45).
+      - name: test_signal
+        value: 7
+        description: The test signal was present at boot (DS-42).
 
 structs:
   - name: frame_tick

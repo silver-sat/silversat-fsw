@@ -14,6 +14,8 @@
 
 #include <errno.h>
 
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/ztest.h>
@@ -28,6 +30,10 @@
 
 #define HOUR_MS (60LL * 60 * 1000)
 #define TIMEOUT_MS (CONFIG_SS_COMMAND_LOSS_TIMEOUT_HOURS * HOUR_MS)
+#define SEPARATION_MS (CONFIG_SS_SEPARATION_DELAY_MINUTES * 60LL * 1000)
+
+/* The test signal, an emulated pin (app.overlay). It starts absent. */
+static const struct gpio_dt_spec test_signal = GPIO_DT_SPEC_GET(TEST_SIGNAL_NODE, gpios);
 
 /* ---- Standing in for the radio ----------------------------------------- */
 
@@ -139,15 +145,41 @@ static struct mode_manager_hk mm_hk(void)
  */
 static int64_t epoch;
 
+/*
+ * What happened between boot and safe mode, recorded once by setup() and
+ * checked by the test_boot_* tests. A boot happens only once per run, so
+ * the tests can't each repeat it.
+ */
+static struct {
+	struct mode_state at_boot;
+	int ground_set_safe_in_deploy;
+	uint8_t after_first_wakeup;
+	uint8_t after_late_signal;
+	uint8_t just_before_delay;
+	struct mode_state at_delay;
+} boot;
+
 static void *setup(void)
 {
-	struct mode_state state;
-
-	/* Let the mode manager's thread start before the first test. */
+	/* Let the mode manager's thread start. */
 	k_sleep(K_MSEC(10));
-	state = mode_now();
-	zassert_equal(state.mode, MODE_SAFE, "the spacecraft boots in safe mode (DS-42)");
-	zassert_equal(state.reason, MODE_REASON_BOOT);
+	boot.at_boot = mode_now();
+	boot.ground_set_safe_in_deploy = set_mode(MODE_SAFE);
+
+	/* The first wakeup reads the test signal, absent here. */
+	wake_at(1000);
+	boot.after_first_wakeup = mode_now().mode;
+
+	/* The signal appearing later must change nothing. */
+	zassert_ok(gpio_emul_input_set(test_signal.port, test_signal.pin, 1));
+	wake_at(2000);
+	boot.after_late_signal = mode_now().mode;
+	zassert_ok(gpio_emul_input_set(test_signal.port, test_signal.pin, 0));
+
+	wake_at(SEPARATION_MS - 1);
+	boot.just_before_delay = mode_now().mode;
+	wake_at(SEPARATION_MS);
+	boot.at_delay = mode_now();
 	return NULL;
 }
 
@@ -167,6 +199,42 @@ static void before(void *fixture)
 }
 
 ZTEST_SUITE(mode_manager, NULL, setup, before, NULL, NULL);
+
+/* ---- Boot: deploy, then safe (DS-42) ------------------------------------- */
+
+ZTEST(mode_manager, test_boot_starts_in_deploy)
+{
+	zassert_equal(boot.at_boot.mode, MODE_DEPLOY);
+	zassert_equal(boot.at_boot.reason, MODE_REASON_BOOT);
+	zassert_equal(boot.ground_set_safe_in_deploy, 0, "no ground command ends deploy early");
+}
+
+ZTEST(mode_manager, test_boot_test_signal_is_read_only_at_boot)
+{
+	zassert_equal(boot.after_first_wakeup, MODE_DEPLOY, "no signal: no test mode");
+	zassert_equal(boot.after_late_signal, MODE_DEPLOY,
+		      "a signal after boot, a glitch in flight, is ignored");
+}
+
+ZTEST(mode_manager, test_boot_safe_after_the_separation_delay)
+{
+	zassert_equal(boot.just_before_delay, MODE_DEPLOY, "a millisecond early: still deploy");
+	zassert_equal(boot.at_delay.mode, MODE_SAFE);
+	zassert_equal(boot.at_delay.reason, MODE_REASON_DEPLOYMENT_COMPLETE);
+	zassert_equal(boot.at_delay.since_met_ms, SEPARATION_MS);
+}
+
+ZTEST(mode_manager, test_nothing_leads_back_to_deploy_or_test)
+{
+	uint32_t refused = mm_hk().refused;
+
+	zassert_equal(set_mode(MODE_DEPLOY), 0);
+	zassert_equal(set_mode(MODE_TEST), 0);
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_equal(set_mode(MODE_DEPLOY), 0);
+	zassert_equal(set_mode(MODE_TEST), 0);
+	zassert_equal(mm_hk().refused - refused, 4);
+}
 
 /* ---- Ground commands and the transition table --------------------------- */
 
