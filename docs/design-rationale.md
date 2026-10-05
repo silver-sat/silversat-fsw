@@ -108,7 +108,7 @@ In a single address space, a thread killed mid-step may hold a zbus channel lock
 
 ### How health knows an app has stalled
 
-The frame manager counts the wakeups it delivers to each app; each app counts its steps. At the start of each major frame the frame manager checks whether each app has finished the wakeups it had been given by the previous report: an app working normally always has, even one woken in the last slot. If not, the app is a whole major frame behind, and its bit is set in a small report for health. Health counts reports in a row against the app's threshold. Sending the raw counts instead would have needed an array per app, and every zbus buffer is sized for the largest message on any channel (DS-07).
+The frame manager counts the wakeups it delivers to each app; each app counts its steps. At the start of each major frame the frame manager checks whether each app has finished the wakeups it had been given by the previous report: an app working normally always has, even one woken in the last slot. If not, the app is a whole major frame behind, and its bit is set in a small report for health. Health counts reports in a row against the app's threshold. The frame manager never waits to read a status, so a read can fail if the app is part-way through publishing it; then the app's bit stays as it was. A stalled app isn't publishing, so its status can always be read, and a stall is never missed. Sending the raw counts instead would have needed an array per app, and every zbus buffer is sized for the largest message on any channel (DS-07).
 
 ### Why a protected app's stall resets through the watchdog
 

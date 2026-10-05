@@ -499,6 +499,36 @@ ZTEST(frame_manager, test_report_shows_an_app_a_major_frame_behind)
 	zassert_equal(frame_report().stuck & TEST_APPS, 0);
 }
 
+ZTEST(frame_manager, test_report_keeps_a_bit_it_cannot_read)
+{
+	/* As in the test above: stuck from the second report after the hold. */
+	settle_in(MODE_NOMINAL);
+	sleep_to_slot(0);
+	stuck_app_hold(true);
+	sleep_to_slot(0);
+	sleep_to_slot(0);
+	zassert_equal(frame_report().stuck & TEST_APPS, STUCK_APP);
+
+	/*
+	 * Hold both apps' status channels across the next report, as an app
+	 * part-way through publishing its status would. The frame manager
+	 * can't read either, so each keeps its bit from the last report:
+	 * stuck_app stays stuck, counter_app stays clear.
+	 */
+	zassert_ok(zbus_chan_claim(&stuck_app_status_chan, K_NO_WAIT));
+	zassert_ok(zbus_chan_claim(&counter_app_status_chan, K_NO_WAIT));
+	sleep_to_slot(0);
+	zassert_ok(zbus_chan_finish(&counter_app_status_chan));
+	zassert_ok(zbus_chan_finish(&stuck_app_status_chan));
+	zassert_equal(frame_report().stuck & TEST_APPS, STUCK_APP,
+		      "a read that couldn't happen doesn't clear the bit");
+
+	stuck_app_hold(false);
+	sleep_to_slot(0);
+	sleep_to_slot(0);
+	zassert_equal(frame_report().stuck & TEST_APPS, 0);
+}
+
 ZTEST(frame_manager, test_set_app_enabled_stops_every_wakeup)
 {
 	settle_in(MODE_NOMINAL);

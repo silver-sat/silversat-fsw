@@ -63,6 +63,7 @@ static bool app_enabled[APP_ID_MAX + 1];
  */
 static const struct zbus_channel *status_chans[APP_ID_MAX + 1];
 static uint32_t delivered_at_last_report[APP_ID_MAX + 1];
+static uint64_t last_stuck;
 
 BUILD_ASSERT(APP_ID_MAX < 64, "the frame report has one bit per app in a uint64");
 
@@ -227,8 +228,11 @@ static void deliver(const struct frame_tick *tick)
  * At the start of each major frame, before any wakeup: which apps are still
  * not finished with the wakeups delivered before the last report (DS-43).
  * An app working normally finishes a wakeup within the major frame it was
- * delivered in, even one delivered in the last slot. If an app's status
- * can't be read without waiting, it isn't reported this time.
+ * delivered in, even one delivered in the last slot.
+ *
+ * If an app's status can't be read without waiting (the app is part-way
+ * through publishing it), its bit stays as it was in the last report. A
+ * moment's bad timing then never resets health's count for a stalled app.
  */
 static void report(uint32_t major_frame)
 {
@@ -243,13 +247,15 @@ static void report(uint32_t major_frame)
 		if (status_chans[app] == NULL) {
 			continue;
 		}
-		/* Signed difference: steps may lag delivered, and both wrap. */
-		if (zbus_chan_read(status_chans[app], &app_status, K_NO_WAIT) == 0 &&
-		    (int32_t)(delivered_at_last_report[app] - app_status.steps) > 0) {
+		if (zbus_chan_read(status_chans[app], &app_status, K_NO_WAIT) != 0) {
+			report.stuck |= last_stuck & BIT64(app);
+		} else if ((int32_t)(delivered_at_last_report[app] - app_status.steps) > 0) {
+			/* Signed difference: steps may lag delivered, and both wrap. */
 			report.stuck |= BIT64(app);
 		}
 		delivered_at_last_report[app] = delivered[app];
 	}
+	last_stuck = report.stuck;
 	zbus_chan_pub(&frame_report_chan, &report, K_NO_WAIT);
 }
 
