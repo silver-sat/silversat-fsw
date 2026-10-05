@@ -45,6 +45,29 @@ Field types are `bool`, `uint8` to `uint64`, `int8` to `int64`, `float32`,
 `float64`, or the name of an enum in `common.yaml`. Command arguments can't
 be floats yet.
 
+## Sending a command to another app
+
+An app sends internal commands only through functions the generator writes
+for it (DS-68). List each command under `sends:` in your app's YAML:
+
+```yaml
+sends:
+  - radio.set_transmit
+```
+
+and `msg/<your app>.h` gains
+
+```c
+int send_radio_set_transmit(bool enabled);
+```
+
+with one parameter per argument, in YAML order. Your app still includes only
+its own header and `msg/common.h`. A misspelled app or command fails the
+build. Each call returns 0 if the command was sent, or `-EBUSY` if your app
+already has `CMD_MAX_PENDING` commands that app hasn't handled; try again
+next frame. Commands set state rather than toggling it (DS-35), so sending
+one again is safe.
+
 ## Command text
 
 The ground sends a command as text: the app, the command, then the

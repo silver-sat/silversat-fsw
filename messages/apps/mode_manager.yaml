@@ -1,16 +1,34 @@
-# Mode manager messages (DS-40, DS-41).
+# Mode manager messages (DS-40, DS-41, DS-46).
 #
-# Only what other apps need so far: mode_chan, which the frame manager reads
-# to choose its frame table. The app itself, its commands, and its full
-# housekeeping arrive in a later step. Until then, tests stand in for it by
-# publishing mode_chan themselves.
+# The mode manager is the only publisher of mode_chan. It changes the mode
+# when the ground commands it, or when one of its own triggers fires (the
+# command-loss timer). Triggers detected by other apps arrive later, as
+# requests, with the first app that needs one (health).
 
 app: mode_manager
 id: 2
 description: Sole publisher of the spacecraft mode.
-# Frame-driven: it checks its safe-mode triggers (low battery, command-loss
-# timer) every major frame (DS-41, DS-46).
+# Frame-driven: it checks its triggers (the command-loss timer, and later
+# low battery) every major frame (DS-41, DS-46).
 wakeup: true
+
+commands:
+  - name: set_mode
+    id: 1
+    # Both: the ground leaves safe mode with this, and may enter it too.
+    modes: [safe, nominal]
+    description: >
+      Set the spacecraft mode. Sets the state rather than toggling it
+      (DS-35): setting the current mode changes nothing. The only way out of
+      safe mode (DS-41).
+    fields:
+      - name: mode
+        type: mode
+        description: The mode to enter.
+
+# Actions the mode manager takes (DS-40), as internal commands.
+sends:
+  - radio.set_transmit
 
 data_channels:
   - name: mode_chan
@@ -18,8 +36,25 @@ data_channels:
     description: The current mode. Published only by the mode manager (DS-40).
 
 housekeeping:
-  description: Mode manager state.
+  description: Mode manager state, published at the start of every major frame and when it changes.
   fields:
+    - name: mode
+      type: mode
+      description: The current mode.
+    - name: reason
+      type: mode_reason
+      description: Why the spacecraft entered the current mode.
     - name: transitions
       type: uint32
-      description: Mode transitions since boot.
+      description: Mode changes since boot.
+    - name: refused
+      type: uint32
+      description: Mode changes refused because the transition table doesn't allow them (DS-40).
+    - name: command_loss
+      type: uint32
+      description: Times the command-loss timer has fired (DS-46).
+    - name: action_failures
+      type: uint32
+      description: >
+        Actions whose internal command could not be sent. A trigger's
+        actions are retried next major frame.

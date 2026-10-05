@@ -556,6 +556,11 @@ APP_ERRORS = [
         {"name": "sensor_data", "type": "event", "description": "d"}]}, "must end in _chan"),
     ("duplicate data channel", {"data_channels": DATA + DATA},
      "duplicate data channel 'sensor_data_chan'"),
+    ("send without a command", {"sends": ["radio"]}, "should be <app>.<command>"),
+    ("send not a string", {"sends": [{"radio": "x"}]}, "should be <app>.<command>"),
+    ("send to itself", {"sends": ["sensor.reinit"]}, "doesn't send commands to itself"),
+    ("send listed twice", {"sends": ["radio.x", "radio.x"]}, "listed twice"),
+    ("send to an unknown app", {"sends": ["radio.set_transmit"]}, "there is no app 'radio'"),
 ]
 
 
@@ -665,4 +670,63 @@ def test_data_channel_collides_with_generated_name(tmp_path):
 def test_no_apps(tmp_path):
     root = write_defs(tmp_path, apps=[])
     with pytest.raises(msggen.DefinitionError, match="no app definitions"):
+        msggen.load_definitions(root)
+
+
+# --- Internal command senders (DS-68) -------------------------------------
+
+# QUIET, but sending both of SENSOR's commands.
+SENDER = {**QUIET, "sends": ["sensor.set_rate", "sensor.reinit"]}
+
+
+def test_senders(tmp_path):
+    out = generate(write_defs(tmp_path, apps=[SENSOR, SENDER]))
+    header = out["include/msg/quiet.h"]
+    assert "int send_sensor_set_rate(uint16_t hz);" in header
+    assert "int send_sensor_reinit(void);" in header
+    assert '#include "msg/sensor.h"' not in header, "the sender's header stays its own (DS-68)"
+
+    source = out["src/msg_quiet.c"]
+    assert '#include "msg/sensor.h"' in source
+    assert source.count("static struct cmd_pending pending_sensor;") == 1, "one per target app"
+    assert "cmd.args.set_rate.hz = hz;" in source
+    assert ("return cmd_deliver(&pending_sensor, &sensor_cmd_chan,\n"
+            "\t\t\t   &sensor_status_chan, &cmd);") in source
+
+    assert "#define APP_SEND_PAIR_COUNT 1" in out["include/msg/common.h"]
+    assert "send_" not in out["include/msg/sensor.h"], "only the sender gets senders"
+
+
+def test_send_pair_count(tmp_path):
+    out = generate(write_defs(tmp_path))
+    assert "#define APP_SEND_PAIR_COUNT 0" in out["include/msg/common.h"]
+
+
+@needs_gcc
+def test_senders_compile(tmp_path):
+    results = compile_generated(tmp_path, data_size=64, apps=[SENSOR, SENDER])
+    for name, result in results.items():
+        assert result.returncode == 0, f"{name}: {result.stderr}"
+
+
+def test_dictionary_lists_sends(tmp_path):
+    dictionary = msggen.command_dictionary(
+        msggen.load_definitions(write_defs(tmp_path, apps=[SENSOR, SENDER])))
+    by_name = {a["name"]: a for a in dictionary["apps"]}
+    assert by_name["quiet"]["sends"] == ["sensor.set_rate", "sensor.reinit"]
+    assert by_name["sensor"]["sends"] == []
+
+
+def test_send_unknown_command(tmp_path):
+    root = write_defs(tmp_path, apps=[SENSOR, {**QUIET, "sends": ["sensor.ping"]}])
+    with pytest.raises(msggen.DefinitionError, match="quiet.yaml") as e:
+        msggen.load_definitions(root)
+    assert "sensor has no command 'ping' (its commands: set_rate, reinit)" in str(e.value)
+
+
+def test_send_argument_named_cmd(tmp_path):
+    sensor = app_with(commands=[{"name": "go", "id": 1, "description": "d", "modes": MODES,
+                                 "fields": [field("cmd")]}])
+    root = write_defs(tmp_path, apps=[sensor, {**QUIET, "sends": ["sensor.go"]}])
+    with pytest.raises(msggen.DefinitionError, match="argument named 'cmd'"):
         msggen.load_definitions(root)

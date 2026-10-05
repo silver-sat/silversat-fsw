@@ -30,7 +30,8 @@ Code is read and extended by high school students working a few hours a week. Pr
 - Publish with `K_NO_WAIT` from the frame manager and command ingest; never block the frame. Nothing publishes from an ISR.
 - Subsystem apps (antenna, radio, payload, power) never block waiting on a peer: waiting is a state in a per-frame state machine (DS-33).
 - Commands set state; they do not toggle it. One-shot actions (antenna deploy, key rotation) use arm-then-fire with persisted state (DS-35).
-- Only command ingest accepts ground commands. Internal commands are published directly to the target's command channel.
+- Only command ingest accepts ground commands. Internal commands go through the generated `send_<app>_<command>()`, declared under `sends:` in the sender's YAML (DS-68).
+- A fault response that changes the mode or commands other apps goes through the mode manager's tables (DS-40); an app acts on its own only when the response stays inside that app.
 - Only the mode manager publishes `mode_chan`.
 
 ## Messages

@@ -72,6 +72,21 @@ union {{ app.msg_union }} {
 
 ZBUS_CHAN_DECLARE({{ app.cmd_chan }});
 ZBUS_CHAN_DECLARE({{ app.hk_chan }});
+{% if app.sends %}
+
+/*
+ * Internal commands {{ app.name }} sends (DS-68), declared under sends: in
+ * {{ app.source }}. Each publishes to the target app's command channel
+ * without waiting. Returns 0 if sent; -EBUSY if {{ app.name }} already has
+ * CMD_MAX_PENDING commands that app hasn't handled (try again next frame);
+ * -EIO if the publish failed. See silversat/cmd_deliver.h.
+ */
+{% for send in app.sends %}
+
+{{ (send.target.name ~ " " ~ send.command.name ~ ": " ~ send.command.description) | comment }}
+int {{ send.function }}({{ send.params }});
+{% endfor %}
+{% endif %}
 
 /*
  * Also owned by {{ app.name }}, and declared in msg/common.h:

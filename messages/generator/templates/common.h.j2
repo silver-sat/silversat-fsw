@@ -24,6 +24,13 @@ enum app_id {
 #define APP_COUNT {{ defs.apps | length }}
 #define APP_WAKEUP_COUNT {{ defs.wakeup_apps | length }}
 #define APP_ID_MAX {{ defs.apps | map(attribute="id") | max }}
+
+/*
+ * (sender, target app) pairs among the internal commands declared under
+ * sends: (DS-68). Each pair may have CMD_MAX_PENDING commands waiting, so
+ * the resource map budgets the zbus pool for them (DS-07).
+ */
+#define APP_SEND_PAIR_COUNT {{ defs.send_pair_count }}
 {% for e in defs.enums %}
 
 {{ e.description | comment }}

@@ -114,6 +114,21 @@ structs:
         type: int64
         description: Mission elapsed time when this mode was entered.
 
+  - name: ground_contact
+    description: >
+      When the ground was last heard from, published by command ingest on
+      ground_contact_chan each time it accepts a command. The mode manager
+      reads it for the command-loss timer (DS-46).
+    fields:
+      - name: contacted
+        type: bool
+        description: >
+          True once a command has been accepted since boot. The timer runs
+          only after first contact.
+      - name: last_accepted_met_ms
+        type: int64
+        description: Mission elapsed time when the last command was accepted.
+
   - name: event
     description: >
       One event message. Telemetry output attaches RTC time, so apps do not

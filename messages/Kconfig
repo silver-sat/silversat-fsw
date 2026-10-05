@@ -4,6 +4,8 @@ config SS_MESSAGES
 	bool "Generated message types and zbus channels"
 	select ZBUS
 	select ZBUS_MSG_SUBSCRIBER
+	# The generated internal command senders use it (DS-68).
+	select SS_CMD_DELIVER
 	help
 	  Run the message generator on messages/*.yaml at build time and
 	  compile the zbus channels it defines. Apps include msg/<app>.h
@@ -42,6 +44,6 @@ configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE
 # publishes. include/silversat/resource_map.h computes the number and
 # fails the build, saying what to set here, if this is too small (DS-07).
 configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE
-	default 24
+	default 28
 
 endif # SS_MESSAGES

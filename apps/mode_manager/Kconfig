@@ -1,0 +1,23 @@
+# Mode manager (DS-40, DS-41, DS-46).
+
+config SS_MODE_MANAGER
+	bool "Mode manager"
+	depends on SS_MESSAGES
+	help
+	  The only publisher of the spacecraft mode. Changes mode on ground
+	  command or when a trigger fires, from a transition table, and runs
+	  the actions table.
+
+if SS_MODE_MANAGER
+
+config SS_COMMAND_LOSS_TIMEOUT_HOURS
+	int "Command-loss timeout (hours)"
+	default 168
+	range 1 8760
+	help
+	  How long after the last accepted ground command the command-loss
+	  timer fires: the spacecraft enters safe mode and stops all
+	  transmission until the ground turns it back on (DS-46). The timer
+	  starts at first contact. 168 hours is 7 days.
+
+endif # SS_MODE_MANAGER
