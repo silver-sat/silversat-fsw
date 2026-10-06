@@ -18,8 +18,13 @@
 #include "msg/common.h"
 #include "msg/frame_manager.h"
 
-/* Stands in for the frame manager's one pending point (DS-10). */
-ZBUS_MSG_SUBSCRIBER_DEFINE(test_sub);
+/*
+ * Stands in for the frame manager's one pending point (DS-10). It listens
+ * only while these tests run: the routing tests in this build send the
+ * frame manager commands too, and one of them fills the zbus pool on
+ * purpose, so a copy waiting here would take a buffer it counts on.
+ */
+ZBUS_MSG_SUBSCRIBER_DEFINE_WITH_ENABLE(test_sub, false);
 ZBUS_CHAN_ADD_OBS(frame_manager_cmd_chan, test_sub, 3);
 
 /* Every message an app receives must fit one buffer from the zbus pool. */
@@ -37,7 +42,20 @@ static void drain(void *fixture)
 	}
 }
 
-ZTEST_SUITE(messages, NULL, NULL, drain, NULL, NULL);
+static void *listen(void)
+{
+	zassert_ok(zbus_obs_set_enable(&test_sub, true));
+	return NULL;
+}
+
+static void stop_listening(void *fixture)
+{
+	ARG_UNUSED(fixture);
+	zassert_ok(zbus_obs_set_enable(&test_sub, false));
+	drain(NULL);
+}
+
+ZTEST_SUITE(messages, NULL, listen, drain, NULL, stop_listening);
 
 ZTEST(messages, test_ids_match_the_yaml)
 {

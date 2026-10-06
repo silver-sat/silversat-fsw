@@ -292,8 +292,8 @@ def compile_generated(tmp_path, data_size, apps=None, common=None, nvm=None):
 
     The stand-ins check only that the output is valid C (for example, no
     empty enum or union when an app has no commands) and that the size
-    checks work. The native_sim tests in tests/unit/messages and
-    tests/unit/libs check the output against real zbus.
+    checks work. The native_sim tests in tests/unit/libs check the output
+    against real zbus.
     """
     out = tmp_path / "out"
     msggen.write_outputs(
