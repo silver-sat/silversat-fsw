@@ -1,12 +1,11 @@
 /*
- * Floor store held in RAM, until the FRAM service exists (DS-53, DS-70).
+ * Floor store held in RAM, for builds without command ingest (DS-53).
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * The floors go back to the mission epoch at every boot, so a command
- * recorded during an earlier boot could be replayed. That is the degraded
- * behavior DS-75 already accepts when FRAM has failed. Only command ingest
- * calls these, from its one thread, so no lock is needed.
+ * Command ingest keeps the floors in FRAM (apps/command_ingest/persist.c).
+ * This store is for the library tests: the floors go back to the mission
+ * epoch at every boot. One thread calls these, so no lock is needed.
  */
 
 #include <errno.h>

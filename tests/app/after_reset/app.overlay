@@ -1,18 +1,16 @@
 /*
- * The radio UART is an emulated UART: the tests put bytes in its receive
- * side and read what the radio app sends, in simulated time, with no
- * Python simulator. tests/app/radio covers the real-time path through a
- * pseudo-terminal.
+ * FRAM and its mirror are fakes (tests/fakes/) that the test fills before
+ * the apps start, as if the spacecraft had just reset. The radio's UART is
+ * Zephyr's emulated UART; nothing is sent over it here.
  */
 
 / {
 	aliases {
-		radio-uart = &radio_uart_emul;
 		fram = &fake_fram;
 		nvm-mirror = &fake_mirror;
+		radio-uart = &radio_uart_emul;
 	};
 
-	/* FRAM and its mirror (tests/fakes/), to see what the radio stores. */
 	fake_fram: fake-fram {
 		compatible = "silversat,fake-fram";
 		status = "okay";
@@ -29,7 +27,5 @@
 		compatible = "zephyr,uart-emul";
 		status = "okay";
 		current-speed = <19200>;
-		rx-fifo-size = <256>;
-		tx-fifo-size = <2048>;
 	};
 };

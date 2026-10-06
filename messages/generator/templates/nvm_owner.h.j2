@@ -49,7 +49,10 @@ struct {{ r.struct.name }} {
 {{ m.struct_body(r.fields) -}}
 };
 
-/* Version {{ r.version }}: {{ r.size }} bytes, two slots of {{ r.slot_size }} at 0x{{ "%04x" % r.address }}. */
+/*
+ * Version {{ r.version }}: {{ r.size }} bytes, two slots of {{ r.slot_size }} at 0x{{ "%04x" % r.address }}{% if r.mirrored %},
+ * and in the mirror at 0x{{ "%04x" % r.mirror_address }}{% endif %}.
+ */
 static const uint8_t {{ r.struct.name }}_defaults[{{ r.size }}] = {
 	{{ r.default_bytes(enums) | map("string") | join(", ") }},
 };
@@ -60,6 +63,10 @@ static const struct nvm_region {{ r.struct.name }}_region = {
 	.size = {{ r.size }},
 	.version = {{ r.version }},
 	.defaults = {{ r.struct.name }}_defaults,
+{% if r.mirrored %}
+	.mirrored = true,
+	.mirror_address = 0x{{ "%04x" % r.mirror_address }},
+{% endif %}
 };
 
 /* Little-endian, field by field, with no padding: never a copy of the struct (DS-64). */

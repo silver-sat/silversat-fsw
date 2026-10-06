@@ -128,6 +128,16 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define FRAM_NODE DT_ALIAS(fram)
 
 /*
+ * The mirror (DS-75's second tier): retained memory that survives a reset,
+ * holding a copy of the records nvm_map.yaml marks mirror:. A board without
+ * the alias keeps those records in FRAM only.
+ *
+ *   nvm-mirror   nucleo_f446re: the 4 KB backup SRAM (zephyr,retained-ram)
+ *                native_sim: none (tests use a fake)
+ */
+#define NVM_MIRROR_NODE DT_ALIAS(nvm_mirror)
+
+/*
  * Bytes buffered between the UART interrupt and the radio app, each way.
  * At 19200 baud, 1024 bytes is about half a second: five minor frames.
  */

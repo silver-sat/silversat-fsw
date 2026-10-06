@@ -7,6 +7,7 @@ config SS_COMMAND_INGEST
 	select SS_CMD_COUNTER
 	select SS_CMD_ROUTES
 	select SS_LINK
+	select SS_NVM
 	help
 	  Takes signed ground commands from the uplink queue, checks the
 	  signature and counter, and routes each command to its target app.

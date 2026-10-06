@@ -17,7 +17,8 @@ Input, in <defs>/:
                       its commands (with the modes each is allowed in),
                       housekeeping, data channels (with initial values),
                       and the internal commands it sends (sends:)
-    nvm_map.yaml      FRAM records, each owned by one app (optional)
+    nvm_map.yaml      FRAM records, each owned by one app, and which are
+                      also kept in the mirror (backup SRAM) (optional)
 
 Output, in <out>/:
     include/msg/common.h     shared types; every app's status and wakeup
@@ -48,7 +49,7 @@ unknown or missing keys (usually typos), names and C keywords, app ids 1 to
 63, command ids, allowed modes, argument types and ranges, names that would
 collide in C, housekeeping that wouldn't fit one downlink frame, sends: that
 name no such app or command, and FRAM records that are too big or don't fit
-in the FRAM.
+in the FRAM or the mirror.
 
 A test can add apps of its own with --extra-apps <dir>, a directory of
 <app>.yaml files. They are generated exactly like the flight apps.
@@ -407,6 +408,8 @@ class NvmRegion:
     defaults: dict             # field name -> YAML default value
     address: int = 0
     source: str = ""
+    mirrored: bool = False     # also kept in the mirror (DS-75's second tier)
+    mirror_address: int = 0
 
     @property
     def struct(self):
@@ -447,10 +450,16 @@ class NvmRegion:
 class NvmMap:
     fram_size: int
     regions: list[NvmRegion]
+    mirror_size: int = 0
 
     @property
     def used(self):
         return max((r.address + r.region_size for r in self.regions), default=0)
+
+    @property
+    def mirror_used(self):
+        return max((r.mirror_address + r.region_size for r in self.regions if r.mirrored),
+                   default=0)
 
     def regions_of(self, app):
         return [r for r in self.regions if r.owner is app]
@@ -861,14 +870,18 @@ def _parse_nvm_map(path, apps, enums):
     """nvm_map.yaml: FRAM regions laid out in file order (DS-74)."""
     data = _load_yaml(path)
     where = str(path)
-    _check_keys(data, where, ("fram_size", "regions"))
+    _check_keys(data, where, ("fram_size", "regions"), ("mirror_size",))
     fram_size = _integer(data["fram_size"], f"{where}: fram_size", 1, NVM_FRAM_SIZE_MAX)
+    mirror_size = _integer(data.get("mirror_size", 0), f"{where}: mirror_size", 0,
+                           NVM_FRAM_SIZE_MAX)
     by_name = {a.name: a for a in apps}
     regions = []
     address = 0
+    mirror_address = 0
     for i, node in enumerate(_sequence(data, "regions", where)):
         rwhere = f"{where}: regions[{i}]"
-        _check_keys(node, rwhere, ("name", "owner", "version", "description", "fields"))
+        _check_keys(node, rwhere, ("name", "owner", "version", "description", "fields"),
+                    ("mirror",))
         name = _name(node["name"], f"{rwhere}.name")
         owner = by_name.get(node["owner"])
         if owner is None:
@@ -895,13 +908,24 @@ def _parse_nvm_map(path, apps, enums):
         if region.size > NVM_PAYLOAD_MAX:
             raise DefinitionError(
                 f"{rwhere}: {region.size} bytes; a record holds at most {NVM_PAYLOAD_MAX}")
+        mirror = node.get("mirror", False)
+        if not isinstance(mirror, bool):
+            raise DefinitionError(f"{rwhere}.mirror: must be true or false")
+        if mirror:
+            region.mirrored = True
+            region.mirror_address = mirror_address
+            mirror_address += -(-region.region_size // NVM_ALIGN) * NVM_ALIGN
         regions.append(region)
         address += -(-region.region_size // NVM_ALIGN) * NVM_ALIGN
     _check_unique(regions, "name", "region", where)
-    nvm = NvmMap(fram_size, regions)
+    nvm = NvmMap(fram_size, regions, mirror_size)
     if nvm.used > fram_size:
         raise DefinitionError(
             f"{where}: the regions need {nvm.used} bytes, more than fram_size ({fram_size})")
+    if nvm.mirror_used > mirror_size:
+        raise DefinitionError(
+            f"{where}: the mirrored regions need {nvm.mirror_used} bytes, more than "
+            f"mirror_size ({mirror_size})")
     return nvm
 
 
@@ -1064,6 +1088,7 @@ def command_dictionary(defs):
         # The FRAM map, for the ground's dump decoder (DS-74).
         "nvm": {
             "fram_size": defs.nvm.fram_size,
+            "mirror_size": defs.nvm.mirror_size,
             "header_len": NVM_HEADER_LEN,
             "crc_len": NVM_CRC_LEN,
             "regions": [{
@@ -1073,6 +1098,7 @@ def command_dictionary(defs):
                 "slot_size": r.slot_size,
                 "version": r.version,
                 "size": r.size,
+                "mirror_address": r.mirror_address if r.mirrored else None,
                 "fields": [_hk_entry(f, offset, defs) for f, offset in r.struct.wire_layout],
             } for r in defs.nvm.regions],
         },

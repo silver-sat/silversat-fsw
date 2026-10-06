@@ -897,3 +897,47 @@ def test_flight_nvm_map():
     defs = msggen.load_definitions(MESSAGES_DIR)
     assert defs.nvm.fram_size == 32768
     assert {r.owner.name for r in defs.nvm.regions} <= {a.name for a in defs.apps}
+
+
+# --- The mirror (DS-75's second tier) ---------------------------------------
+
+def mirrored_nvm(mirror_size=4096):
+    nvm = copy.deepcopy(NVM)
+    nvm["mirror_size"] = mirror_size
+    nvm["regions"][1]["mirror"] = True
+    return nvm
+
+
+def test_mirror_layout(tmp_path):
+    cal, count = nvm_defs(tmp_path, mirrored_nvm()).nvm.regions
+    assert not cal.mirrored
+    assert (count.mirrored, count.mirror_address) == (True, 0), "first in the mirror"
+    assert count.address == 48, "its FRAM address is unchanged"
+
+
+def test_mirror_header_and_dictionary(tmp_path):
+    out = generate(write_defs(tmp_path, nvm=mirrored_nvm()))
+    sensor = out["include/nvm/sensor.h"]
+    assert ".mirrored = true," in sensor
+    assert ".mirror_address = 0x0000," in sensor
+    assert sensor.count(".mirrored = true,") == 1, "only sensor_count"
+    nvm = msggen.command_dictionary(nvm_defs(tmp_path / "d", mirrored_nvm()))["nvm"]
+    assert nvm["mirror_size"] == 4096
+    assert [r["mirror_address"] for r in nvm["regions"]] == [None, 0]
+
+
+def test_mirror_must_fit(tmp_path):
+    with pytest.raises(msggen.DefinitionError, match="more than mirror_size \\(16\\)"):
+        nvm_defs(tmp_path, mirrored_nvm(mirror_size=16))
+
+
+def test_mirror_flag_must_be_a_bool(tmp_path):
+    with pytest.raises(msggen.DefinitionError, match="mirror: must be true or false"):
+        nvm_defs(tmp_path, nvm_with(mirror="yes"))
+
+
+def test_flight_mirror_holds_the_critical_records():
+    defs = msggen.load_definitions(MESSAGES_DIR)
+    mirrored = {r.name for r in defs.nvm.regions if r.mirrored}
+    assert {"command_state", "mode_state", "deployment", "radio_state"} <= mirrored
+    assert defs.nvm.mirror_used <= defs.nvm.mirror_size == 4096

@@ -1,0 +1,17 @@
+# Copyright (c) 2026 SilverSat
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  A test-only retained memory (tests/fakes/fake_retained_mem.c): RAM behind
+  Zephyr's retained memory API, which a test can fail or corrupt. It stands
+  in for the STM32's backup SRAM, the FRAM service's mirror.
+
+compatible: "silversat,fake-retained-mem"
+
+include: base.yaml
+
+properties:
+  size:
+    type: int
+    required: true
+    description: Bytes.

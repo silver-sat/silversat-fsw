@@ -24,6 +24,14 @@
  * gets the record's default, never garbage (DS-75). A device error, a
  * write that doesn't read back, or both slots of a record corrupt marks
  * FRAM degraded: the service stops using it until nvm_retry().
+ *
+ * The mirror (DS-75's second tier): a record marked mirror: in
+ * nvm_map.yaml is also kept, in the same two-slot form, in a small
+ * retained memory that survives a reset (the devicetree alias nvm-mirror:
+ * the STM32's backup SRAM). Both copies of a write carry the same
+ * generation, and a read takes the newest valid record from either, so a
+ * mirrored record survives FRAM failing, or not being fitted at all. The
+ * mirror degrades the same way FRAM does, separately.
  */
 
 #ifndef SILVERSAT_NVM_H_
@@ -39,37 +47,43 @@
 #define NVM_PAYLOAD_MAX  128
 #define NVM_SLOT_SIZE(payload_size) (NVM_HEADER_LEN + (payload_size) + NVM_CRC_LEN)
 
-/* One record's place in FRAM. Generated; see nvm/<owner>.h. */
+/* One record's place in FRAM, and in the mirror. Generated; see nvm/<owner>.h. */
 struct nvm_region {
 	const char *name;
-	uint16_t address;        /* slot 0; slot 1 follows it */
+	uint16_t address;        /* in FRAM: slot 0; slot 1 follows it */
 	uint8_t size;            /* payload bytes */
 	uint8_t version;
 	const uint8_t *defaults; /* the encoded default payload, size bytes */
+	bool mirrored;           /* also kept in the mirror */
+	uint16_t mirror_address; /* in the mirror, if mirrored */
 };
 
 /*
  * Read a record into payload (region->size bytes). Returns:
- *   0        the newest valid record from FRAM
- *   -ENOENT  no valid record (FRAM blank, or another version); the default
- *   -EIO     FRAM unavailable or failed; the default
+ *   0        the newest valid record, from FRAM or the mirror
+ *   -ENOENT  no valid record (blank, or another version); the default
+ *   -EIO     neither FRAM nor (for a mirrored record) the mirror is
+ *            available; the default
  * payload always holds a record.
  */
 int nvm_read(const struct nvm_region *region, uint8_t *payload);
 
 /*
- * Store a record (region->size bytes), replacing the older slot. Returns 0
- * once it is stored and read back, or -EIO if FRAM is unavailable or
- * failed (and is now degraded).
+ * Store a record (region->size bytes), replacing the older slot, in FRAM
+ * and, if the record is mirrored, in the mirror. Returns 0 once it is
+ * stored and read back in at least one of them, or -EIO if in neither.
  */
 int nvm_write(const struct nvm_region *region, const uint8_t *payload);
 
 /* False if there is no FRAM, or it has failed. */
 bool nvm_available(void);
 
+/* False if there is no mirror, or it has failed. */
+bool nvm_mirror_available(void);
+
 /*
- * After a failure, try the device again (DS-75: the ground can command a
- * retry). Returns 0 if FRAM is available again, -EIO if not.
+ * After a failure, try FRAM and the mirror again (DS-75: the ground can
+ * command a retry). Returns 0 if FRAM is available, -EIO if not.
  */
 int nvm_retry(void);
 
@@ -78,6 +92,7 @@ struct nvm_stats {
 	uint32_t reads;
 	uint32_t writes;
 	uint32_t defaults_used; /* reads that returned a default */
+	uint32_t from_mirror;   /* reads answered by the mirror, not FRAM */
 	uint32_t bad_slots;     /* slots that held a record but failed their CRC */
 	uint32_t errors;        /* device errors and failed read-backs */
 };

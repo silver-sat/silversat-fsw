@@ -35,6 +35,27 @@
 		test-mode-signal = &user_button;
 		/* The hardware watchdog, fed only by health (DS-43). */
 		watchdog0 = &iwdg;
+		/*
+		 * The FRAM service's mirror (DS-75): the 4 KB backup SRAM. There is
+		 * no fram alias until a part is chosen, so on the flatsat the
+		 * mirrored records are the only ones that survive a reset.
+		 */
+		nvm-mirror = &backup_retained;
+	};
+};
+
+/*
+ * The backup SRAM keeps its contents through a reset, and through a loss of
+ * main power if VBAT is supplied. Zephyr's STM32 driver switches it on at
+ * boot; a retained-RAM device on top gives the FRAM service its retained
+ * memory API.
+ */
+&backup_sram {
+	status = "okay";
+
+	backup_retained: retainedmem {
+		compatible = "zephyr,retained-ram";
+		status = "okay";
 	};
 };
 

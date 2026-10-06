@@ -19,7 +19,8 @@
  * in the app's thread, once per minor frame, and nothing waits: a full
  * queue drops and counts (DS-33).
  *
- * set_transmit stops all transmission to the ground (DS-46). Every packet
+ * set_transmit stops all transmission to the ground (DS-46), and the
+ * setting survives a reset (FRAM and its mirror, radio_state). Every packet
  * avionics sends, replies, telemetry, and later the beacon, goes out
  * through transmit() below, so this one switch silences them all. The
  * radio keeps receiving, so the ground can always turn it back on.
@@ -37,6 +38,7 @@
 
 #include "msg/common.h"
 #include "msg/radio.h"
+#include "nvm/radio.h"
 #include "silversat/link.h"
 #include "silversat/link_codec.h"
 #include "silversat/resource_map.h"
@@ -63,7 +65,8 @@ static atomic_t rx_overrun;
 static struct link_decoder decoder;
 static struct link_seq seq;
 static struct app_status status;
-static struct radio_hk hk = {.transmit_enabled = true};
+/* transmit_enabled is read from FRAM at start (radio_state). */
+static struct radio_hk hk;
 
 /*
  * Set by set_transmit false: send what is queued at the next step, then
@@ -225,11 +228,14 @@ static void step(const struct frame_tick *tick)
 /* ---- Commands ----------------------------------------------------------- */
 
 /*
- * Until FRAM, this state is in RAM, so a reset turns transmission back on
- * (DS-41, DS-46).
+ * Stored in FRAM and the mirror (radio_state), so a reset never turns
+ * transmission back on after the ground stopped it (DS-33, DS-46). If it
+ * can't be stored, the setting still holds until the next reset.
  */
 static void set_transmit(const struct radio_set_transmit *args)
 {
+	const struct nvm_radio_state record = {.transmit_enabled = args->enabled};
+
 	/*
 	 * Stopping waits for one more step, which sends what is queued by
 	 * then. Command ingest queues its reply to this command after routing
@@ -239,6 +245,7 @@ static void set_transmit(const struct radio_set_transmit *args)
 	 */
 	final_send = !args->enabled && hk.transmit_enabled;
 	hk.transmit_enabled = args->enabled;
+	(void)nvm_radio_state_write(&record);
 }
 
 static int handle_command(const struct radio_cmd *cmd)
@@ -273,6 +280,13 @@ static void radio_main(void *a, void *b, void *c)
 	 * sees frames_received stay at zero.
 	 */
 
+	/* As the ground last set it; on (the default) if it never has. */
+	{
+		struct nvm_radio_state stored;
+
+		(void)nvm_radio_state_read(&stored);
+		hk.transmit_enabled = stored.transmit_enabled;
+	}
 	/* So the channel never shows the zeroed default, transmission off. */
 	zbus_chan_pub(&radio_hk_chan, &hk, K_NO_WAIT);
 

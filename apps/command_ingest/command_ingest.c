@@ -47,6 +47,7 @@
 #include "msg/common.h"
 #include "silversat/cmd_auth.h"
 #include "silversat/cmd_counter.h"
+#include "persist.h"
 #include "silversat/cmd_route.h"
 #include "silversat/cmd_text.h"
 #include "silversat/link.h"
@@ -71,8 +72,8 @@ static struct command_ingest_hk hk;
 static uint8_t mode = MODE_DEPLOY;
 
 /*
- * The key slot in use, and any armed rotation. Held in RAM until the FRAM
- * service exists, so a reboot returns to slot 0 (DS-75) and clears any arm.
+ * The key slot in use, read from FRAM at start (persist.c), and any armed
+ * rotation. A reset clears an arm, which lasts minutes; the slot survives.
  */
 static uint8_t active_slot;
 static bool armed;
@@ -184,6 +185,7 @@ static const char *rotate(uint16_t command, const struct cmd_text *words, uint8_
 		return "not_armed";
 	}
 	active_slot = (uint8_t)slot;
+	persist_set_active_slot(active_slot);
 	armed = false;
 	hk.rotation_armed = false;
 	hk.active_slot = active_slot;
@@ -195,7 +197,7 @@ static const char *rotate(uint16_t command, const struct cmd_text *words, uint8_
  * Tell the mode manager the ground was heard from, for the command-loss
  * timer (DS-46). Every accepted command counts, whatever it does.
  */
-static void heard_from_ground(int64_t met_ms)
+static void publish_contact(int64_t met_ms)
 {
 	const struct ground_contact contact = {
 		.contacted = true,
@@ -203,6 +205,12 @@ static void heard_from_ground(int64_t met_ms)
 	};
 
 	zbus_chan_pub(&ground_contact_chan, &contact, K_NO_WAIT);
+}
+
+static void heard_from_ground(int64_t met_ms)
+{
+	persist_set_contact(met_ms);
+	publish_contact(met_ms);
 }
 
 /* Take one uplink frame through the pipeline. */
@@ -256,8 +264,13 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 		reply("NAK", packet.counter, "jump", -1);
 		return;
 	default:
-		/* The floor wasn't stored, so the command must not run. */
-		hk.rejected_store++;
+		/*
+		 * The floor store refused the slot, which can't happen for a
+		 * slot whose key verified; refuse the command rather than run
+		 * it unprotected. A write that reaches neither FRAM nor the
+		 * mirror is not this: the floor is kept in RAM and the command
+		 * runs (persist.c, DS-75), counted in store_failures.
+		 */
 		reply("NAK", packet.counter, "store", -1);
 		return;
 	}
@@ -300,6 +313,7 @@ static void step(const struct frame_tick *tick)
 		ingest(&frame, tick->met_ms);
 		handled = true;
 	}
+	hk.store_failures = persist_failures();
 	/* At least once a major frame (DS-14), and whenever something changed. */
 	if (handled || armed != was_armed || tick->slot == 0) {
 		zbus_chan_pub(&command_ingest_hk_chan, &hk, K_NO_WAIT);
@@ -314,6 +328,19 @@ static void command_ingest_main(void *a, void *b, void *c)
 	ARG_UNUSED(a);
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
+
+	/* The key slot in use, and the contact, as stored before the reset. */
+	active_slot = persist_active_slot();
+	hk.active_slot = active_slot;
+	if (persist_contacted()) {
+		/*
+		 * The ground has been heard from before this boot, so the
+		 * command-loss timer keeps running (DS-46). Until MET survives
+		 * a reset (DS-25), it restarts from this boot.
+		 */
+		publish_contact(0);
+	}
+	zbus_chan_pub(&command_ingest_hk_chan, &hk, K_NO_WAIT);
 
 	while (zbus_sub_wait_msg(&command_ingest_sub, &chan, &msg, K_FOREVER) == 0) {
 		if (chan == &command_ingest_wakeup_chan) {

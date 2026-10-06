@@ -131,6 +131,10 @@ A read always fills the record: when FRAM is blank, missing, or failed, it
 gets the default from the map (DS-75). To change a record's fields, change
 its version too.
 
+Give a small record that matters after a reset `mirror: true`: it is also
+kept in the mirror, the STM32's backup SRAM, so it survives FRAM failing,
+or not being fitted (DS-75). The mirror is 4 KB.
+
 ## Test-only apps
 
 App ids run from 1 to 63: the frame manager's report to health has one

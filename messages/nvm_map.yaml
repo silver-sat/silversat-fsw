@@ -15,15 +15,23 @@
 # Field types are those of the message definitions: bool, uint8 to uint64,
 # int8 to int64, or an enum from common.yaml. Each field may give a
 # default; otherwise it defaults to 0, false, or the enum's first value.
+#
+# mirror: true also keeps a record in the mirror, a small memory that
+# survives a reset (the STM32's backup SRAM), as DS-75's second tier: the
+# small records that matter most if FRAM fails, or isn't fitted yet.
 
 # Until the part is chosen, a 256 Kbit SPI FRAM (for example, Infineon
 # FM25V02A or Fujitsu MB85RS256).
 fram_size: 32768
 
+# The STM32F446's backup SRAM.
+mirror_size: 4096
+
 regions:
   - name: command_state
     owner: command_ingest
     version: 1
+    mirror: true
     description: >
       The command counter floor for each key slot, the active key slot,
       and the last ground contact (DS-46, DS-53, DS-54). Written when a
@@ -50,6 +58,7 @@ regions:
   - name: mode_state
     owner: mode_manager
     version: 1
+    mirror: true
     description: The current mode and why, so safe mode survives a reset (DS-41).
     fields:
       - name: mode
@@ -63,6 +72,7 @@ regions:
   - name: deployment
     owner: mode_manager
     version: 1
+    mirror: true
     description: >
       Whether the separation delay is over, so deploy mode is used only
       once in the mission (DS-42, DS-45).
@@ -70,3 +80,16 @@ regions:
       - name: complete
         type: bool
         description: True once the separation delay has ended.
+
+  - name: radio_state
+    owner: radio
+    version: 1
+    mirror: true
+    description: >
+      Whether the ground has stopped transmission, so a reset doesn't turn
+      it back on (DS-33, DS-46).
+    fields:
+      - name: transmit_enabled
+        type: bool
+        default: true
+        description: False while transmission is stopped by set_transmit.

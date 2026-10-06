@@ -61,9 +61,11 @@ housekeeping:
     - name: rejected_jump
       type: uint32
       description: Counters too far above the floor (stage 3, DS-53).
-    - name: rejected_store
+    - name: store_failures
       type: uint32
-      description: Accepted counters whose new floor could not be stored (stage 4).
+      description: >
+        Writes of command_state that reached neither FRAM nor its mirror. The
+        floor is kept in RAM for the rest of the boot (DS-75).
     - name: rejected_route
       type: uint32
       description: Accepted commands that failed decoding or routing (stages 6 and 7).
@@ -81,7 +83,7 @@ housekeeping:
       description: Key rotations since boot.
     - name: active_slot
       type: uint8
-      description: The key slot in use. Returns to 0 at boot until the FRAM service exists.
+      description: The key slot in use, kept in FRAM and its mirror across a reset (DS-54).
     - name: rotation_armed
       type: bool
       description: A rotation is armed and has not expired.
