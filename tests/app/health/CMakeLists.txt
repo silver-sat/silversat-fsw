@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.20.0)
 
-# dts/bindings/ holds the fake watchdog's binding.
-set(DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+# dts/bindings/ holds the fake watchdog's binding; tests/fakes the fake
+# FRAM's and mirror's.
+set(FAKES ${CMAKE_CURRENT_SOURCE_DIR}/../../fakes)
+set(DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR} ${FAKES})
 
 # watched_app: every flight app health watches is protected, so the tests
 # need one that isn't.
@@ -15,5 +17,6 @@ project(health_test LANGUAGES C)
 zephyr_compile_definitions(SS_TEST_APP_ATTRS="test_app_attrs.h")
 zephyr_include_directories(src)
 
-target_sources(app PRIVATE src/main.c src/fake_watchdog.c ../common/app_test.c)
-target_include_directories(app PRIVATE ../common src)
+target_sources(app PRIVATE src/main.c src/fake_watchdog.c ../common/app_test.c
+  ${FAKES}/fake_fram.c ${FAKES}/fake_retained_mem.c)
+target_include_directories(app PRIVATE ../common src ${FAKES})

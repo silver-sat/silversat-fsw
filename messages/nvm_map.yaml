@@ -19,6 +19,9 @@
 # mirror: true also keeps a record in the mirror, a small memory that
 # survives a reset (the STM32's backup SRAM), as DS-75's second tier: the
 # small records that matter most if FRAM fails, or isn't fitted yet.
+#
+# ring: N makes a ring of N entries, each written once at its number modulo
+# N, over the entry N before it (DS-71's boot log). A ring is FRAM only.
 
 # Until the part is chosen, a 256 Kbit SPI FRAM (for example, Infineon
 # FM25V02A or Fujitsu MB85RS256).
@@ -93,3 +96,49 @@ regions:
         type: bool
         default: true
         description: False while transmission is stopped by set_transmit.
+
+  - name: run_checkpoint
+    owner: health
+    version: 1
+    mirror: true
+    description: >
+      Where this run has got to, written every major frame (DS-25, DS-44,
+      DS-72): the boot number, mission elapsed time, and this boot's uptime,
+      so the next boot carries MET on and knows how long this run lasted.
+    fields:
+      - name: boot_number
+        type: uint32
+        description: Boots since the record was blank, this one included.
+      - name: met_ms
+        type: int64
+        description: Mission elapsed time at the checkpoint.
+      - name: uptime_ms
+        type: int64
+        description: Time since this boot at the checkpoint.
+      - name: reset_app
+        type: uint8
+        description: >
+          The protected app whose stall made health stop feeding the
+          watchdog (enum app_id), or 0. Stored as soon as health decides, so
+          the next boot can log it (DS-44).
+
+  - name: boot_log
+    owner: health
+    version: 1
+    ring: 16
+    description: >
+      One entry per boot, the last 16 boots (DS-44, DS-71). Entry n is at
+      n % 16; its number is the boot number.
+    fields:
+      - name: reset_cause
+        type: uint32
+        description: Why the last run ended, as Zephyr's hwinfo reset cause flags (RESET_*).
+      - name: previous_run_ms
+        type: int64
+        description: How long the last run lasted, to its last checkpoint.
+      - name: met_at_boot_ms
+        type: int64
+        description: Mission elapsed time when this boot began.
+      - name: reset_app
+        type: uint8
+        description: The protected app whose stall caused the reset, or 0 (DS-44).

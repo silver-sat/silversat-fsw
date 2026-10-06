@@ -3,6 +3,8 @@
 config SS_HEALTH
 	bool "Health"
 	depends on SS_MESSAGES
+	select SS_NVM
+	select HWINFO
 	select WATCHDOG if $(dt_alias_enabled,watchdog0)
 	help
 	  Watches every app's progress through the frame manager's report,

@@ -102,12 +102,12 @@ ZTEST(after_reset, test_the_command_loss_timer_keeps_running)
 	struct ground_contact contact;
 
 	/*
-	 * The ground was heard from before the reset. Until MET survives a
-	 * reset (DS-25), the timer restarts from this boot.
+	 * The ground was heard from before the reset, and MET carries on
+	 * across it (DS-25), so the timer runs on from that contact.
 	 */
 	zassert_ok(zbus_chan_read(&ground_contact_chan, &contact, K_MSEC(10)));
 	zassert_true(contact.contacted);
-	zassert_equal(contact.last_accepted_met_ms, 0);
+	zassert_equal(contact.last_accepted_met_ms, 123456);
 }
 
 ZTEST(after_reset, test_transmission_stays_stopped)

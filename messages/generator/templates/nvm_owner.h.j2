@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr/sys/byteorder.h>
 
@@ -43,6 +44,11 @@
 {% endif %}
 {% endmacro %}
 {% for r in regions %}
+{% if r.ring %}
+{% set slots = "a ring of %d entries" % r.ring %}
+{% else %}
+{% set slots = "two slots" %}
+{% endif %}
 
 {{ r.description | comment }}
 struct {{ r.struct.name }} {
@@ -50,7 +56,7 @@ struct {{ r.struct.name }} {
 };
 
 /*
- * Version {{ r.version }}: {{ r.size }} bytes, two slots of {{ r.slot_size }} at 0x{{ "%04x" % r.address }}{% if r.mirrored %},
+ * Version {{ r.version }}: {{ r.size }} bytes, {{ slots }} of {{ r.slot_size }} at 0x{{ "%04x" % r.address }}{% if r.mirrored %},
  * and in the mirror at 0x{{ "%04x" % r.mirror_address }}{% endif %}.
  */
 static const uint8_t {{ r.struct.name }}_defaults[{{ r.size }}] = {
@@ -66,6 +72,9 @@ static const struct nvm_region {{ r.struct.name }}_region = {
 {% if r.mirrored %}
 	.mirrored = true,
 	.mirror_address = 0x{{ "%04x" % r.mirror_address }},
+{% endif %}
+{% if r.ring %}
+	.ring = {{ r.ring }},
 {% endif %}
 };
 
@@ -84,6 +93,39 @@ static inline void {{ r.struct.name }}_decode(const uint8_t *in, struct {{ r.str
 {% endfor %}
 }
 
+{% if r.ring %}
+/*
+ * Write entry number (for the boot log, the boot number) at its place in
+ * the ring, number % {{ r.ring }}, over the entry {{ r.ring }} before it. Returns 0 once
+ * it is stored, or -EIO if FRAM is unavailable.
+ */
+static inline int {{ r.struct.name }}_write(uint32_t number, const struct {{ r.struct.name }} *entry)
+{
+	uint8_t payload[{{ r.size }}];
+
+	{{ r.struct.name }}_encode(entry, payload);
+	return nvm_ring_write(&{{ r.struct.name }}_region, number, payload);
+}
+
+/*
+ * Read the entry at place index (0 to {{ r.ring - 1 }}) into *entry and its number into
+ * *number. Returns 0, -ENOENT if the place holds no valid entry, -EINVAL
+ * for a place outside the ring, or -EIO if FRAM is unavailable. Either way
+ * *entry holds an entry: the default, with number 0, if there is none.
+ */
+static inline int {{ r.struct.name }}_read(uint8_t index, struct {{ r.struct.name }} *entry, uint32_t *number)
+{
+	uint8_t payload[{{ r.size }}];
+	int rc = nvm_ring_read(&{{ r.struct.name }}_region, index, payload, number);
+
+	if (rc != 0) {
+		memcpy(payload, {{ r.struct.name }}_defaults, sizeof(payload));
+		*number = 0;
+	}
+	{{ r.struct.name }}_decode(payload, entry);
+	return rc;
+}
+{% else %}
 /*
  * Read the record. Returns 0 if it came from FRAM, -ENOENT if FRAM holds
  * none (the default), or -EIO if FRAM is unavailable (the default). Either
@@ -106,6 +148,7 @@ static inline int {{ r.struct.name }}_write(const struct {{ r.struct.name }} *re
 	{{ r.struct.name }}_encode(record, payload);
 	return nvm_write(&{{ r.struct.name }}_region, payload);
 }
+{% endif %}
 {% endfor %}
 
 #endif /* {{ guard }} */

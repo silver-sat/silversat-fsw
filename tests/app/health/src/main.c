@@ -14,10 +14,14 @@
  * command ingest stands for a protected app.
  *
  * Built with PROTECTED_STALL (testcase.yaml), only the protected-app test
- * runs: it stops the watchdog for good, so it needs its own boot.
+ * runs: it stops the watchdog for good, so it needs its own boot. Built
+ * with AFTER_RESET, FRAM holds the checkpoint of an earlier run before
+ * health's boot work, as after a reset.
  */
 
+#include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/watchdog.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/zbus/zbus.h>
@@ -28,6 +32,7 @@
 #include "msg/common.h"
 #include "msg/frame_manager.h"
 #include "msg/health.h"
+#include "nvm/health.h"
 #include "silversat/resource_map.h"
 
 #define WAIT K_SECONDS(1)
@@ -98,6 +103,39 @@ static uint32_t feeds(void)
 #define WATCHED BIT64(APP_ID_WATCHED_APP)
 #define COMMAND_INGEST BIT64(APP_ID_COMMAND_INGEST)
 
+/* ---- Boot (DS-25, DS-44) ------------------------------------------------- */
+
+#if defined(AFTER_RESET)
+/* The run before ended with this checkpoint: boot 41, a stall in command ingest. */
+static const struct nvm_run_checkpoint earlier = {
+	.boot_number = 41,
+	.met_ms = 1000000,
+	.uptime_ms = 5000,
+	.reset_app = APP_ID_COMMAND_INGEST,
+};
+
+static int seed(void)
+{
+	return nvm_run_checkpoint_write(&earlier);
+}
+
+/* After the FRAM service starts (90), before health's boot work (95). */
+SYS_INIT(seed, APPLICATION, 91);
+#define BOOT 42
+#define MET_AT_BOOT 1000000
+#else
+#define BOOT 1
+#define MET_AT_BOOT 0
+#endif
+
+static struct nvm_run_checkpoint checkpoint_now(void)
+{
+	struct nvm_run_checkpoint checkpoint;
+
+	zassert_ok(nvm_run_checkpoint_read(&checkpoint));
+	return checkpoint;
+}
+
 static void *setup(void)
 {
 	k_sleep(K_MSEC(10)); /* let health start and set up the watchdog */
@@ -116,6 +154,61 @@ static void before(void *fixture)
 }
 
 ZTEST_SUITE(health, NULL, setup, before, NULL, NULL);
+
+ZTEST(health, test_boot_number_and_mission_time)
+{
+	struct mission_time time;
+
+	zassert_equal(health_hk().boot_number, BOOT);
+	zassert_ok(zbus_chan_read(&mission_time_chan, &time, K_MSEC(10)));
+	zassert_equal(time.boot_number, BOOT);
+	zassert_equal(time.met_at_boot_ms, MET_AT_BOOT, "MET carries on from the checkpoint");
+}
+
+ZTEST(health, test_this_boot_is_logged)
+{
+	struct nvm_boot_log entry;
+	uint32_t number;
+
+	zassert_ok(nvm_boot_log_read(BOOT % 16, &entry, &number));
+	zassert_equal(number, BOOT);
+	zassert_equal(entry.met_at_boot_ms, MET_AT_BOOT);
+	zassert_equal(entry.reset_cause, health_hk().reset_cause);
+#if defined(AFTER_RESET)
+	zassert_equal(entry.previous_run_ms, earlier.uptime_ms, "the last run's length");
+	zassert_equal(entry.reset_app, APP_ID_COMMAND_INGEST, "the app that caused the reset");
+#else
+	zassert_equal(entry.previous_run_ms, 0);
+	zassert_equal(entry.reset_app, 0);
+#endif
+}
+
+ZTEST(health, test_the_reset_cause_is_read_and_cleared)
+{
+	uint32_t cause;
+
+	/* Cleared at boot, so the next boot sees only its own reset's cause. */
+	zassert_ok(hwinfo_get_reset_cause(&cause));
+	zassert_equal(cause, 0);
+}
+
+ZTEST(health, test_a_checkpoint_each_major_frame)
+{
+	struct nvm_run_checkpoint before = checkpoint_now();
+	struct nvm_run_checkpoint after;
+
+	k_sleep(K_MSEC(5));
+	report(0, 0);
+	after = checkpoint_now();
+	zassert_equal(after.boot_number, BOOT);
+	zassert_true(after.uptime_ms > before.uptime_ms);
+	/*
+	 * The tick's MET, as health got it. These test ticks carry MET equal
+	 * to uptime; adding MET at boot is the frame manager's job.
+	 */
+	zassert_equal(after.met_ms, after.uptime_ms);
+	zassert_equal(after.reset_app, 0);
+}
 
 #if !defined(PROTECTED_STALL)
 
@@ -308,6 +401,8 @@ ZTEST(health, test_protected_stall_stops_the_watchdog)
 	report(0, 0);
 	zassert_equal(feeds(), before_feeds, "never fed again: the watchdog resets");
 	zassert_equal(health_hk().reset_app, APP_ID_COMMAND_INGEST);
+	zassert_equal(checkpoint_now().reset_app, APP_ID_COMMAND_INGEST,
+		      "stored with that frame's checkpoint, so the next boot's log names it");
 	zassert_false(frame_manager_next(&cmd, true), "a protected app is never stopped");
 }
 

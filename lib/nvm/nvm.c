@@ -13,6 +13,9 @@
  *
  * A board without an alias runs without that store: a record kept in
  * neither reads as its default.
+ *
+ * Rings (DS-71's boot log) are in FRAM only: entries in the same slot
+ * form, each written once at its number modulo the ring's length.
  */
 
 #include <errno.h>
@@ -222,11 +225,24 @@ static bool write_copy(const struct nvm_region *region, enum store s, int target
 	return true;
 }
 
+/* Build a slot: header, payload, and the CRC over both. */
+static void make_slot(const struct nvm_region *region, uint32_t generation,
+		      const uint8_t *payload, uint8_t *out)
+{
+	size_t crc_at = NVM_SLOT_SIZE(region->size) - NVM_CRC_LEN;
+
+	sys_put_le16(NVM_MAGIC, &out[0]);
+	out[2] = region->version;
+	out[3] = region->size;
+	sys_put_le32(generation, &out[4]);
+	memcpy(&out[NVM_HEADER_LEN], payload, region->size);
+	sys_put_le32(crc32_c(0, out, crc_at, true, true), &out[crc_at]);
+}
+
 int nvm_write(const struct nvm_region *region, const uint8_t *payload)
 {
 	uint8_t bufs[2][NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
 	uint8_t out[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
-	size_t crc_at = NVM_SLOT_SIZE(region->size) - NVM_CRC_LEN;
 	struct found found[STORES];
 	bool any = false;
 	uint32_t generation = 0;
@@ -251,13 +267,7 @@ int nvm_write(const struct nvm_region *region, const uint8_t *payload)
 		}
 	}
 	generation = any ? generation + 1 : 1;
-
-	sys_put_le16(NVM_MAGIC, &out[0]);
-	out[2] = region->version;
-	out[3] = region->size;
-	sys_put_le32(generation, &out[4]);
-	memcpy(&out[NVM_HEADER_LEN], payload, region->size);
-	sys_put_le32(crc32_c(0, out, crc_at, true, true), &out[crc_at]);
+	make_slot(region, generation, payload, out);
 
 	/* In each store, over the slot not holding its newest record. */
 	for (enum store s = FRAM; s < STORES; s++) {
@@ -268,6 +278,49 @@ int nvm_write(const struct nvm_region *region, const uint8_t *payload)
 	}
 	k_mutex_unlock(&nvm_lock);
 	return stored ? 0 : -EIO;
+}
+
+int nvm_ring_write(const struct nvm_region *region, uint32_t number, const uint8_t *payload)
+{
+	uint8_t out[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
+	bool stored = false;
+
+	k_mutex_lock(&nvm_lock, K_FOREVER);
+	stats.writes++;
+	if (region->ring > 0 && available[FRAM]) {
+		make_slot(region, number, payload, out);
+		stored = write_copy(region, FRAM, number % region->ring, out);
+	}
+	k_mutex_unlock(&nvm_lock);
+	return stored ? 0 : -EIO;
+}
+
+int nvm_ring_read(const struct nvm_region *region, uint8_t index, uint8_t *payload,
+		  uint32_t *number)
+{
+	uint8_t buf[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
+	int rc;
+
+	if (index >= region->ring) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&nvm_lock, K_FOREVER);
+	stats.reads++;
+	if (!available[FRAM]) {
+		rc = -EIO;
+	} else {
+		rc = read_slot(region, FRAM, index, buf, number);
+		if (rc < 0) {
+			fail(FRAM);
+		} else if (rc == SLOT_VALID) {
+			memcpy(payload, &buf[NVM_HEADER_LEN], region->size);
+			rc = 0;
+		} else {
+			rc = -ENOENT; /* never written, another version, or corrupt */
+		}
+	}
+	k_mutex_unlock(&nvm_lock);
+	return rc;
 }
 
 static bool is_available(enum store s)

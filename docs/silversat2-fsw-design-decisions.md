@@ -96,7 +96,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 
 **DS-24 Thread priorities: Proposed.** Rate-monotonic assignment: the shorter an app's period, the higher its priority. The frame manager is highest, then 10 Hz apps (for example, ADCS), then 1 Hz apps, then housekeeping and telemetry output. Event-driven apps (command ingest, subsystem receive paths) are placed by required response time. All values live in the resource map (DS-07).
 
-**DS-25 Time in the frame tick: Proposed.** Each tick carries the frame count, slot, uptime (elapsed time since this boot, 64-bit milliseconds, so it never wraps), and MET (mission elapsed time: total time since deployment, carried across resets from FRAM). RTC time is attached by telemetry output and events, not by apps.
+**DS-25 Time in the frame tick: Proposed.** Each tick carries the frame count, slot, uptime (elapsed time since this boot, 64-bit milliseconds, so it never wraps), and MET (mission elapsed time: total time since deployment, carried across resets from FRAM). RTC time is attached by telemetry output and events, not by apps. Built 2026-10-06: health publishes `mission_time_chan` (the boot number and MET at boot, from its run checkpoint) before any app thread starts, and the frame manager sets each tick's MET to MET at boot plus uptime. A reset loses at most a major frame of MET; time while the spacecraft is off isn't counted until the RTC (DS-72).
 
 **DS-26 Low power between frames: Proposed.** Enable Zephyr power management (`CONFIG_PM`, `CONFIG_TICKLESS_KERNEL`). The CPU enters a low-power state only when every thread is blocked, so an app still working at the end of its slot simply keeps the CPU awake; nothing is interrupted, and an app still busy at its next wakeup is counted as an overrun (DS-22).
 - Nominal: Sleep mode (WFI) between frames. Peripherals, clocks, and UART reception keep running; wake latency is negligible.
@@ -169,11 +169,12 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 - Record the reset cause (`hwinfo`).
 - Keep a FRAM boot log, and boot into the safe table after repeated short runs.
 - Record which app triggered a health-initiated reset.
+- Built 2026-10-06: at boot, before any app thread, health reads its run checkpoint, takes the next boot number, reads and clears the reset cause, and writes the boot log entry: a ring of the last 16 boots in FRAM, each with the reset cause (`RESET_*` flags), the previous run's length, MET at boot, and the protected app whose stall caused a health reset (stored in the checkpoint the moment health decides). Reset-loop detection and stack high-water marks are still to come.
 - Report each app's stack high-water mark in housekeeping.
 
-**DS-45 Launch timers: Specified.** Time since deployment is kept in FRAM, so a reset neither restarts the post-ejection waits nor skips them. Values come from the launch provider's interface document.
+**DS-45 Launch timers: Specified.** Time since deployment is kept in FRAM, so a reset neither restarts the post-ejection waits nor skips them. Built 2026-10-06: the separation delay (DS-42) is timed from MET, which now carries on across a reset. Values come from the launch provider's interface document.
 
-**DS-46 Command-loss timer: Proposed.** Measures time since the last *accepted* ground command, not the health of the command ingest app (health covers that through its step counter, DS-43). Command ingest stores the MET of acceptance with the counter floor and publishes it on `ground_contact_chan` (a data channel, since the mode manager may not include command ingest's header, DS-68). Every command that passes the counter check counts, whatever it does; replays and forgeries do not. The timer starts at first contact, so the spacecraft keeps transmitting until the ground has found it. The mode manager compares it against the timeout (7 days, from Kconfig) and, when it expires, requests safe mode and sends `radio set_transmit false` (DS-33). Transmission stays off until a ground command turns it on; an accepted command restarts the timer but does not turn transmission on. Because the value is in FRAM, resets do not restart the timer. Built so far (2026-10-06): whether contact has happened is stored, so the timer keeps running after a reset, but it restarts from the boot, because MET does not yet survive a reset (DS-25); it becomes exact when health persists mission time.
+**DS-46 Command-loss timer: Proposed.** Measures time since the last *accepted* ground command, not the health of the command ingest app (health covers that through its step counter, DS-43). Command ingest stores the MET of acceptance with the counter floor and publishes it on `ground_contact_chan` (a data channel, since the mode manager may not include command ingest's header, DS-68). Every command that passes the counter check counts, whatever it does; replays and forgeries do not. The timer starts at first contact, so the spacecraft keeps transmitting until the ground has found it. The mode manager compares it against the timeout (7 days, from Kconfig) and, when it expires, requests safe mode and sends `radio set_transmit false` (DS-33). Transmission stays off until a ground command turns it on; an accepted command restarts the timer but does not turn transmission on. Because the value is in FRAM, resets do not restart the timer. Built 2026-10-06: whether contact has happened and when are stored, and MET carries on across a reset (DS-25), so the timer runs on from the last contact.
 
 ## 6. Commanding and security
 
@@ -324,11 +325,11 @@ The dictionary version and hash are included in the beacon.
 **DS-71 FRAM layout and atomicity: Proposed.**
 - A fixed region map, with no filesystem.
 - Two-slot records with magic, version, generation, and CRC; the valid slot with the newest generation wins, using serial-number arithmetic. Each slot is magic (2 bytes, 0x5353), version (1), payload length (1), generation (4), the payload, and a CRC-32C (4) over everything before it, little-endian. A write goes to the slot not holding the newest record, with the next generation, and is read back before it counts as stored. A record of another version reads as no record (its default), never as a fault, so a new software version starts from defaults for any record it changes.
-- The boot log is a headless ring: each entry is written once, placed at `boot_num % N`, and carries the previous run's duration from the checkpoint record.
+- The boot log is a headless ring: each entry is written once, placed at `boot_num % N`, and carries the previous run's duration from the checkpoint record. Built 2026-10-06 as a `ring:` region in `nvm_map.yaml`: each entry in the usual slot form, with the boot number as its generation; N is 16. The boot number itself comes from the mirrored run checkpoint.
 - Hardware write-protect on the configuration region. Keys are not stored in FRAM; they are compiled into flash (DS-54).
 
 **DS-72 Time: Specified.**
-- Record RTC time (via Zephyr's RTC API), most recent elapsed boot time, and total mission time, which is persisted in FRAM.
+- Record RTC time (via Zephyr's RTC API), most recent elapsed boot time, and total mission time, which is persisted in FRAM. Built 2026-10-06: mission time and the boot's elapsed time are in health's run checkpoint, written every major frame and mirrored; the RTC is still to come.
 - The RTC is reset from the ground periodically rather than calibrated.
 - UTC drift is monitored manually on the ground. This is mission dependent.
 - *Proposed:* log every time set as an event with old and new values.
@@ -367,10 +368,10 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 |---|---|
 | Command counter floor | Use the backup SRAM copy. If that is also lost, use RTC time minus a tolerance as the floor, which still rejects old recorded commands if the counter is epoch milliseconds; if the RTC is invalid, accept any counter above the first one accepted this boot (replays from earlier boots possible) |
 | Mode | Boot into safe mode |
-| Boot log and reset-loop detection | Boot counter in backup registers; history lost |
+| Boot log and reset-loop detection | Boot number and MET in the mirrored run checkpoint (backup SRAM); the boot log's history lost |
 | Launch/deployment timers | Backup SRAM copy; if lost, restart the wait (delays deployment, never violates the required wait) |
 | Antenna deploy attempts | Backup SRAM copy; if lost, require ground authorization for further attempts |
-| Mission time | Lost; reconstructed on the ground from RTC and beacon history |
+| Mission time | The mirrored run checkpoint (decided 2026-10-06); if that is lost too, reconstructed on the ground from RTC and beacon history |
 | Command-loss timer | Restarts each boot |
 | Keys | Unaffected (in flash); active slot reverts to the default |
 | Calibration tables | Flash defaults; reload by command |
@@ -474,3 +475,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-05 | DS-70, DS-71, DS-74, DS-75: the FRAM service and region map built (no app uses them yet). SPI assumed, part not chosen, 32 KB map; the Nucleo runs with FRAM unavailable. Slot layout, read-back on write, a record of another version reads as its default, and what marks FRAM degraded |
 | 2026-10-06 | FRAM, second part. DS-75: the mirror built (records marked `mirror:` also kept in backup SRAM through the retained-memory API; one generation across both copies; the newest wins), so the Nucleo keeps mirrored records across a reset without FRAM. DS-33, DS-41, DS-42, DS-46, DS-53, DS-54, DS-74: the transmit setting, mode and reason, deployment, contact, counter floors and active key slot persist; a store failure never refuses a command; the test signal reaches test mode from safe mode on a later boot. DS-46's timer restarts at boot until MET persists |
 | 2026-10-06 | DS-05: the native_sim tests run as four CI jobs in parallel (each platform in two halves), with a `native_sim tests` job that passes when all do; the generated-message tests join the shared library build |
+| 2026-10-06 | Mission time across resets. DS-25, DS-72: health's run checkpoint (mirrored, every major frame) and `mission_time_chan`; ticks carry MET at boot plus uptime. DS-44, DS-71: the boot log, a 16-entry FRAM ring with the reset cause, previous run length, MET at boot, and the app behind a health reset. DS-45, DS-46: the separation delay and command-loss timer now run on across a reset. DS-75: mission time and the boot number survive in the mirror |
