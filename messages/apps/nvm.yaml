@@ -1,0 +1,76 @@
+# The nvm app's messages (DS-70, DS-74, DS-75).
+#
+# The FRAM service itself is a library, called by each app that owns
+# records. The nvm app looks after the service as a whole: its housekeeping,
+# the ground's retry and dump commands, and scrubbing.
+
+app: nvm
+id: 7
+description: Looks after the FRAM service (housekeeping, retry, dump, scrubbing).
+# Woken once a major frame, to scrub one region and publish housekeeping.
+wakeup: true
+
+commands:
+  - name: retry
+    id: 1
+    modes: [safe, nominal, test]
+    description: >
+      Try FRAM and the mirror again after a failure (DS-75). Their
+      housekeeping flags show whether they came back.
+  - name: dump
+    id: 2
+    modes: [safe, nominal, test]
+    description: >
+      Send length bytes of a store, from address, to the ground as they are,
+      in one D packet (DS-74). Read-only. At most 240 bytes; ask again for the
+      next chunk. tools/nvm_dump.py decodes the records.
+    fields:
+      - name: store
+        type: nvm_store
+        description: FRAM or the mirror.
+      - name: address
+        type: uint16
+        description: The first byte.
+      - name: length
+        type: uint8
+        description: Bytes, 1 to 240.
+
+housekeeping:
+  description: The FRAM service's state and counts, published every major frame.
+  fields:
+    - name: fram_available
+      type: bool
+      description: False if there is no FRAM, or it has failed (DS-75).
+    - name: mirror_available
+      type: bool
+      description: False if there is no mirror, or it has failed.
+    - name: reads
+      type: uint32
+      description: Record reads since boot.
+    - name: writes
+      type: uint32
+      description: Record writes since boot.
+    - name: defaults_used
+      type: uint32
+      description: Reads that returned a record's default.
+    - name: from_mirror
+      type: uint32
+      description: Reads answered by the mirror rather than FRAM.
+    - name: bad_slots
+      type: uint32
+      description: Slots found holding a record that failed its CRC, by any read or scrub.
+    - name: errors
+      type: uint32
+      description: Device errors and writes that didn't read back.
+    - name: scrub_passes
+      type: uint32
+      description: Times the scrub has checked every region.
+    - name: scrub_bad
+      type: uint32
+      description: Bad slots the scrub found. Each owner's next write replaces them.
+    - name: dumps
+      type: uint32
+      description: Dump packets sent.
+    - name: dump_refused
+      type: uint32
+      description: Dump commands refused (bad range, store unavailable, or downlink full).

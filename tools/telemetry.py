@@ -7,6 +7,9 @@ Every downlink packet starts with a printable kind byte:
     'A', 'N'  command replies, as text: "ACK <counter> ok", "NAK <counter> replay"
     'H'       housekeeping: 'H', app id, MET (8 bytes), then the app's
               housekeeping fields, little-endian, packed in YAML order
+    'D'       a memory dump from the nvm app: 'D', store (0 FRAM, 1 the
+              mirror), address (2 bytes), length, then the bytes as stored.
+              tools/nvm_dump.py puts dumps together and decodes the records.
 
 The housekeeping layouts come from the same YAML as the flight encoders
 (include/silversat/tlm_encode.h), through the generator's dictionary.
@@ -27,8 +30,11 @@ sys.path.insert(0, str(REPO / "tools"))
 import command_text  # noqa: E402
 
 KIND_HK = ord("H")
+KIND_DUMP = ord("D")
 REPLY_KINDS = (ord("A"), ord("N"))
 HK_HEADER_LEN = 10
+DUMP_HEADER_LEN = 5          # 'D', store, address (2, little-endian), length
+DUMP_STORES = {0: "fram", 1: "mirror"}
 
 FLOAT_FORMATS = {"float32": "<f", "float64": "<d"}
 
@@ -71,11 +77,13 @@ def _encode_field(field, value):
 
 
 def decode(dictionary, payload):
-    """One downlink packet, as a dict with "kind": "reply" or "hk"."""
+    """One downlink packet, as a dict with "kind": "reply", "hk" or "dump"."""
     if not payload:
         raise ValueError("empty packet")
     if payload[0] in REPLY_KINDS:
         return {"kind": "reply", "text": payload.decode("ascii")}
+    if payload[0] == KIND_DUMP:
+        return _decode_dump(payload)
     if payload[0] != KIND_HK:
         raise ValueError(f"unknown packet kind {payload[0]:#04x}")
     if len(payload) < HK_HEADER_LEN:
@@ -90,6 +98,24 @@ def decode(dictionary, payload):
         "app": app["name"],
         "met_ms": int.from_bytes(payload[2:HK_HEADER_LEN], "little", signed=True),
         "fields": {f["name"]: _decode_field(f, data) for f in hk["fields"]},
+    }
+
+
+def _decode_dump(payload):
+    """A 'D' packet from the nvm app's dump command (DS-74)."""
+    if len(payload) < DUMP_HEADER_LEN:
+        raise ValueError("dump packet too short")
+    if payload[1] not in DUMP_STORES:
+        raise ValueError(f"unknown store {payload[1]}")
+    length = payload[4]
+    data = payload[DUMP_HEADER_LEN:]
+    if len(data) != length:
+        raise ValueError(f"dump says {length} bytes, carries {len(data)}")
+    return {
+        "kind": "dump",
+        "store": DUMP_STORES[payload[1]],
+        "address": int.from_bytes(payload[2:4], "little"),
+        "data": bytes(data),
     }
 
 

@@ -132,6 +132,7 @@ def test_outputs_one_header_and_one_source_per_app(tmp_path):
         "include/msg/common.h",
         "include/msg/quiet.h",
         "include/msg/sensor.h",
+        "include/nvm/map.h",
         "include/nvm/quiet.h",
         "include/nvm/sensor.h",
         "src/cmd_routes.c",
@@ -1003,3 +1004,16 @@ def test_flight_boot_log_is_a_mirrored_ring():
     assert by_name["boot_log"].ring == 16 and by_name["boot_log"].mirrored
     assert by_name["run_checkpoint"].mirrored
     assert defs.nvm.mirror_used <= defs.nvm.mirror_size
+
+
+def test_nvm_map_header(tmp_path):
+    out = generate(write_defs(tmp_path, nvm=mirrored_nvm()))["include/nvm/map.h"]
+    assert "#define NVM_REGION_COUNT 2" in out
+    assert "#define NVM_FRAM_SIZE 1024" in out and "#define NVM_MIRROR_SIZE 4096" in out
+    assert '.name = "sensor_count",' in out and ".mirror_address = 0x0000," in out
+    assert "_defaults" not in out, "read-only places only; the defaults stay with the owner"
+
+
+def test_nvm_map_header_without_a_map(tmp_path):
+    out = generate(write_defs(tmp_path))["include/nvm/map.h"]
+    assert "#define NVM_REGION_COUNT 0" in out and "nvm_map[" not in out

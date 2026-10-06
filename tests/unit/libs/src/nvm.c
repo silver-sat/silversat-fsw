@@ -6,7 +6,8 @@
  * The FRAM is a fake (tests/fakes/fake_fram.c) that the tests can fail,
  * tear a write on, or corrupt. Most tests use a region made here by hand;
  * flight code only ever uses the regions the generator writes from
- * messages/nvm_map.yaml, and the last test uses one of those.
+ * messages/nvm_map.yaml, and the last tests use those: one round trip, and
+ * an image of FRAM built by the ground's dump decoder (nvm_vectors.yaml).
  */
 
 #include <errno.h>
@@ -20,6 +21,7 @@
 #include "fake_retained_mem.h"
 #include "nvm/command_ingest.h"
 #include "nvm/health.h"
+#include "nvm_vectors.h"
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
 
@@ -558,4 +560,139 @@ ZTEST(nvm, test_generated_record_round_trip)
 	zassert_equal(state.active_slot, 1);
 	zassert_true(state.contacted);
 	zassert_equal(state.last_accepted_met_ms, -2);
+}
+
+/* ---- An image of FRAM from the ground (nvm_vectors.yaml) --------------- */
+
+/*
+ * tools/nvm_dump.py laid this image out, slots, generations and CRCs, the
+ * way the FRAM service should. Reading it back with the generated readers
+ * checks the ground and the satellite agree on every byte (DS-74).
+ */
+ZTEST(nvm, test_the_ground_image_reads_back)
+{
+	struct nvm_command_state state;
+	struct nvm_run_checkpoint checkpoint;
+	const struct nvm_command_state *want = &nvm_vector_command_state;
+
+	memcpy(fake_fram_memory(fram), nvm_vector_image, sizeof(nvm_vector_image));
+
+	zassert_ok(nvm_command_state_read(&state));
+	zassert_equal(state.floor_slot0, want->floor_slot0);
+	zassert_equal(state.floor_slot1, want->floor_slot1);
+	zassert_equal(state.active_slot, want->active_slot);
+	zassert_equal(state.contacted, want->contacted);
+	zassert_equal(state.last_accepted_met_ms, want->last_accepted_met_ms);
+
+	zassert_ok(nvm_run_checkpoint_read(&checkpoint));
+	zassert_equal(checkpoint.boot_number, nvm_vector_run_checkpoint.boot_number);
+	zassert_equal(checkpoint.met_ms, nvm_vector_run_checkpoint.met_ms);
+	zassert_equal(checkpoint.uptime_ms, nvm_vector_run_checkpoint.uptime_ms);
+	zassert_equal(checkpoint.reset_app, nvm_vector_run_checkpoint.reset_app);
+
+	for (size_t i = 0; i < ARRAY_SIZE(nvm_vector_boot_log); i++) {
+		struct nvm_boot_log entry;
+		const struct nvm_boot_log *expected = &nvm_vector_boot_log[i].entry;
+		uint32_t number;
+
+		zassert_ok(nvm_boot_log_read(nvm_vector_boot_log[i].number % 16, &entry, &number));
+		zassert_equal(number, nvm_vector_boot_log[i].number);
+		zassert_equal(entry.reset_cause, expected->reset_cause);
+		zassert_equal(entry.previous_run_ms, expected->previous_run_ms);
+		zassert_equal(entry.met_at_boot_ms, expected->met_at_boot_ms);
+		zassert_equal(entry.reset_app, expected->reset_app);
+	}
+}
+
+/* ---- nvm_check and nvm_raw_read, for the nvm app (DS-74) --------------- */
+
+ZTEST(nvm, test_check_counts_bad_slots)
+{
+	zassert_equal(nvm_check(&region), 0, "blank slots aren't bad");
+	zassert_ok(nvm_write(&region, a));
+	zassert_ok(nvm_write(&region, b));
+	zassert_equal(nvm_check(&region), 0);
+	slot(1)[NVM_HEADER_LEN] ^= 0x01;
+	zassert_equal(nvm_check(&region), 1);
+	slot(0)[NVM_HEADER_LEN] ^= 0x01;
+	zassert_equal(nvm_check(&region), 2);
+}
+
+ZTEST(nvm, test_check_counts_both_stores)
+{
+	zassert_ok(nvm_write(&mirrored, a));
+	zassert_equal(nvm_check(&mirrored), 0);
+	fake_retained_mem_memory(mirror)[mirrored.mirror_address + NVM_HEADER_LEN] ^= 0x01;
+	zassert_equal(nvm_check(&mirrored), 1, "the mirror's copy");
+	fake_fram_memory(fram)[mirrored.address + NVM_HEADER_LEN] ^= 0x01;
+	zassert_equal(nvm_check(&mirrored), 2, "and FRAM's");
+}
+
+ZTEST(nvm, test_check_reads_and_never_writes)
+{
+	uint8_t before[2 * SLOT_SIZE];
+
+	zassert_ok(nvm_write(&region, a));
+	slot(0)[NVM_HEADER_LEN] ^= 0x01;
+	memcpy(before, slot(0), sizeof(before));
+	zassert_equal(nvm_check(&region), 1);
+	zassert_mem_equal(slot(0), before, sizeof(before), "a check repairs nothing");
+}
+
+ZTEST(nvm, test_check_a_ring)
+{
+	zassert_ok(nvm_ring_write(&ring, 3, a));
+	zassert_equal(nvm_check(&ring), 0);
+	fake_fram_memory(fram)[ring.address + 3 * SLOT_SIZE + NVM_HEADER_LEN] ^= 0x01;
+	zassert_equal(nvm_check(&ring), 1);
+}
+
+ZTEST(nvm, test_check_with_fram_failed)
+{
+	fake_fram_fail(fram, true);
+	zassert_equal(nvm_check(&region), -EIO);
+	zassert_false(nvm_available());
+}
+
+ZTEST(nvm, test_raw_read)
+{
+	uint8_t buf[SLOT_SIZE];
+
+	zassert_ok(nvm_write(&mirrored, a));
+	zassert_ok(nvm_raw_read(NVM_STORE_FRAM, mirrored.address, buf, sizeof(buf)));
+	zassert_mem_equal(buf, &fake_fram_memory(fram)[mirrored.address], sizeof(buf));
+	zassert_ok(nvm_raw_read(NVM_STORE_MIRROR, mirrored.mirror_address, buf, sizeof(buf)));
+	zassert_mem_equal(buf, &fake_retained_mem_memory(mirror)[mirrored.mirror_address],
+			  sizeof(buf));
+}
+
+ZTEST(nvm, test_raw_read_limits)
+{
+	uint8_t buf[16];
+	size_t fram_size = DT_PROP(FRAM_NODE, size);
+
+	zassert_ok(nvm_raw_read(NVM_STORE_FRAM, fram_size - 16, buf, 16), "the last bytes");
+	zassert_equal(nvm_raw_read(NVM_STORE_FRAM, fram_size - 15, buf, 16), -EINVAL);
+	zassert_equal(nvm_raw_read(NVM_STORE_MIRROR, DT_PROP(NVM_MIRROR_NODE, size) - 15, buf, 16),
+		      -EINVAL);
+	zassert_equal(nvm_raw_read(2, 0, buf, 16), -EINVAL, "no such store");
+	zassert_true(nvm_available(), "a bad request is not a fault");
+}
+
+ZTEST(nvm, test_raw_read_with_a_store_failed)
+{
+	uint8_t buf[16];
+
+	fake_fram_fail(fram, true);
+	zassert_equal(nvm_raw_read(NVM_STORE_FRAM, 0, buf, 16), -EIO);
+	zassert_false(nvm_available());
+	fake_fram_fail(fram, false);
+	zassert_equal(nvm_raw_read(NVM_STORE_FRAM, 0, buf, 16), -EIO,
+		      "degraded: not used again until a retry");
+	zassert_ok(nvm_retry());
+	zassert_ok(nvm_raw_read(NVM_STORE_FRAM, 0, buf, 16));
+	fake_fram_fail(fram, true);
+	zassert_ok(nvm_raw_read(NVM_STORE_MIRROR, 0, buf, 16), "the mirror still answers");
+	fake_retained_mem_fail(mirror, true);
+	zassert_equal(nvm_raw_read(NVM_STORE_MIRROR, 0, buf, 16), -EIO);
 }

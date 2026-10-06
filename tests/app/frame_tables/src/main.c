@@ -53,6 +53,14 @@ ZTEST(frame_tables, test_the_mode_manager_and_health_run_in_every_mode)
 	}
 }
 
+ZTEST(frame_tables, test_the_nvm_app_runs_in_every_mode)
+{
+	/* FRAM is scrubbed, and its housekeeping kept current, whatever the mode (DS-74). */
+	for (uint8_t mode = 0; mode <= MODE_MAX; mode++) {
+		zassert_true(table_has(mode, APP_ID_NVM), "mode %u", mode);
+	}
+}
+
 ZTEST(frame_tables, test_health_runs_in_slot_0)
 {
 	/* The frame manager publishes its report at the start of slot 0. */

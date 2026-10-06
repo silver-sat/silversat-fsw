@@ -38,13 +38,21 @@
  * modulo the ring's length, over the entry that many before it. The
  * entry's number is its generation. A mirrored ring is kept whole in both
  * FRAM and the mirror; a read takes the newer valid entry at the place.
+ *
+ * The nvm app (DS-70, DS-74) looks after the service as a whole, and is
+ * the only caller of nvm_check(), which scrubs a region without writing
+ * it, and nvm_raw_read(), which reads bytes as stored for the ground's
+ * dump command. It finds the regions in the generated nvm/map.h.
  */
 
 #ifndef SILVERSAT_NVM_H_
 #define SILVERSAT_NVM_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+
+#include "msg/common.h"
 
 /* The slot layout above. */
 #define NVM_MAGIC        0x5353 /* "SS" */
@@ -98,6 +106,23 @@ int nvm_ring_write(const struct nvm_region *region, uint32_t number, const uint8
  */
 int nvm_ring_read(const struct nvm_region *region, uint8_t index, uint8_t *payload,
 		  uint32_t *number);
+
+/*
+ * Read len bytes from a store (enum nvm_store: NVM_STORE_FRAM or
+ * NVM_STORE_MIRROR, msg/common.h) as they are, from address: for the ground's
+ * dump command (DS-74). Read-only, and no slot is checked. Returns 0,
+ * -EINVAL if the range is outside the store, or -EIO if the store is
+ * unavailable or failed.
+ */
+int nvm_raw_read(uint8_t store, uint16_t address, uint8_t *buf, size_t len);
+
+/*
+ * Check every slot of a region, in each store that holds it, without
+ * changing anything: for scrubbing. Returns how many slots hold a record
+ * that fails its CRC (each also counted in nvm_stats().bad_slots), or -EIO
+ * if a store failed.
+ */
+int nvm_check(const struct nvm_region *region);
 
 /* False if there is no FRAM, or it has failed. */
 bool nvm_available(void);

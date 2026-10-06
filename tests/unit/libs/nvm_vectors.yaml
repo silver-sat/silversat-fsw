@@ -1,0 +1,36 @@
+# FRAM records shared by the ground's dump decoder and the flight code (DS-74).
+#
+# tools/nvm_dump.py builds an image of FRAM holding these records, with the
+# slot layout the FRAM service writes. tests/unit/libs/src/nvm.c loads it
+# into the fake FRAM and reads each record with its generated reader, and
+# tools/tests/test_nvm_dump.py decodes the same image, so passing both
+# means the ground decodes exactly what the satellite stores.
+#
+# Values cover each field type's edges: all bits set, negative, and each
+# byte different, to catch a byte order mistake.
+
+records:
+  command_state:
+    floor_slot0: 0x0123456789abcdef
+    floor_slot1: 0xffffffffffffffff
+    active_slot: 1
+    contacted: true
+    last_accepted_met_ms: -2
+  run_checkpoint:
+    boot_number: 0x01020304
+    met_ms: 86400000
+    uptime_ms: 5400123
+    reset_app: 3
+  boot_log:
+    # 17 is at place 1, as the 17th boot after boot 1 overwrote it.
+    - number: 2
+      values: {reset_cause: 0x00000010, previous_run_ms: 1000, met_at_boot_ms: 0, reset_app: 0}
+    - number: 17
+      values: {reset_cause: 0x80000001, previous_run_ms: 2700000, met_at_boot_ms: -1, reset_app: 2}
+    # By place, 17 comes before 2 and 20 after: the decoder lists by number.
+    - number: 20
+      values:
+        reset_cause: 0xffffffff
+        previous_run_ms: -1
+        met_at_boot_ms: 0x7fffffffffffffff
+        reset_app: 255
