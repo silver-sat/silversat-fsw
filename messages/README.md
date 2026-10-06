@@ -13,7 +13,7 @@ message struct, command ID, or channel definition by hand.
 
 The generated files are written to `<build>/silversat_msg/` and are never
 committed. To see them, build anything that sets `CONFIG_SS_MESSAGES=y` (for
-example `west build -b native_sim tests/unit/messages`) and look there.
+example `west build -b native_sim tests/unit/libs`) and look there.
 
 ## What each app gets
 

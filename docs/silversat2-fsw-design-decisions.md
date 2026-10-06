@@ -33,7 +33,7 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 **DS-05 CI: Proposed.**
 - Every push: twister on `native_sim` and `native_sim/native/64` with ASan, UBSan, and coverage; a build-only check for `nucleo_f446re`; Zephyr compliance checks.
 - Flatsat: runs on merge to main, nightly, and on demand.
-- Keep the native_sim run under about three minutes.
+- Keep the native_sim run under about three minutes. Since 2026-10-06 the tests run as four CI jobs in parallel, each platform in two halves (twister `--subset`), each with its own compiler cache: most of a build is CMake configuration, which no cache speeds up, so fewer builds per job is what shortens the run. A job named `native_sim tests`, which the branch rules require, passes when all four do. Tests that need no boot of their own share a build (`tests/unit/libs`).
 - No `#ifdef CONFIG_BOARD_NATIVE_SIM` in driver or application code.
 
 **DS-06 Build variants: Specified.**
@@ -473,3 +473,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-05 | DS-43: the radio is protected, and the rule: an app on the ground command path is protected, since a stopped one could never be restarted from the ground |
 | 2026-10-05 | DS-70, DS-71, DS-74, DS-75: the FRAM service and region map built (no app uses them yet). SPI assumed, part not chosen, 32 KB map; the Nucleo runs with FRAM unavailable. Slot layout, read-back on write, a record of another version reads as its default, and what marks FRAM degraded |
 | 2026-10-06 | FRAM, second part. DS-75: the mirror built (records marked `mirror:` also kept in backup SRAM through the retained-memory API; one generation across both copies; the newest wins), so the Nucleo keeps mirrored records across a reset without FRAM. DS-33, DS-41, DS-42, DS-46, DS-53, DS-54, DS-74: the transmit setting, mode and reason, deployment, contact, counter floors and active key slot persist; a store failure never refuses a command; the test signal reaches test mode from safe mode on a later boot. DS-46's timer restarts at boot until MET persists |
+| 2026-10-06 | DS-05: the native_sim tests run as four CI jobs in parallel (each platform in two halves), with a `native_sim tests` job that passes when all do; the generated-message tests join the shared library build |
