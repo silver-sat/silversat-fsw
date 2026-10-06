@@ -335,10 +335,10 @@ static void command_ingest_main(void *a, void *b, void *c)
 	if (persist_contacted()) {
 		/*
 		 * The ground has been heard from before this boot, so the
-		 * command-loss timer keeps running (DS-46). Until MET survives
-		 * a reset (DS-25), it restarts from this boot.
+		 * command-loss timer keeps running from that contact (DS-46):
+		 * MET carries on across the reset (DS-25).
 		 */
-		publish_contact(0);
+		publish_contact(persist_last_contact_met());
 	}
 	zbus_chan_pub(&command_ingest_hk_chan, &hk, K_NO_WAIT);
 

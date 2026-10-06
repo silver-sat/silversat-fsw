@@ -15,3 +15,9 @@ tests:
       - EXTRA_CFLAGS=-DPROTECTED_STALL
     platform_allow:
       - native_sim
+  # The boot after an earlier run: the checkpoint it left is carried on.
+  app.health.after_reset:
+    extra_args:
+      - EXTRA_CFLAGS=-DAFTER_RESET
+    platform_allow:
+      - native_sim

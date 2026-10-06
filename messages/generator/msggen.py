@@ -17,8 +17,9 @@ Input, in <defs>/:
                       its commands (with the modes each is allowed in),
                       housekeeping, data channels (with initial values),
                       and the internal commands it sends (sends:)
-    nvm_map.yaml      FRAM records, each owned by one app, and which are
-                      also kept in the mirror (backup SRAM) (optional)
+    nvm_map.yaml      FRAM records, each owned by one app; rings of records
+                      written once each, like the boot log; and which of
+                      them are also kept in the mirror (backup SRAM) (optional)
 
 Output, in <out>/:
     include/msg/common.h     shared types; every app's status and wakeup
@@ -394,6 +395,7 @@ NVM_HEADER_LEN = 8
 NVM_CRC_LEN = 4
 NVM_PAYLOAD_MAX = 128
 NVM_ALIGN = 16              # each region starts on a 16-byte boundary, for readable dumps
+NVM_RING_MAX = 255          # struct nvm_region holds a ring's length as uint8
 NVM_FRAM_SIZE_MAX = 0x10000  # struct nvm_region holds addresses as uint16
 
 
@@ -410,6 +412,7 @@ class NvmRegion:
     source: str = ""
     mirrored: bool = False     # also kept in the mirror (DS-75's second tier)
     mirror_address: int = 0
+    ring: int = 0              # entries in a ring (DS-71's boot log), or 0: two slots
 
     @property
     def struct(self):
@@ -426,7 +429,7 @@ class NvmRegion:
 
     @property
     def region_size(self):
-        return 2 * self.slot_size
+        return (self.ring or 2) * self.slot_size
 
     def default_bytes(self, enums):
         """The encoded default payload, little-endian, as the C encoder writes it."""
@@ -881,7 +884,7 @@ def _parse_nvm_map(path, apps, enums):
     for i, node in enumerate(_sequence(data, "regions", where)):
         rwhere = f"{where}: regions[{i}]"
         _check_keys(node, rwhere, ("name", "owner", "version", "description", "fields"),
-                    ("mirror",))
+                    ("mirror", "ring"))
         name = _name(node["name"], f"{rwhere}.name")
         owner = by_name.get(node["owner"])
         if owner is None:
@@ -911,6 +914,8 @@ def _parse_nvm_map(path, apps, enums):
         mirror = node.get("mirror", False)
         if not isinstance(mirror, bool):
             raise DefinitionError(f"{rwhere}.mirror: must be true or false")
+        if "ring" in node:
+            region.ring = _integer(node["ring"], f"{rwhere}.ring", 2, NVM_RING_MAX)
         if mirror:
             region.mirrored = True
             region.mirror_address = mirror_address
@@ -1099,6 +1104,7 @@ def command_dictionary(defs):
                 "version": r.version,
                 "size": r.size,
                 "mirror_address": r.mirror_address if r.mirrored else None,
+                "ring": r.ring or None,
                 "fields": [_hk_entry(f, offset, defs) for f, offset in r.struct.wire_layout],
             } for r in defs.nvm.regions],
         },

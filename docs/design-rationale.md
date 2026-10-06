@@ -244,6 +244,14 @@ Command ingest stores a new floor before it sends the ACK, so a reset can't reop
 
 A write gives both copies the same generation, the next after the newest in either store, and a read takes the newest from either. If FRAM fails for a while and comes back, its records are older than the mirror's, and the mirror's win without any special recovery step.
 
+### Why health's boot work runs before any app
+
+The frame manager's first tick must already carry the right MET, and every app reads FRAM in its own thread. So health reads its checkpoint, writes the boot log, and publishes mission time from a start-up hook that Zephyr runs after the FRAM service starts and before it starts any app's thread, rather than in health's thread, which runs at the lowest priority.
+
+### Why the checkpoint is written every major frame
+
+What a reset loses is everything since the last checkpoint. FRAM endures about 10^14 writes, millions of years at once a second, and the backup SRAM mirror has no limit, so there is no reason to write less often.
+
 ### Why the boot log has no head pointer
 
 A separate head index is a second value that can tear independently of the entry it points to. Each entry carries its own boot number; the newest valid entry is found by scanning.

@@ -15,6 +15,13 @@ wakeup: true
 sends:
   - frame_manager.set_app_enabled
 
+data_channels:
+  - name: mission_time_chan
+    type: mission_time
+    description: >
+      This boot's number and MET at boot, published before any app thread
+      starts (DS-25). All zeros without health: MET is then uptime.
+
 housekeeping:
   description: Health state, published every major frame.
   fields:
@@ -38,3 +45,12 @@ housekeeping:
     - name: action_failures
       type: uint32
       description: Times set_app_enabled could not be sent; retried at the next report.
+    - name: boot_number
+      type: uint32
+      description: This boot's number (DS-44).
+    - name: reset_cause
+      type: uint32
+      description: Why the last run ended, as hwinfo reset cause flags (RESET_*).
+    - name: store_failures
+      type: uint32
+      description: Checkpoints or boot log entries that reached neither FRAM nor its mirror.

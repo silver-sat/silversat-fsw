@@ -135,6 +135,12 @@ Give a small record that matters after a reset `mirror: true`: it is also
 kept in the mirror, the STM32's backup SRAM, so it survives FRAM failing,
 or not being fitted (DS-75). The mirror is 4 KB.
 
+A record written once per event, like the boot log, can be a ring:
+`ring: 16` keeps the last 16 entries, each at its number modulo 16, and
+the generated functions take that number (`nvm_boot_log_write(boot, &e)`)
+or a place in the ring (`nvm_boot_log_read(place, &e, &number)`). A ring
+can be mirrored too, as the boot log is.
+
 ## Test-only apps
 
 App ids run from 1 to 63: the frame manager's report to health has one

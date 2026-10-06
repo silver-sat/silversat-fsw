@@ -15,6 +15,7 @@
 
 #include <errno.h>
 
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/ztest.h>
@@ -29,6 +30,21 @@
 
 /* Generous: in simulated time a wait costs nothing unless it fails. */
 #define WAIT K_SECONDS(1)
+
+/*
+ * Standing in for health's boot work (DS-25): MET when this boot began,
+ * carried on from the run before, published before the frame manager starts.
+ */
+#define MET_AT_BOOT 1000000000LL
+
+static int publish_mission_time(void)
+{
+	const struct mission_time time = {.boot_number = 7, .met_at_boot_ms = MET_AT_BOOT};
+
+	return zbus_chan_pub(&mission_time_chan, &time, K_NO_WAIT);
+}
+
+SYS_INIT(publish_mission_time, APPLICATION, 95);
 
 /* ---- Helpers ------------------------------------------------------------ */
 
@@ -198,7 +214,8 @@ ZTEST(frame_manager, test_slot_phasing)
 		zassert_equal(t->slot, t->count % FRAME_SLOTS);
 		zassert_equal(t->uptime_ms,
 			      (int64_t)t->count * FRAME_MINOR_MS + frame_offset_ms());
-		zassert_equal(t->met_ms, t->uptime_ms, "MET starts at zero until health exists");
+		zassert_equal(t->met_ms, MET_AT_BOOT + t->uptime_ms,
+			      "MET carries on from the run before (DS-25)");
 	}
 }
 

@@ -96,6 +96,12 @@ bool persist_contacted(void)
 	return state.contacted;
 }
 
+int64_t persist_last_contact_met(void)
+{
+	load();
+	return state.last_accepted_met_ms;
+}
+
 void persist_set_contact(int64_t met_ms)
 {
 	load();

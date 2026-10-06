@@ -1,11 +1,26 @@
 /*
  * The watchdog is a fake (src/fake_watchdog.c) that counts feeds and never
- * resets, so the tests can see when health stops feeding it.
+ * resets, so the tests can see when health stops feeding it. FRAM and its
+ * mirror are fakes too (tests/fakes/), for the checkpoint and boot log.
  */
 
 / {
 	aliases {
 		watchdog0 = &fake_watchdog;
+		fram = &fake_fram;
+		nvm-mirror = &fake_mirror;
+	};
+
+	fake_fram: fake-fram {
+		compatible = "silversat,fake-fram";
+		status = "okay";
+		size = <DT_SIZE_K(32)>;
+	};
+
+	fake_mirror: fake-mirror {
+		compatible = "silversat,fake-retained-mem";
+		status = "okay";
+		size = <DT_SIZE_K(4)>;
 	};
 
 	fake_watchdog: fake-watchdog {

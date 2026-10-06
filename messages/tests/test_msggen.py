@@ -941,3 +941,65 @@ def test_flight_mirror_holds_the_critical_records():
     mirrored = {r.name for r in defs.nvm.regions if r.mirrored}
     assert {"command_state", "mode_state", "deployment", "radio_state"} <= mirrored
     assert defs.nvm.mirror_used <= defs.nvm.mirror_size == 4096
+
+
+# --- Rings (DS-71's boot log) -------------------------------------------------
+
+def ring_nvm(**changes):
+    nvm = copy.deepcopy(NVM)
+    nvm["regions"][1].update({"ring": 4}, **changes)
+    return nvm
+
+
+def test_ring_layout(tmp_path):
+    cal, count = nvm_defs(tmp_path, ring_nvm()).nvm.regions
+    assert count.ring == 4
+    assert count.region_size == 4 * count.slot_size == 64
+
+
+def test_ring_header_and_dictionary(tmp_path):
+    sensor = generate(write_defs(tmp_path, nvm=ring_nvm()))["include/nvm/sensor.h"]
+    assert ".ring = 4," in sensor
+    assert "static inline int nvm_sensor_count_write(uint32_t number," in sensor
+    assert "static inline int nvm_sensor_count_read(uint8_t index," in sensor
+    assert "nvm_ring_write(&nvm_sensor_count_region, number, payload)" in sensor
+    assert "memcpy(payload, nvm_sensor_count_defaults, sizeof(payload));" in sensor, \
+        "a ring read always fills the entry"
+    assert "nvm_sensor_cal_write(const struct nvm_sensor_cal *record)" in sensor, \
+        "a two-slot record keeps its usual functions"
+    nvm = msggen.command_dictionary(nvm_defs(tmp_path / "d", ring_nvm()))["nvm"]
+    assert [r["ring"] for r in nvm["regions"]] == [None, 4]
+
+
+@needs_gcc
+def test_ring_header_compiles(tmp_path):
+    results = compile_generated(tmp_path, data_size=64, nvm=ring_nvm())
+    assert results["nvm_headers.c"].returncode == 0, results["nvm_headers.c"].stderr
+
+
+@pytest.mark.parametrize("changes, expected", [
+    ({"ring": 1}, "outside 2..255"),
+    ({"ring": 300}, "outside 2..255"),
+])
+def test_invalid_ring(tmp_path, changes, expected):
+    nvm = copy.deepcopy(NVM)
+    nvm["regions"][1].update(changes)
+    with pytest.raises(msggen.DefinitionError, match="nvm_map.yaml") as e:
+        nvm_defs(tmp_path, nvm)
+    assert expected in str(e.value)
+
+
+def test_a_mirrored_ring_takes_its_whole_size_in_the_mirror(tmp_path):
+    nvm = ring_nvm(mirror=True)
+    nvm["mirror_size"] = 4096
+    cal, count = nvm_defs(tmp_path, nvm).nvm.regions
+    assert count.mirrored and count.mirror_address == 0
+    assert nvm_defs(tmp_path / "d", nvm).nvm.mirror_used == 4 * count.slot_size
+
+
+def test_flight_boot_log_is_a_mirrored_ring():
+    defs = msggen.load_definitions(MESSAGES_DIR)
+    by_name = {r.name: r for r in defs.nvm.regions}
+    assert by_name["boot_log"].ring == 16 and by_name["boot_log"].mirrored
+    assert by_name["run_checkpoint"].mirrored
+    assert defs.nvm.mirror_used <= defs.nvm.mirror_size

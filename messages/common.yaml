@@ -151,6 +151,20 @@ structs:
         type: uint64
         description: Apps whose wakeups are stopped by set_app_enabled.
 
+  - name: mission_time
+    description: >
+      Published by health on mission_time_chan before any app starts (DS-25,
+      DS-72): this boot's number, and mission elapsed time when it began,
+      carried on from the run before. The frame manager adds uptime to it
+      for each tick's MET.
+    fields:
+      - name: boot_number
+        type: uint32
+        description: Boots so far, this one included; 0 if health doesn't run.
+      - name: met_at_boot_ms
+        type: int64
+        description: Mission elapsed time when this boot began.
+
   - name: ground_contact
     description: >
       When the ground was last heard from, published by command ingest on

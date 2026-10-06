@@ -5,10 +5,13 @@
  *
  * Drives all periodic work. A k_timer wakes this thread once per minor
  * frame (FRAME_MINOR_MS). The thread publishes a frame tick to the wakeup
- * channel of every app whose table entry is in the current slot. Nothing is
- * published from the timer's interrupt, and nothing here ever waits: every
- * publish and read uses K_NO_WAIT, so one stuck app cannot stall the frame
- * (DS-22).
+ * channel of every app whose table entry is in the current slot. The tick
+ * carries uptime and MET: MET at boot (health's mission_time_chan, carried
+ * on from the run before) plus uptime (DS-25).
+ *
+ * Nothing is published from the timer's interrupt, and nothing here ever
+ * waits: every publish and read uses K_NO_WAIT, so one stuck app cannot
+ * stall the frame (DS-22).
  *
  * Each mode has its own frame table (DS-23). The frame manager reads the
  * mode from mode_chan every minor frame (DS-40). Entering safe mode takes
@@ -77,13 +80,15 @@ static struct app_status status;
 static struct frame_manager_hk hk;
 
 /*
- * Mission elapsed time is mission time at boot plus uptime (DS-25). Until
- * health publishes mission time at boot from FRAM (DS-45, DS-72), each
- * boot's MET starts at zero.
+ * Mission elapsed time is MET at boot plus uptime (DS-25). Health publishes
+ * MET at boot on mission_time_chan, carried on from the run before, before
+ * any app's thread starts; without health it is zero, and MET is uptime.
  */
+static int64_t met_at_boot_ms;
+
 static int64_t frame_met(int64_t uptime_ms)
 {
-	return uptime_ms;
+	return met_at_boot_ms + uptime_ms;
 }
 
 int frame_table_check(const struct frame_table *table)
@@ -288,8 +293,12 @@ static void frame_manager_main(void *a, void *b, void *c)
 	{
 		struct mode_state boot;
 
+		struct mission_time time;
+
 		(void)zbus_chan_read(&mode_chan, &boot, K_FOREVER);
 		active_mode = boot.mode <= MODE_MAX ? boot.mode : MODE_DEPLOY;
+		(void)zbus_chan_read(&mission_time_chan, &time, K_FOREVER);
+		met_at_boot_ms = time.met_at_boot_ms;
 	}
 	k_timer_start(&minor_frame_timer, K_NO_WAIT, K_MSEC(FRAME_MINOR_MS));
 

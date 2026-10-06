@@ -16,7 +16,10 @@
  *        - any other app: tells the frame manager to stop waking it
  *          (frame_manager set_app_enabled). Its stall can't then hold
  *          zbus pool buffers or spread;
- *   3. feeds the hardware watchdog, unless a reset is coming.
+ *   3. stores the run checkpoint, so the next boot carries MET on
+ *      (boot.c, which also does health's work at boot: the boot number,
+ *      the reset cause, and the boot log, DS-25, DS-44);
+ *   4. feeds the hardware watchdog, unless a reset is coming.
  *
  * Health is the only feeder, so the chain is frame manager, then health,
  * then watchdog: if the frame manager stops, health isn't woken; if health
@@ -38,6 +41,7 @@
 #include <zephyr/zbus/zbus.h>
 
 #include "msg/common.h"
+#include "boot.h"
 #include "msg/health.h"
 #include "silversat/resource_map.h"
 
@@ -97,6 +101,7 @@ static void respond(uint8_t app)
 		if (!reset_coming) {
 			reset_coming = true;
 			hk.reset_app = app;
+			boot_record_reset_app(app); /* stored with this frame's checkpoint */
 		}
 		return;
 	}
@@ -136,7 +141,7 @@ static void check(const struct frame_report *report)
 	}
 }
 
-static void step(void)
+static void step(const struct frame_tick *tick)
 {
 	struct frame_report report;
 
@@ -146,7 +151,9 @@ static void step(void)
 		last_major_frame = report.major_frame;
 		check(&report);
 	}
+	boot_checkpoint(tick->met_ms, tick->uptime_ms);
 	watchdog_feed();
+	hk.store_failures = boot_store_failures();
 	zbus_chan_pub(&health_hk_chan, &hk, K_NO_WAIT);
 }
 
@@ -160,11 +167,14 @@ static void health_main(void *a, void *b, void *c)
 	ARG_UNUSED(c);
 
 	watchdog_start();
+	hk.boot_number = boot_number();
+	hk.reset_cause = boot_reset_cause();
+	hk.store_failures = boot_store_failures();
 	zbus_chan_pub(&health_hk_chan, &hk, K_NO_WAIT);
 
 	while (zbus_sub_wait_msg(&health_sub, &chan, &msg, K_FOREVER) == 0) {
 		if (chan == &health_wakeup_chan) {
-			step();
+			step(&msg.tick);
 			status.steps++;
 		} else if (chan == &health_cmd_chan) {
 			status.cmd_rejected++; /* no commands yet */
