@@ -452,12 +452,83 @@ ZTEST(nvm, test_ring_limits)
 	zassert_false(nvm_available());
 }
 
-ZTEST(nvm, test_a_ring_is_never_mirrored)
+ZTEST(nvm, test_an_unmirrored_ring_never_touches_the_mirror)
 {
 	static const uint8_t blank[64];
 
 	zassert_ok(nvm_ring_write(&ring, 1, a));
 	zassert_mem_equal(fake_retained_mem_memory(mirror), blank, sizeof(blank));
+}
+
+/* The same ring, also kept in the mirror. */
+static const struct nvm_region mirrored_ring = {
+	.name = "mirrored_ring",
+	.address = 0x500,
+	.size = 4,
+	.version = 1,
+	.defaults = defaults,
+	.mirrored = true,
+	.mirror_address = 0x100,
+	.ring = 4,
+};
+
+ZTEST(nvm, test_a_mirrored_ring_entry_is_written_to_both)
+{
+	const uint8_t *in_mirror =
+		&fake_retained_mem_memory(mirror)[mirrored_ring.mirror_address + 2 * SLOT_SIZE];
+
+	zassert_ok(nvm_ring_write(&mirrored_ring, 6, a));
+	zassert_mem_equal(&fake_fram_memory(fram)[mirrored_ring.address + 2 * SLOT_SIZE +
+						  NVM_HEADER_LEN],
+			  a, 4);
+	zassert_mem_equal(&in_mirror[NVM_HEADER_LEN], a, 4, "place 2 in the mirror too");
+	zassert_equal(sys_get_le32(&in_mirror[4]), 6, "the entry's number");
+}
+
+ZTEST(nvm, test_the_mirror_keeps_the_ring_without_fram)
+{
+	uint8_t payload[4];
+	uint32_t number;
+
+	uint32_t from_mirror = nvm_stats().from_mirror;
+
+	/* Like the Nucleo before its FRAM part: FRAM never works. */
+	fake_fram_fail(fram, true);
+	(void)nvm_retry();
+	zassert_ok(nvm_ring_write(&mirrored_ring, 3, b));
+	zassert_ok(nvm_ring_read(&mirrored_ring, 3, payload, &number));
+	zassert_equal(nvm_stats().from_mirror - from_mirror, 1);
+	zassert_equal(number, 3);
+	zassert_mem_equal(payload, b, 4);
+}
+
+ZTEST(nvm, test_the_newer_ring_entry_wins_after_fram_returns)
+{
+	uint8_t payload[4];
+	uint32_t number;
+
+	/* Entry 1 reaches both; FRAM fails; entry 5, at the same place, reaches the mirror only. */
+	zassert_ok(nvm_ring_write(&mirrored_ring, 1, a));
+	fake_fram_fail(fram, true);
+	zassert_ok(nvm_ring_write(&mirrored_ring, 5, b));
+
+	/* FRAM works again, still holding entry 1 there: the mirror's 5 is newer. */
+	fake_fram_fail(fram, false);
+	zassert_ok(nvm_retry());
+	zassert_ok(nvm_ring_read(&mirrored_ring, 1, payload, &number));
+	zassert_equal(number, 5);
+	zassert_mem_equal(payload, b, 4);
+}
+
+ZTEST(nvm, test_a_mirrored_ring_with_neither_store)
+{
+	uint8_t payload[4];
+	uint32_t number;
+
+	fake_fram_fail(fram, true);
+	fake_retained_mem_fail(mirror, true);
+	zassert_equal(nvm_ring_write(&mirrored_ring, 1, a), -EIO);
+	zassert_equal(nvm_ring_read(&mirrored_ring, 1, payload, &number), -EIO);
 }
 
 /* ---- A generated record (nvm/command_ingest.h) ------------------------- */

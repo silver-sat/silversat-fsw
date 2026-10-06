@@ -979,7 +979,7 @@ def test_ring_header_compiles(tmp_path):
 
 @pytest.mark.parametrize("changes, expected", [
     ({"ring": 1}, "outside 2..255"),
-    ({"ring": 4, "mirror": True}, "a ring isn't mirrored"),
+    ({"ring": 300}, "outside 2..255"),
 ])
 def test_invalid_ring(tmp_path, changes, expected):
     nvm = copy.deepcopy(NVM)
@@ -989,8 +989,17 @@ def test_invalid_ring(tmp_path, changes, expected):
     assert expected in str(e.value)
 
 
-def test_flight_boot_log_is_a_ring():
+def test_a_mirrored_ring_takes_its_whole_size_in_the_mirror(tmp_path):
+    nvm = ring_nvm(mirror=True)
+    nvm["mirror_size"] = 4096
+    cal, count = nvm_defs(tmp_path, nvm).nvm.regions
+    assert count.mirrored and count.mirror_address == 0
+    assert nvm_defs(tmp_path / "d", nvm).nvm.mirror_used == 4 * count.slot_size
+
+
+def test_flight_boot_log_is_a_mirrored_ring():
     defs = msggen.load_definitions(MESSAGES_DIR)
     by_name = {r.name: r for r in defs.nvm.regions}
-    assert by_name["boot_log"].ring == 16 and not by_name["boot_log"].mirrored
+    assert by_name["boot_log"].ring == 16 and by_name["boot_log"].mirrored
     assert by_name["run_checkpoint"].mirrored
+    assert defs.nvm.mirror_used <= defs.nvm.mirror_size

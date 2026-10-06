@@ -138,7 +138,8 @@ or not being fitted (DS-75). The mirror is 4 KB.
 A record written once per event, like the boot log, can be a ring:
 `ring: 16` keeps the last 16 entries, each at its number modulo 16, and
 the generated functions take that number (`nvm_boot_log_write(boot, &e)`)
-or a place in the ring (`nvm_boot_log_read(place, &e, &number)`).
+or a place in the ring (`nvm_boot_log_read(place, &e, &number)`). A ring
+can be mirrored too, as the boot log is.
 
 ## Test-only apps
 

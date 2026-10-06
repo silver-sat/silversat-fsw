@@ -36,7 +36,8 @@
  * A ring (ring: in nvm_map.yaml, DS-71's boot log) is a different kind of
  * region: entries in the same slot form, each written once, at its number
  * modulo the ring's length, over the entry that many before it. The
- * entry's number is its generation. A ring is kept in FRAM only.
+ * entry's number is its generation. A mirrored ring is kept whole in both
+ * FRAM and the mirror; a read takes the newer valid entry at the place.
  */
 
 #ifndef SILVERSAT_NVM_H_
@@ -82,16 +83,18 @@ int nvm_read(const struct nvm_region *region, uint8_t *payload);
 int nvm_write(const struct nvm_region *region, const uint8_t *payload);
 
 /*
- * Write ring entry number at its place, number % region->ring. Returns 0
- * once it is stored and read back, or -EIO if FRAM is unavailable or failed.
+ * Write ring entry number at its place, number % region->ring, in FRAM and,
+ * if the ring is mirrored, the mirror. Returns 0 once it is stored and read
+ * back in at least one of them, or -EIO if in neither.
  */
 int nvm_ring_write(const struct nvm_region *region, uint32_t number, const uint8_t *payload);
 
 /*
  * Read the ring entry at place index (0 to region->ring - 1) into payload,
- * and its number into *number. Returns 0, -ENOENT if the place holds no
- * valid entry of this version, -EINVAL for a place outside the ring, or
- * -EIO if FRAM is unavailable or failed.
+ * and its number into *number: the newer valid entry there, from FRAM or
+ * the mirror. Returns 0, -ENOENT if the place holds no valid entry of this
+ * version, -EINVAL for a place outside the ring, or -EIO if neither FRAM
+ * nor (for a mirrored ring) the mirror is available.
  */
 int nvm_ring_read(const struct nvm_region *region, uint8_t index, uint8_t *payload,
 		  uint32_t *number);

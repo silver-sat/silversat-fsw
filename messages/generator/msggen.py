@@ -17,9 +17,9 @@ Input, in <defs>/:
                       its commands (with the modes each is allowed in),
                       housekeeping, data channels (with initial values),
                       and the internal commands it sends (sends:)
-    nvm_map.yaml      FRAM records, each owned by one app; which are also
-                      kept in the mirror (backup SRAM); and rings of
-                      records written once each, like the boot log (optional)
+    nvm_map.yaml      FRAM records, each owned by one app; rings of records
+                      written once each, like the boot log; and which of
+                      them are also kept in the mirror (backup SRAM) (optional)
 
 Output, in <out>/:
     include/msg/common.h     shared types; every app's status and wakeup
@@ -916,9 +916,6 @@ def _parse_nvm_map(path, apps, enums):
             raise DefinitionError(f"{rwhere}.mirror: must be true or false")
         if "ring" in node:
             region.ring = _integer(node["ring"], f"{rwhere}.ring", 2, NVM_RING_MAX)
-            if mirror:
-                raise DefinitionError(
-                    f"{rwhere}: a ring isn't mirrored; the mirror holds small records only")
         if mirror:
             region.mirrored = True
             region.mirror_address = mirror_address

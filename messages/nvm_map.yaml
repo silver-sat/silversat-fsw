@@ -21,7 +21,8 @@
 # small records that matter most if FRAM fails, or isn't fitted yet.
 #
 # ring: N makes a ring of N entries, each written once at its number modulo
-# N, over the entry N before it (DS-71's boot log). A ring is FRAM only.
+# N, over the entry N before it (DS-71's boot log). A ring can be mirrored
+# too: the whole ring is then kept in both.
 
 # Until the part is chosen, a 256 Kbit SPI FRAM (for example, Infineon
 # FM25V02A or Fujitsu MB85RS256).
@@ -126,9 +127,11 @@ regions:
     owner: health
     version: 1
     ring: 16
+    mirror: true
     description: >
       One entry per boot, the last 16 boots (DS-44, DS-71). Entry n is at
-      n % 16; its number is the boot number.
+      n % 16; its number is the boot number. Mirrored, so the history
+      survives FRAM failing, or not being fitted yet.
     fields:
       - name: reset_cause
         type: uint32

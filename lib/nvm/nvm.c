@@ -14,8 +14,9 @@
  * A board without an alias runs without that store: a record kept in
  * neither reads as its default.
  *
- * Rings (DS-71's boot log) are in FRAM only: entries in the same slot
- * form, each written once at its number modulo the ring's length.
+ * Rings (DS-71's boot log) are entries in the same slot form, each written
+ * once at its number modulo the ring's length, in FRAM and, if the ring is
+ * mirrored, in the mirror too.
  */
 
 #include <errno.h>
@@ -287,9 +288,14 @@ int nvm_ring_write(const struct nvm_region *region, uint32_t number, const uint8
 
 	k_mutex_lock(&nvm_lock, K_FOREVER);
 	stats.writes++;
-	if (region->ring > 0 && available[FRAM]) {
+	if (region->ring > 0) {
 		make_slot(region, number, payload, out);
-		stored = write_copy(region, FRAM, number % region->ring, out);
+		/* In each store that holds the ring: FRAM, and the mirror if mirrored. */
+		for (enum store s = FRAM; s < STORES; s++) {
+			if (in_use(region, s) && write_copy(region, s, number % region->ring, out)) {
+				stored = true;
+			}
+		}
 	}
 	k_mutex_unlock(&nvm_lock);
 	return stored ? 0 : -EIO;
@@ -299,28 +305,43 @@ int nvm_ring_read(const struct nvm_region *region, uint8_t index, uint8_t *paylo
 		  uint32_t *number)
 {
 	uint8_t buf[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
-	int rc;
+	bool looked = false;
+	bool have = false;
 
 	if (index >= region->ring) {
 		return -EINVAL;
 	}
 	k_mutex_lock(&nvm_lock, K_FOREVER);
 	stats.reads++;
-	if (!available[FRAM]) {
-		rc = -EIO;
-	} else {
-		rc = read_slot(region, FRAM, index, buf, number);
-		if (rc < 0) {
-			fail(FRAM);
-		} else if (rc == SLOT_VALID) {
+	for (enum store s = FRAM; s < STORES; s++) {
+		uint32_t generation;
+		int state;
+
+		if (!in_use(region, s)) {
+			continue;
+		}
+		state = read_slot(region, s, index, buf, &generation);
+		if (state < 0) {
+			fail(s);
+			continue;
+		}
+		looked = true;
+		/* The newer entry at this place, if the two stores differ. */
+		if (state == SLOT_VALID && (!have || newer(generation, *number))) {
 			memcpy(payload, &buf[NVM_HEADER_LEN], region->size);
-			rc = 0;
-		} else {
-			rc = -ENOENT; /* never written, another version, or corrupt */
+			*number = generation;
+			have = true;
+			if (s == MIRROR) {
+				stats.from_mirror++;
+			}
 		}
 	}
 	k_mutex_unlock(&nvm_lock);
-	return rc;
+	if (have) {
+		return 0;
+	}
+	/* Never written, another version, or corrupt; or no store to look in. */
+	return looked ? -ENOENT : -EIO;
 }
 
 static bool is_available(enum store s)
