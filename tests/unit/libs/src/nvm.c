@@ -17,11 +17,13 @@
 #include <zephyr/ztest.h>
 
 #include "fake_fram.h"
+#include "fake_retained_mem.h"
 #include "nvm/command_ingest.h"
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
 
 static const struct device *const fram = DEVICE_DT_GET(FRAM_NODE);
+static const struct device *const mirror = DEVICE_DT_GET(NVM_MIRROR_NODE);
 
 static const uint8_t defaults[4] = {0xd0, 0xd1, 0xd2, 0xd3};
 
@@ -31,6 +33,17 @@ static const struct nvm_region region = {
 	.size = 4,
 	.version = 1,
 	.defaults = defaults,
+};
+
+/* The same record, also kept in the mirror (at another address there). */
+static const struct nvm_region mirrored = {
+	.name = "mirrored",
+	.address = 0x200,
+	.size = 4,
+	.version = 1,
+	.defaults = defaults,
+	.mirrored = true,
+	.mirror_address = 0x40,
 };
 
 /* The same place in FRAM, as the next version of the software would see it. */
@@ -75,12 +88,14 @@ static const uint8_t *read_expect(int expected_rc)
 	return payload;
 }
 
-/* Each test starts with a blank, working FRAM. */
+/* Each test starts with a blank, working FRAM and mirror. */
 static void before(void *fixture)
 {
 	ARG_UNUSED(fixture);
 	fake_fram_reset(fram);
+	fake_retained_mem_reset(mirror);
 	zassert_ok(nvm_retry());
+	zassert_true(nvm_mirror_available());
 }
 
 ZTEST_SUITE(nvm, NULL, NULL, before, NULL, NULL);
@@ -233,6 +248,130 @@ ZTEST(nvm, test_stats)
 	zassert_equal(nvm_stats().writes - before.writes, 1);
 	zassert_equal(nvm_stats().defaults_used - before.defaults_used, 2, "blank, then failed");
 	zassert_equal(nvm_stats().errors - before.errors, 1);
+}
+
+/* ---- The mirror (DS-75's second tier) ----------------------------------- */
+
+static uint8_t *mirror_slot(int n)
+{
+	return &fake_retained_mem_memory(mirror)[mirrored.mirror_address + n * SLOT_SIZE];
+}
+
+static int read_mirrored(uint8_t *payload)
+{
+	return nvm_read(&mirrored, payload);
+}
+
+ZTEST(nvm, test_a_mirrored_record_is_written_to_both)
+{
+	zassert_ok(nvm_write(&mirrored, a));
+	zassert_mem_equal(&fake_fram_memory(fram)[mirrored.address + NVM_HEADER_LEN], a, 4);
+	zassert_mem_equal(&mirror_slot(0)[NVM_HEADER_LEN], a, 4);
+	zassert_equal(sys_get_le32(&mirror_slot(0)[4]), 1, "the same generation in both");
+}
+
+ZTEST(nvm, test_an_unmirrored_record_never_touches_the_mirror)
+{
+	static const uint8_t blank[64];
+
+	zassert_ok(nvm_write(&region, a));
+	zassert_mem_equal(fake_retained_mem_memory(mirror), blank, sizeof(blank));
+}
+
+ZTEST(nvm, test_the_mirror_answers_when_fram_fails)
+{
+	uint8_t payload[4];
+	uint32_t from_mirror = nvm_stats().from_mirror;
+
+	zassert_ok(nvm_write(&mirrored, a));
+	fake_fram_fail(fram, true);
+	zassert_ok(read_mirrored(payload), "a stored record, from the mirror");
+	zassert_mem_equal(payload, a, 4);
+	zassert_false(nvm_available());
+	zassert_equal(nvm_stats().from_mirror - from_mirror, 1);
+
+	/* Writes go on to the mirror alone, and count as stored. */
+	zassert_ok(nvm_write(&mirrored, b));
+	zassert_ok(read_mirrored(payload));
+	zassert_mem_equal(payload, b, 4);
+}
+
+ZTEST(nvm, test_the_newest_copy_wins_after_fram_returns)
+{
+	uint8_t payload[4];
+
+	/* FRAM fails after a; b and c reach the mirror only. */
+	zassert_ok(nvm_write(&mirrored, a));
+	fake_fram_fail(fram, true);
+	(void)read_mirrored(payload);
+	zassert_ok(nvm_write(&mirrored, b));
+	zassert_ok(nvm_write(&mirrored, c));
+
+	/* FRAM works again, still holding a: the mirror's c is newer. */
+	fake_fram_fail(fram, false);
+	zassert_ok(nvm_retry());
+	zassert_ok(read_mirrored(payload));
+	zassert_mem_equal(payload, c, 4);
+
+	/* The next write follows the newest generation in either store. */
+	zassert_ok(nvm_write(&mirrored, a));
+	zassert_equal(sys_get_le32(&fake_fram_memory(fram)[mirrored.address + SLOT_SIZE + 4]), 4,
+		      "after the mirror's 3, in FRAM's older slot");
+	zassert_ok(read_mirrored(payload));
+	zassert_mem_equal(payload, a, 4);
+}
+
+ZTEST(nvm, test_no_fram_at_all_keeps_mirrored_records)
+{
+	uint8_t payload[4];
+
+	/* Like the Nucleo before the part is chosen: FRAM never works. */
+	fake_fram_fail(fram, true);
+	(void)nvm_retry();
+	zassert_equal(read_mirrored(payload), -ENOENT, "the mirror is blank, not failed");
+	zassert_ok(nvm_write(&mirrored, b));
+	zassert_ok(read_mirrored(payload));
+	zassert_mem_equal(payload, b, 4);
+
+	/* An unmirrored record can't be stored anywhere. */
+	zassert_equal(nvm_write(&region, a), -EIO);
+	zassert_mem_equal(read_expect(-EIO), defaults, 4);
+}
+
+ZTEST(nvm, test_a_failed_mirror_leaves_fram)
+{
+	uint8_t payload[4];
+
+	fake_retained_mem_fail(mirror, true);
+	zassert_ok(nvm_write(&mirrored, a), "stored in FRAM");
+	zassert_false(nvm_mirror_available());
+	zassert_true(nvm_available());
+	zassert_ok(read_mirrored(payload));
+	zassert_mem_equal(payload, a, 4);
+}
+
+ZTEST(nvm, test_both_failed_gives_the_default)
+{
+	uint8_t payload[4];
+
+	zassert_ok(nvm_write(&mirrored, a));
+	fake_fram_fail(fram, true);
+	fake_retained_mem_fail(mirror, true);
+	zassert_equal(nvm_write(&mirrored, b), -EIO);
+	zassert_equal(read_mirrored(payload), -EIO);
+	zassert_mem_equal(payload, defaults, 4);
+}
+
+ZTEST(nvm, test_a_corrupt_mirror_copy_is_ignored)
+{
+	uint8_t payload[4];
+
+	zassert_ok(nvm_write(&mirrored, a));
+	zassert_ok(nvm_write(&mirrored, b));
+	mirror_slot(1)[NVM_HEADER_LEN] ^= 0x01;
+	zassert_ok(read_mirrored(payload));
+	zassert_mem_equal(payload, b, 4, "FRAM's copy of b");
+	zassert_true(nvm_mirror_available(), "one bad slot is not a failed mirror");
 }
 
 /* ---- A generated record (nvm/command_ingest.h) ------------------------- */

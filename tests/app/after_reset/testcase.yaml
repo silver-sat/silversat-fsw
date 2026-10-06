@@ -1,0 +1,18 @@
+common:
+  tags:
+    - app
+    - nvm
+
+tests:
+  # The records come back from FRAM.
+  app.after_reset:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+  # FRAM has failed, or isn't fitted (the Nucleo today): the mirrored
+  # records come back from the mirror. One platform keeps CI short.
+  app.after_reset.mirror_only:
+    extra_args:
+      - EXTRA_CFLAGS=-DFRAM_FAILED
+    platform_allow:
+      - native_sim

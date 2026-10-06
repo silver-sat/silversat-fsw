@@ -1,7 +1,7 @@
 # Command ingest (DS-50 to DS-54).
 
 zephyr_library_named(silversat_command_ingest)
-zephyr_library_sources(command_ingest.c)
+zephyr_library_sources(command_ingest.c persist.c)
 
 # The keys (DS-54) become a header in the build directory, never in Git.
 # A flight build refuses the published test keys.

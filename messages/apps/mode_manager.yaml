@@ -59,6 +59,9 @@ housekeeping:
     - name: command_loss
       type: uint32
       description: Times the command-loss timer has fired (DS-46).
+    - name: store_failures
+      type: uint32
+      description: Writes of mode_state or deployment that reached neither FRAM nor its mirror.
     - name: action_failures
       type: uint32
       description: >

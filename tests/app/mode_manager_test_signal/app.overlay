@@ -1,11 +1,26 @@
 /*
  * The test signal (DS-42) is an emulated GPIO pin, active high, so it reads
- * absent until a test drives it.
+ * absent until a test drives it. FRAM and its mirror are fakes
+ * (tests/fakes/).
  */
 
 / {
 	aliases {
 		test-mode-signal = &test_mode_signal;
+		fram = &fake_fram;
+		nvm-mirror = &fake_mirror;
+	};
+
+	fake_fram: fake-fram {
+		compatible = "silversat,fake-fram";
+		status = "okay";
+		size = <DT_SIZE_K(32)>;
+	};
+
+	fake_mirror: fake-mirror {
+		compatible = "silversat,fake-retained-mem";
+		status = "okay";
+		size = <DT_SIZE_K(4)>;
 	};
 
 	test_mode_signal: test-mode-signal {

@@ -22,7 +22,7 @@ FLATSAT    ?= flatsat
 GDB_PORT   ?= 2331
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-quick test-python coverage run build flash clean
+.PHONY: help test test-quick test-python coverage run run-fresh build flash clean
 
 help:  ## Show this list
 	@echo ''
@@ -54,6 +54,10 @@ coverage:  ## Run the tests and write a coverage report
 run:  ## Build and run the application under emulation
 	west build -p -b $(SIM) $(APP) -d $(BUILD_DIR)
 	./$(BUILD_DIR)/zephyr/zephyr.exe
+
+run-fresh:  ## Like run, but with blank FRAM, as a new spacecraft
+	west build -p -b $(SIM) $(APP) -d $(BUILD_DIR)
+	./$(BUILD_DIR)/zephyr/zephyr.exe --eeprom_erase
 
 build:  ## Cross-compile the application for the flatsat board
 	west build -p -b $(BOARD) $(APP) -d $(BUILD_DIR)

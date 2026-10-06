@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.20.0)
 # target_app receives the routed commands.
 set(SS_MESSAGES_EXTRA_APPS ${CMAKE_CURRENT_SOURCE_DIR}/apps)
 
+# The fake FRAM's and mirror's bindings (app.overlay).
+set(FAKES ${CMAKE_CURRENT_SOURCE_DIR}/../../fakes)
+list(APPEND DTS_ROOT ${FAKES})
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(command_ingest_test LANGUAGES C)
 
@@ -19,5 +23,6 @@ add_custom_command(
 add_custom_target(command_ingest_packets DEPENDS ${PACKETS})
 add_dependencies(app command_ingest_packets)
 
-target_sources(app PRIVATE src/main.c ../common/app_test.c)
-target_include_directories(app PRIVATE ../common ${CMAKE_CURRENT_BINARY_DIR}/packets)
+target_sources(app PRIVATE src/main.c ../common/app_test.c ${FAKES}/fake_fram.c
+  ${FAKES}/fake_retained_mem.c)
+target_include_directories(app PRIVATE ../common ${CMAKE_CURRENT_BINARY_DIR}/packets ${FAKES})

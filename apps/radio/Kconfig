@@ -8,6 +8,7 @@ config SS_RADIO
 	select SS_LINK_CODEC
 	select SERIAL
 	select UART_INTERRUPT_DRIVEN
+	select SS_NVM
 	select RING_BUFFER
 	help
 	  Carries ground traffic between the radio's UART (the radio-uart

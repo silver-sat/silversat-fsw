@@ -7,8 +7,9 @@ message struct, command ID, or channel definition by hand.
 
 | File | What it defines | Generated |
 |---|---|---|
-| `common.yaml` | Types shared by every app: the frame tick, app status, events, and enums | `msg/common.h` |
-| `apps/<app>.yaml` | One app's commands and housekeeping | `msg/<app>.h`, and its channels |
+| `common.yaml` | Types shared by every app: the frame tick, app status, events, enums, and data channel types | `msg/common.h` |
+| `apps/<app>.yaml` | One app's commands, housekeeping, data channels, and the internal commands it sends | `msg/<app>.h`, its channels and senders, its share of command routing and housekeeping encoding |
+| `nvm_map.yaml` | FRAM records, each owned by one app | `nvm/<app>.h` |
 
 The generated files are written to `<build>/silversat_msg/` and are never
 committed. To see them, build anything that sets `CONFIG_SS_MESSAGES=y` (for
@@ -129,6 +130,10 @@ nvm_bar_write(&record);  /* 0 once stored; -EIO if FRAM has failed */
 A read always fills the record: when FRAM is blank, missing, or failed, it
 gets the default from the map (DS-75). To change a record's fields, change
 its version too.
+
+Give a small record that matters after a reset `mirror: true`: it is also
+kept in the mirror, the STM32's backup SRAM, so it survives FRAM failing,
+or not being fitted (DS-75). The mirror is 4 KB.
 
 ## Test-only apps
 

@@ -24,6 +24,7 @@
 #include "msg/common.h"
 #include "msg/mode_manager.h"
 #include "msg/radio.h"
+#include "nvm/mode_manager.h"
 #include "silversat/resource_map.h"
 
 #define WAIT K_SECONDS(1)
@@ -423,4 +424,29 @@ ZTEST(mode_manager, test_busy_radio_is_retried_next_major_frame)
 	wake_at(epoch + 5 * TIMEOUT_MS + 3000);
 	zassert_false(radio_next(&cmd, true));
 	zassert_equal(mm_hk().action_failures - failures, 2);
+}
+
+/* ---- What the mode manager stores (DS-41, DS-42, DS-74) ----------------- */
+
+ZTEST(mode_manager, test_the_end_of_deployment_is_stored)
+{
+	struct nvm_deployment deployment;
+
+	/* setup() booted through deploy into safe mode. */
+	zassert_ok(nvm_deployment_read(&deployment));
+	zassert_true(deployment.complete, "later boots start in safe mode, not deploy");
+}
+
+ZTEST(mode_manager, test_every_mode_change_is_stored)
+{
+	struct nvm_mode_state stored;
+
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_ok(nvm_mode_state_read(&stored));
+	zassert_equal(stored.mode, MODE_NOMINAL);
+	zassert_equal(stored.reason, MODE_REASON_GROUND_COMMAND);
+
+	zassert_equal(set_mode(MODE_SAFE), 1);
+	zassert_ok(nvm_mode_state_read(&stored));
+	zassert_equal(stored.mode, MODE_SAFE);
 }

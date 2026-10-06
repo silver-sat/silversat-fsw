@@ -24,6 +24,7 @@
 #include "app_test.h"
 #include "msg/common.h"
 #include "msg/radio.h"
+#include "nvm/radio.h"
 #include "silversat/link.h"
 #include "silversat/link_codec.h"
 #include "silversat/resource_map.h"
@@ -279,4 +280,17 @@ ZTEST(radio_emul, test_unknown_command_is_rejected)
 	zassert_equal(result.cmd_rejected, 1);
 	zassert_equal(result.cmd_accepted, 0);
 	zassert_true(radio_hk().transmit_enabled, "a rejected command changes nothing");
+}
+
+ZTEST(radio_emul, test_the_setting_is_stored)
+{
+	struct nvm_radio_state stored;
+
+	/* A reset must not undo the ground's order (DS-33, DS-46). */
+	set_transmit(false);
+	zassert_ok(nvm_radio_state_read(&stored));
+	zassert_false(stored.transmit_enabled);
+	set_transmit(true);
+	zassert_ok(nvm_radio_state_read(&stored));
+	zassert_true(stored.transmit_enabled);
 }

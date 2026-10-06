@@ -1,11 +1,15 @@
 # Generated message definitions (DS-60, DS-61, DS-68).
 #
-# At build time, generator/msggen.py reads common.yaml and apps/*.yaml and
-# writes C headers and channel definitions into the build directory:
+# At build time, generator/msggen.py reads common.yaml, apps/*.yaml and
+# nvm_map.yaml and writes into the build directory (the docstring at the top
+# of msggen.py says what each file holds):
 #
 #   <build>/silversat_msg/include/msg/common.h
 #   <build>/silversat_msg/include/msg/<app>.h
+#   <build>/silversat_msg/include/nvm/<app>.h   FRAM records (DS-74)
 #   <build>/silversat_msg/src/msg_<app>.c
+#   <build>/silversat_msg/src/cmd_routes.c       only with CONFIG_SS_CMD_ROUTES
+#   <build>/silversat_msg/src/tlm_encode.c       only with CONFIG_SS_TLM_ENCODE
 #
 # Nothing generated is committed. Editing a YAML file or a template reruns
 # the generator on the next build; adding an app's YAML file reruns CMake.

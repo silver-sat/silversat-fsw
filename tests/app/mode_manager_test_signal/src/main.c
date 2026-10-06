@@ -7,10 +7,15 @@
  * tests/app/mode_manager covers the boot without the signal. Here the test
  * signal (an emulated pin, app.overlay) is present before the mode
  * manager's first wakeup, as if the board had been jumpered on the bench.
+ *
+ * Built with DEPLOYED (testcase.yaml), FRAM already records a finished
+ * deployment, so the boot starts in safe mode rather than deploy: a bench
+ * unit after its first deployment must still reach test mode.
  */
 
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/ztest.h>
@@ -18,6 +23,7 @@
 #include "app_test.h"
 #include "msg/common.h"
 #include "msg/mode_manager.h"
+#include "nvm/mode_manager.h"
 #include "silversat/resource_map.h"
 
 #define WAIT K_SECONDS(1)
@@ -77,10 +83,25 @@ static struct mode_state mode_now(void)
 /* The mode after the first wakeup, recorded once: a boot happens once. */
 static struct mode_state after_first_wakeup;
 
+#if defined(DEPLOYED)
+/* Before the mode manager starts: deployment ended on an earlier boot. */
+static int seed(void)
+{
+	const struct nvm_deployment done = {.complete = true};
+
+	return nvm_deployment_write(&done);
+}
+
+SYS_INIT(seed, APPLICATION, 95);
+#define BOOT_MODE MODE_SAFE
+#else
+#define BOOT_MODE MODE_DEPLOY
+#endif
+
 static void *setup(void)
 {
 	k_sleep(K_MSEC(10));
-	zassert_equal(mode_now().mode, MODE_DEPLOY, "every boot starts in deploy");
+	zassert_equal(mode_now().mode, BOOT_MODE, "deploy until deployment has ended once");
 	/* The emulator takes a value only on a pin set up as an input. */
 	zassert_ok(gpio_pin_configure_dt(&test_signal, GPIO_INPUT));
 	zassert_ok(gpio_emul_input_set(test_signal.port, test_signal.pin, 1));

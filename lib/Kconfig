@@ -22,6 +22,13 @@ config SS_CMD_COUNTER
 	  and the per-key-slot floor (DS-50 stage 3, DS-53). The floor is
 	  held in RAM until the FRAM service exists.
 
+config SS_CMD_COUNTER_RAM_FLOORS
+	bool
+	default y if SS_CMD_COUNTER && !SS_COMMAND_INGEST
+	help
+	  The counter floors in RAM, for a build without command ingest,
+	  which keeps them in FRAM (DS-53, DS-70).
+
 config SS_CMD_DELIVER
 	bool "Command delivery"
 	depends on SS_MESSAGES
@@ -42,12 +49,14 @@ config SS_NVM
 	depends on SS_MESSAGES
 	select CRC
 	select EEPROM if $(dt_alias_enabled,fram)
+	select RETAINED_MEM if $(dt_alias_enabled,nvm-mirror)
 	help
 	  Records that survive a reset, in FRAM through Zephyr's EEPROM
 	  API: two slots per record with generation and CRC, and the
 	  record's default whenever it can't be read (DS-70, DS-71,
 	  DS-75). A board without the fram alias runs with FRAM
-	  unavailable.
+	  unavailable. Records marked mirror: are also kept in the
+	  nvm-mirror retained memory (the STM32's backup SRAM).
 
 config SS_LINK
 	bool "Link frame queues"

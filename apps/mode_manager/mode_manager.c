@@ -28,8 +28,14 @@
  * apps detect (low battery, a failed app) will arrive as requests, starting
  * with health.
  *
- * Until FRAM, the mode is held in RAM, so every reset starts in deploy mode
- * again and waits out the delay (DS-41, DS-45 ask for it to persist).
+ * Across a reset (DS-41, DS-42, DS-74): two FRAM records, also kept in the
+ * mirror (DS-75). deployment says whether the separation delay has ever
+ * ended; once it has, every boot starts in safe mode instead of deploy, so
+ * deploy mode is used once in the mission. mode_state holds the mode and
+ * reason, written at every change, so a spacecraft that was in safe mode
+ * keeps its reason (for example, command loss) through a reset. With
+ * neither FRAM nor the mirror, both read as their defaults: deploy mode
+ * again, which waits out the delay, late but never early.
  */
 
 #include <errno.h>
@@ -43,6 +49,7 @@
 
 #include "msg/common.h"
 #include "msg/mode_manager.h"
+#include "nvm/mode_manager.h"
 #include "silversat/resource_map.h"
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(mode_manager_sub);
@@ -74,15 +81,20 @@ struct transition {
 BUILD_ASSERT(MODE_REASON_MAX < 32, "the reasons mask has 32 bits");
 
 /*
- * A mode change not listed here is refused. No row leads into deploy or
- * test: the spacecraft starts in deploy at boot, and only the test signal
- * at boot leads to test (DS-42).
+ * A mode change not listed here is refused. No row leads into deploy: the
+ * spacecraft starts there at boot, until deployment has ended once. Only
+ * the test signal, read once at boot, leads into test (DS-42).
  */
 static const struct transition transitions[] = {
 	/* After separation, wait out the delay, then wait for the ground (DS-42). */
 	{MODE_DEPLOY, MODE_SAFE, BIT(MODE_REASON_DEPLOYMENT_COMPLETE)},
-	/* On the ground, the test signal skips the delay. */
+	/*
+	 * On the ground, the test signal at boot skips the delay. After the
+	 * first deployment, later boots start in safe mode, and the signal
+	 * still selects test mode there, so a bench unit keeps it.
+	 */
 	{MODE_DEPLOY, MODE_TEST, BIT(MODE_REASON_TEST_SIGNAL)},
+	{MODE_SAFE, MODE_TEST, BIT(MODE_REASON_TEST_SIGNAL)},
 	/* Anything may put the spacecraft in safe mode (DS-41). */
 	{MODE_NOMINAL, MODE_SAFE, ANY_REASON},
 	{MODE_TEST, MODE_SAFE, ANY_REASON},
@@ -180,6 +192,16 @@ static bool allowed(uint8_t from, uint8_t to, uint8_t reason)
 	return false;
 }
 
+/* Store the mode and reason, for the next boot. */
+static void store_mode(void)
+{
+	const struct nvm_mode_state record = {.mode = state.mode, .reason = state.reason};
+
+	if (nvm_mode_state_write(&record) != 0) {
+		hk.store_failures++;
+	}
+}
+
 /*
  * Change to mode `to` for `reason`, if the transitions table allows it.
  * Setting the current mode changes nothing and succeeds (DS-35). Returns 0,
@@ -204,6 +226,7 @@ static int change_mode(uint8_t to, uint8_t reason)
 	state.since_met_ms = now_met_ms;
 	hk.transitions++;
 	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
+	store_mode();
 	(void)run_actions(ON_ENTER, to);
 	return 0;
 }
@@ -237,9 +260,42 @@ static void check_boot(void)
 /* The separation delay (DS-42, DS-45), timed from MET. */
 static void check_separation_delay(void)
 {
-	if (state.mode == MODE_DEPLOY && now_met_ms >= SEPARATION_DELAY_MS) {
-		(void)change_mode(MODE_SAFE, MODE_REASON_DEPLOYMENT_COMPLETE);
+	const struct nvm_deployment done = {.complete = true};
+
+	if (state.mode != MODE_DEPLOY || now_met_ms < SEPARATION_DELAY_MS) {
+		return;
 	}
+	/*
+	 * Stored before the mode changes: if the power fails between the two,
+	 * the next boot still starts in safe mode, never in deploy again.
+	 */
+	if (nvm_deployment_write(&done) != 0) {
+		hk.store_failures++;
+	}
+	(void)change_mode(MODE_SAFE, MODE_REASON_DEPLOYMENT_COMPLETE);
+}
+
+/*
+ * The mode to start in (DS-42): deploy, mode_chan's initial value, until
+ * the separation delay has ended once; after that, safe mode. A spacecraft
+ * that was in safe mode keeps its reason through the reset (DS-41).
+ */
+static void boot_mode(void)
+{
+	struct nvm_deployment deployment;
+	struct nvm_mode_state stored;
+
+	(void)zbus_chan_read(&mode_chan, &state, K_FOREVER);
+	(void)nvm_deployment_read(&deployment);
+	if (!deployment.complete) {
+		return;
+	}
+	(void)nvm_mode_state_read(&stored);
+	state.mode = MODE_SAFE;
+	state.reason = stored.mode == MODE_SAFE && stored.reason <= MODE_REASON_MAX
+			       ? stored.reason
+			       : MODE_REASON_BOOT;
+	state.since_met_ms = 0;
 }
 
 static void check_command_loss(void)
@@ -314,8 +370,7 @@ static void mode_manager_main(void *a, void *b, void *c)
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
-	/* The boot mode is mode_chan's initial value, deploy (DS-42). */
-	(void)zbus_chan_read(&mode_chan, &state, K_FOREVER);
+	boot_mode();
 	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
 	publish_hk();
 

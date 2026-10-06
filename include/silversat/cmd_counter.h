@@ -65,10 +65,10 @@ enum cmd_counter_result cmd_counter_check(uint64_t counter, uint64_t floor);
 enum cmd_counter_result cmd_counter_accept(uint8_t slot, uint64_t counter);
 
 /*
- * Floor storage. Until the FRAM service exists (DS-70), the floors are
- * held in RAM: they return to CMD_COUNTER_EPOCH_MS at every boot, which is
- * the degraded behavior DS-75 defines for a failed FRAM. Only command
- * ingest uses these (DS-74).
+ * Floor storage. Command ingest keeps the floors in FRAM, with a copy in
+ * the mirror (apps/command_ingest/persist.c, DS-74, DS-75). A build without
+ * command ingest gets floors in RAM (floor_store_ram.c), which return to
+ * CMD_COUNTER_EPOCH_MS at every boot.
  */
 int floor_store_get(uint8_t slot, uint64_t *floor);
 int floor_store_set(uint8_t slot, uint64_t floor);

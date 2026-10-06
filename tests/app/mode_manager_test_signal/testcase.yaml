@@ -15,3 +15,10 @@ tests:
       - EXTRA_CFLAGS=-DLEAVE_TEST_FOR=MODE_SAFE
     platform_allow:
       - native_sim
+  # A later boot, after deployment: it starts in safe mode, and the signal
+  # still selects test mode.
+  app.mode_manager_test_signal.deployed:
+    extra_args:
+      - EXTRA_CFLAGS=-DDEPLOYED
+    platform_allow:
+      - native_sim

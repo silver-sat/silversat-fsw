@@ -236,6 +236,14 @@ When a record's fields change, its version changes, and the new software can't r
 
 A part that has failed can accept a write and store nothing. Reading the slot back before reporting success turns that into a detected failure, so command ingest never sends an ACK for a floor that wasn't stored.
 
+### Why a store that fails doesn't refuse the command
+
+Command ingest stores a new floor before it sends the ACK, so a reset can't reopen the replay window. If neither FRAM nor the mirror takes the write, refusing the command would be safe against replays but would leave a spacecraft with failed storage unable to be commanded at all, including the command that retries FRAM. So the floor is kept in RAM, which still refuses replays until the next reset, and the failure is counted for the ground. That is DS-75's rule: losing FRAM costs security and information, never control.
+
+### Why one generation across FRAM and the mirror
+
+A write gives both copies the same generation, the next after the newest in either store, and a read takes the newest from either. If FRAM fails for a while and comes back, its records are older than the mirror's, and the mirror's win without any special recovery step.
+
 ### Why the boot log has no head pointer
 
 A separate head index is a second value that can tear independently of the entry it points to. Each entry carries its own boot number; the newest valid entry is found by scanning.

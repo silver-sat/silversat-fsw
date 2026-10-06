@@ -22,12 +22,16 @@
 #include <zephyr/ztest.h>
 
 #include "app_test.h"
+#include "fake_fram.h"
+#include "fake_retained_mem.h"
 #include "msg/command_ingest.h"
 #include "msg/common.h"
 #include "msg/target_app.h"
+#include "nvm/command_ingest.h"
 #include "packets.h"
 #include "silversat/cmd_counter.h"
 #include "silversat/link.h"
+#include "silversat/nvm.h"
 #include "silversat/resource_map.h"
 
 #define WAIT K_SECONDS(1)
@@ -168,6 +172,10 @@ static void drain_queues(void)
 static void reset(void *fixture)
 {
 	ARG_UNUSED(fixture);
+	/* FRAM and the mirror working (a test may have failed them). */
+	fake_fram_fail(DEVICE_DT_GET(FRAM_NODE), false);
+	fake_retained_mem_fail(DEVICE_DT_GET(NVM_MIRROR_NODE), false);
+	zassert_ok(nvm_retry());
 	drain_queues();
 	target_catch_up();
 	set_mode(MODE_SAFE);
@@ -609,4 +617,64 @@ ZTEST(command_ingest, test_refused_command_is_not_ground_contact)
 	uplink(PKT_FORGED);
 	run_one_frame();
 	zassert_false(contact_now().contacted);
+}
+
+/* ---- What command ingest stores (DS-53, DS-54, DS-74, DS-75) ------------ */
+
+static struct nvm_command_state stored(void)
+{
+	struct nvm_command_state record;
+
+	zassert_ok(nvm_command_state_read(&record));
+	return record;
+}
+
+ZTEST(command_ingest, test_an_accepted_command_is_stored)
+{
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_SET_LEVEL_7_COUNTER, "ok"));
+	zassert_equal(stored().floor_slot0, PKT_SET_LEVEL_7_COUNTER,
+		      "stored before the ACK, so a reset can't reopen the replay window");
+	zassert_true(stored().contacted);
+	zassert_equal(stored().last_accepted_met_ms, ci_hk().last_accepted_met_ms);
+}
+
+ZTEST(command_ingest, test_the_floor_store_writes_through)
+{
+	/* Each floor is stored by the floor store itself, not later. */
+	zassert_ok(floor_store_set(1, CMD_COUNTER_EPOCH_MS + 42));
+	zassert_equal(stored().floor_slot1, CMD_COUNTER_EPOCH_MS + 42);
+	zassert_ok(floor_store_set(0, CMD_COUNTER_EPOCH_MS + 43));
+	zassert_equal(stored().floor_slot0, CMD_COUNTER_EPOCH_MS + 43);
+}
+
+ZTEST(command_ingest, test_a_rotation_is_stored)
+{
+	uplink(PKT_ARM_1);
+	uplink(PKT_ROTATE_1);
+	run_one_frame();
+	zassert_equal(ci_hk().active_slot, 1);
+	zassert_equal(stored().active_slot, 1, "a reset keeps the new key (DS-54)");
+}
+
+ZTEST(command_ingest, test_a_command_still_runs_if_it_cannot_be_stored)
+{
+	struct target_app_cmd cmd;
+	uint32_t failures = ci_hk().store_failures;
+
+	/* Neither FRAM nor the mirror works. */
+	fake_fram_fail(DEVICE_DT_GET(FRAM_NODE), true);
+	fake_retained_mem_fail(DEVICE_DT_GET(NVM_MIRROR_NODE), true);
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("ACK", PKT_SET_LEVEL_7_COUNTER, "ok"),
+			  "commanding goes on (DS-75)");
+	zassert_true(target_next(&cmd));
+	zassert_true(ci_hk().store_failures > failures);
+
+	/* The floor is kept in RAM: a replay is still refused this boot. */
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_str_equal(next_reply(), expected("NAK", PKT_SET_LEVEL_7_COUNTER, "replay"));
 }

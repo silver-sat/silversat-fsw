@@ -3,9 +3,16 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * The FRAM is the devicetree alias "fram" (the resource map's FRAM_NODE),
- * read and written through Zephyr's EEPROM API. A board without the alias
- * runs with FRAM unavailable: every read returns the record's default.
+ * Two stores hold records in the same two-slot form:
+ *
+ *   FRAM     the devicetree alias "fram" (the resource map's FRAM_NODE),
+ *            through Zephyr's EEPROM API. Every record.
+ *   mirror   the alias "nvm-mirror" (NVM_MIRROR_NODE), through Zephyr's
+ *            retained memory API: the STM32's backup SRAM. Only the records
+ *            marked mirror: in nvm_map.yaml (DS-75's second tier).
+ *
+ * A board without an alias runs without that store: a record kept in
+ * neither reads as its default.
  */
 
 #include <errno.h>
@@ -15,6 +22,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/eeprom.h>
+#include <zephyr/drivers/retained_mem.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
@@ -23,12 +31,21 @@
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
 
-static const struct device *const fram = DEVICE_DT_GET_OR_NULL(FRAM_NODE);
+enum store {
+	FRAM,
+	MIRROR,
+	STORES,
+};
+
+static const struct device *const devices[STORES] = {
+	[FRAM] = DEVICE_DT_GET_OR_NULL(FRAM_NODE),
+	[MIRROR] = DEVICE_DT_GET_OR_NULL(NVM_MIRROR_NODE),
+};
 
 /* One operation at a time (DS-70). Covers the flags and counts too. */
 K_MUTEX_DEFINE(nvm_lock);
 
-static bool available;
+static bool available[STORES];
 static struct nvm_stats stats;
 
 /* What a slot was found to hold. */
@@ -39,9 +56,35 @@ enum slot_state {
 	SLOT_VALID,
 };
 
-static uint16_t slot_address(const struct nvm_region *region, int slot)
+/* The newest valid record in one store. */
+struct found {
+	int slot; /* 0 or 1; -1 if none */
+	uint32_t generation;
+};
+
+/* Whether this store holds this region, and is working. */
+static bool in_use(const struct nvm_region *region, enum store s)
 {
-	return region->address + (uint16_t)(slot * NVM_SLOT_SIZE(region->size));
+	return available[s] && (s == FRAM || region->mirrored);
+}
+
+static off_t slot_address(const struct nvm_region *region, enum store s, int slot)
+{
+	uint16_t base = s == FRAM ? region->address : region->mirror_address;
+
+	return base + slot * NVM_SLOT_SIZE(region->size);
+}
+
+static int store_read(enum store s, off_t offset, uint8_t *buf, size_t len)
+{
+	return s == FRAM ? eeprom_read(devices[s], offset, buf, len)
+			 : retained_mem_read(devices[s], offset, buf, len);
+}
+
+static int store_write(enum store s, off_t offset, const uint8_t *buf, size_t len)
+{
+	return s == FRAM ? eeprom_write(devices[s], offset, buf, len)
+			 : retained_mem_write(devices[s], offset, buf, len);
 }
 
 /* Newer by serial-number arithmetic, so the generation may wrap (DS-71). */
@@ -50,10 +93,10 @@ static bool newer(uint32_t a, uint32_t b)
 	return (int32_t)(a - b) > 0;
 }
 
-/* The device failed: stop using it until nvm_retry(). */
-static void fail(void)
+/* The store failed: stop using it until nvm_retry(). */
+static void fail(enum store s)
 {
-	available = false;
+	available[s] = false;
 	stats.errors++;
 }
 
@@ -61,13 +104,13 @@ static void fail(void)
  * Read and check one slot into buf (NVM_SLOT_SIZE(region->size) bytes).
  * Returns the slot's state, or -EIO if the device failed.
  */
-static int read_slot(const struct nvm_region *region, int slot, uint8_t *buf,
+static int read_slot(const struct nvm_region *region, enum store s, int slot, uint8_t *buf,
 		     uint32_t *generation)
 {
 	size_t len = NVM_SLOT_SIZE(region->size);
 	size_t crc_at = len - NVM_CRC_LEN;
 
-	if (eeprom_read(fram, slot_address(region, slot), buf, len) != 0) {
+	if (store_read(s, slot_address(region, s, slot), buf, len) != 0) {
 		return -EIO;
 	}
 	if (sys_get_le16(&buf[0]) != NVM_MAGIC) {
@@ -91,94 +134,124 @@ static int read_slot(const struct nvm_region *region, int slot, uint8_t *buf,
 }
 
 /*
- * Find the newest valid slot. Returns its index (0 or 1), -ENOENT if
- * neither is valid, -EBADMSG if both are bad, or -EIO if the device failed.
- * The newest slot's bytes are left in bufs[index].
+ * Find a store's newest valid slot, leaving its bytes in bufs[slot].
+ * Returns 0 (found->slot is -1 if neither slot is valid), -EBADMSG if both
+ * slots are bad, or -EIO if the device failed.
  */
-static int newest_slot(const struct nvm_region *region,
-		       uint8_t bufs[2][NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)], uint32_t *generation)
+static int newest_slot(const struct nvm_region *region, enum store s,
+		       uint8_t bufs[2][NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)], struct found *found)
 {
 	int state[2];
 	uint32_t gen[2] = {0, 0};
 
 	for (int slot = 0; slot < 2; slot++) {
-		state[slot] = read_slot(region, slot, bufs[slot], &gen[slot]);
+		state[slot] = read_slot(region, s, slot, bufs[slot], &gen[slot]);
 		if (state[slot] < 0) {
 			return state[slot];
 		}
 	}
-	if (state[0] == SLOT_VALID && state[1] == SLOT_VALID) {
-		int slot = newer(gen[1], gen[0]) ? 1 : 0;
-
-		*generation = gen[slot];
-		return slot;
-	}
+	found->slot = -1;
 	for (int slot = 0; slot < 2; slot++) {
-		if (state[slot] == SLOT_VALID) {
-			*generation = gen[slot];
-			return slot;
+		if (state[slot] == SLOT_VALID &&
+		    (found->slot < 0 || newer(gen[slot], found->generation))) {
+			found->slot = slot;
+			found->generation = gen[slot];
 		}
 	}
-	return (state[0] == SLOT_BAD && state[1] == SLOT_BAD) ? -EBADMSG : -ENOENT;
+	if (found->slot < 0 && state[0] == SLOT_BAD && state[1] == SLOT_BAD) {
+		return -EBADMSG;
+	}
+	return 0;
 }
 
 int nvm_read(const struct nvm_region *region, uint8_t *payload)
 {
 	uint8_t bufs[2][NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
-	uint32_t generation;
-	int rc = -EIO;
-	int slot;
+	bool looked = false;
+	bool have = false;
+	uint32_t best = 0;
 
 	k_mutex_lock(&nvm_lock, K_FOREVER);
 	stats.reads++;
-	if (available) {
-		slot = newest_slot(region, bufs, &generation);
-		if (slot >= 0) {
-			memcpy(payload, &bufs[slot][NVM_HEADER_LEN], region->size);
-			k_mutex_unlock(&nvm_lock);
-			return 0;
+	for (enum store s = FRAM; s < STORES; s++) {
+		struct found found;
+
+		if (!in_use(region, s)) {
+			continue;
 		}
-		if (slot == -ENOENT) {
-			rc = -ENOENT;
-		} else {
-			/* A device error, or both slots corrupt: FRAM has failed (DS-75). */
-			fail();
+		if (newest_slot(region, s, bufs, &found) != 0) {
+			/* A device error, or both slots corrupt: the store has failed (DS-75). */
+			fail(s);
+			continue;
+		}
+		looked = true;
+		/* Both copies of a write carry one generation: the newest wins. */
+		if (found.slot >= 0 && (!have || newer(found.generation, best))) {
+			memcpy(payload, &bufs[found.slot][NVM_HEADER_LEN], region->size);
+			best = found.generation;
+			have = true;
+			if (s == MIRROR) {
+				stats.from_mirror++;
+			}
 		}
 	}
-	memcpy(payload, region->defaults, region->size);
-	stats.defaults_used++;
+	if (!have) {
+		memcpy(payload, region->defaults, region->size);
+		stats.defaults_used++;
+	}
 	k_mutex_unlock(&nvm_lock);
-	return rc;
+	if (have) {
+		return 0;
+	}
+	return looked ? -ENOENT : -EIO;
+}
+
+/* Write one store's copy over its older slot, and read it back. */
+static bool write_copy(const struct nvm_region *region, enum store s, int target, uint8_t *out)
+{
+	uint8_t check[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
+	size_t len = NVM_SLOT_SIZE(region->size);
+	off_t at = slot_address(region, s, target);
+
+	/* Committed when the read-back matches: the new slot's CRC is valid. */
+	if (store_write(s, at, out, len) != 0 || store_read(s, at, check, len) != 0 ||
+	    memcmp(out, check, len) != 0) {
+		fail(s);
+		return false;
+	}
+	return true;
 }
 
 int nvm_write(const struct nvm_region *region, const uint8_t *payload)
 {
 	uint8_t bufs[2][NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
-	uint8_t check[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
-	size_t len = NVM_SLOT_SIZE(region->size);
-	size_t crc_at = len - NVM_CRC_LEN;
+	uint8_t out[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
+	size_t crc_at = NVM_SLOT_SIZE(region->size) - NVM_CRC_LEN;
+	struct found found[STORES];
+	bool any = false;
 	uint32_t generation = 0;
-	uint8_t *out;
-	int target;
-	int newest;
+	bool stored = false;
 
 	k_mutex_lock(&nvm_lock, K_FOREVER);
 	stats.writes++;
-	if (!available) {
-		k_mutex_unlock(&nvm_lock);
-		return -EIO;
-	}
-	newest = newest_slot(region, bufs, &generation);
-	if (newest == -EIO) {
-		fail();
-		k_mutex_unlock(&nvm_lock);
-		return -EIO;
-	}
-	/* Write over the slot not holding the newest record; slot 0 if neither does. */
-	target = newest >= 0 ? 1 - newest : 0;
-	generation = newest >= 0 ? generation + 1 : 1;
 
-	out = bufs[target];
+	/* The next generation after the newest record in either store. */
+	for (enum store s = FRAM; s < STORES; s++) {
+		found[s].slot = -1;
+		if (!in_use(region, s)) {
+			continue;
+		}
+		if (newest_slot(region, s, bufs, &found[s]) == -EIO) {
+			fail(s);
+			continue;
+		}
+		if (found[s].slot >= 0 && (!any || newer(found[s].generation, generation))) {
+			generation = found[s].generation;
+			any = true;
+		}
+	}
+	generation = any ? generation + 1 : 1;
+
 	sys_put_le16(NVM_MAGIC, &out[0]);
 	out[2] = region->version;
 	out[3] = region->size;
@@ -186,26 +259,35 @@ int nvm_write(const struct nvm_region *region, const uint8_t *payload)
 	memcpy(&out[NVM_HEADER_LEN], payload, region->size);
 	sys_put_le32(crc32_c(0, out, crc_at, true, true), &out[crc_at]);
 
-	/* Committed when the read-back matches: the new slot's CRC is valid. */
-	if (eeprom_write(fram, slot_address(region, target), out, len) != 0 ||
-	    eeprom_read(fram, slot_address(region, target), check, len) != 0 ||
-	    memcmp(out, check, len) != 0) {
-		fail();
-		k_mutex_unlock(&nvm_lock);
-		return -EIO;
+	/* In each store, over the slot not holding its newest record. */
+	for (enum store s = FRAM; s < STORES; s++) {
+		if (in_use(region, s) &&
+		    write_copy(region, s, found[s].slot >= 0 ? 1 - found[s].slot : 0, out)) {
+			stored = true;
+		}
 	}
 	k_mutex_unlock(&nvm_lock);
-	return 0;
+	return stored ? 0 : -EIO;
 }
 
-bool nvm_available(void)
+static bool is_available(enum store s)
 {
 	bool result;
 
 	k_mutex_lock(&nvm_lock, K_FOREVER);
-	result = available;
+	result = available[s];
 	k_mutex_unlock(&nvm_lock);
 	return result;
+}
+
+bool nvm_available(void)
+{
+	return is_available(FRAM);
+}
+
+bool nvm_mirror_available(void)
+{
+	return is_available(MIRROR);
 }
 
 int nvm_retry(void)
@@ -213,8 +295,10 @@ int nvm_retry(void)
 	int rc;
 
 	k_mutex_lock(&nvm_lock, K_FOREVER);
-	available = fram != NULL && device_is_ready(fram);
-	rc = available ? 0 : -EIO;
+	for (enum store s = FRAM; s < STORES; s++) {
+		available[s] = devices[s] != NULL && device_is_ready(devices[s]);
+	}
+	rc = available[FRAM] ? 0 : -EIO;
 	k_mutex_unlock(&nvm_lock);
 	return rc;
 }
