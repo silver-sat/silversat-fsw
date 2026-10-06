@@ -118,6 +118,16 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define WATCHDOG_NODE DT_ALIAS(watchdog0)
 
 /*
+ * The FRAM (DS-70), on SPI once the part is chosen. A board without the
+ * alias runs with FRAM unavailable: every record reads as its default
+ * (DS-75).
+ *
+ *   fram   native_sim: eeprom0, Zephyr's simulated EEPROM (32 KB)
+ *          nucleo_f446re: none yet (no part chosen)
+ */
+#define FRAM_NODE DT_ALIAS(fram)
+
+/*
  * Bytes buffered between the UART interrupt and the radio app, each way.
  * At 19200 baud, 1024 bytes is about half a second: five minor frames.
  */

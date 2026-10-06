@@ -1,0 +1,104 @@
+{% import "_macros.j2" as m %}
+{% set guard = "SILVERSAT_NVM_" ~ app.name | upper ~ "_H_" %}
+{{ m.banner("messages/nvm_map.yaml") }}
+
+#ifndef {{ guard }}
+#define {{ guard }}
+
+/*
+ * {{ app.name }}'s FRAM records (DS-74). Only {{ app.name }} includes this
+ * header, so only it can read or write these records; other apps learn
+ * their contents through {{ app.name }}'s channels.
+{% if not regions %}
+ *
+ * {{ app.name }} has no FRAM records.
+{% endif %}
+ */
+{% if regions %}
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <zephyr/sys/byteorder.h>
+
+#include "msg/common.h"
+#include "silversat/nvm.h"
+{% endif %}
+{% macro put(f, offset) %}
+{% if f.wire_kind == "bool" %}
+	out[{{ offset }}] = record->{{ f.name }} ? 1 : 0;
+{% elif f.wire_kind == "byte" %}
+	out[{{ offset }}] = (uint8_t)record->{{ f.name }};
+{% else %}
+	sys_put_{{ f.wire_kind }}(({{ "uint%d_t" % (f.wire_size * 8) }})record->{{ f.name }}, &out[{{ offset }}]);
+{% endif %}
+{% endmacro %}
+{% macro get(f, offset) %}
+{% if f.wire_kind == "bool" %}
+	record->{{ f.name }} = in[{{ offset }}] != 0;
+{% elif f.wire_kind == "byte" %}
+	record->{{ f.name }} = ({{ f.ctype }})in[{{ offset }}];
+{% else %}
+	record->{{ f.name }} = ({{ f.ctype }})sys_get_{{ f.wire_kind }}(&in[{{ offset }}]);
+{% endif %}
+{% endmacro %}
+{% for r in regions %}
+
+{{ r.description | comment }}
+struct {{ r.struct.name }} {
+{{ m.struct_body(r.fields) -}}
+};
+
+/* Version {{ r.version }}: {{ r.size }} bytes, two slots of {{ r.slot_size }} at 0x{{ "%04x" % r.address }}. */
+static const uint8_t {{ r.struct.name }}_defaults[{{ r.size }}] = {
+	{{ r.default_bytes(enums) | map("string") | join(", ") }},
+};
+
+static const struct nvm_region {{ r.struct.name }}_region = {
+	.name = "{{ r.name }}",
+	.address = 0x{{ "%04x" % r.address }},
+	.size = {{ r.size }},
+	.version = {{ r.version }},
+	.defaults = {{ r.struct.name }}_defaults,
+};
+
+/* Little-endian, field by field, with no padding: never a copy of the struct (DS-64). */
+static inline void {{ r.struct.name }}_encode(const struct {{ r.struct.name }} *record, uint8_t *out)
+{
+{% for f, offset in r.struct.wire_layout %}
+{{ put(f, offset) -}}
+{% endfor %}
+}
+
+static inline void {{ r.struct.name }}_decode(const uint8_t *in, struct {{ r.struct.name }} *record)
+{
+{% for f, offset in r.struct.wire_layout %}
+{{ get(f, offset) -}}
+{% endfor %}
+}
+
+/*
+ * Read the record. Returns 0 if it came from FRAM, -ENOENT if FRAM holds
+ * none (the default), or -EIO if FRAM is unavailable (the default). Either
+ * way *record holds a record.
+ */
+static inline int {{ r.struct.name }}_read(struct {{ r.struct.name }} *record)
+{
+	uint8_t payload[{{ r.size }}];
+	int rc = nvm_read(&{{ r.struct.name }}_region, payload);
+
+	{{ r.struct.name }}_decode(payload, record);
+	return rc;
+}
+
+/* Store the record. Returns 0 once it is stored, or -EIO if FRAM has failed. */
+static inline int {{ r.struct.name }}_write(const struct {{ r.struct.name }} *record)
+{
+	uint8_t payload[{{ r.size }}];
+
+	{{ r.struct.name }}_encode(record, payload);
+	return nvm_write(&{{ r.struct.name }}_region, payload);
+}
+{% endfor %}
+
+#endif /* {{ guard }} */

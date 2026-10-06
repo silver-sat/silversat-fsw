@@ -358,11 +358,80 @@ class App:
         return names
 
 
+# FRAM regions (DS-71, DS-74): nvm_map.yaml. Must match silversat/nvm.h.
+NVM_HEADER_LEN = 8
+NVM_CRC_LEN = 4
+NVM_PAYLOAD_MAX = 128
+NVM_ALIGN = 16              # each region starts on a 16-byte boundary, for readable dumps
+NVM_FRAM_SIZE_MAX = 0x10000  # struct nvm_region holds addresses as uint16
+
+
+@dataclass
+class NvmRegion:
+    """One FRAM record and its place in the map."""
+    name: str
+    owner: "App"
+    version: int
+    description: str
+    fields: list[Field]
+    defaults: dict             # field name -> YAML default value
+    address: int = 0
+    source: str = ""
+
+    @property
+    def struct(self):
+        return Struct(f"nvm_{self.name}", self.description, self.fields)
+
+    @property
+    def size(self):
+        """Payload bytes."""
+        return self.struct.wire_size
+
+    @property
+    def slot_size(self):
+        return NVM_HEADER_LEN + self.size + NVM_CRC_LEN
+
+    @property
+    def region_size(self):
+        return 2 * self.slot_size
+
+    def default_bytes(self, enums):
+        """The encoded default payload, little-endian, as the C encoder writes it."""
+        out = bytearray()
+        for f in self.fields:
+            value = self.defaults.get(f.name)
+            if f.enum:
+                names = {v.name: v.value for v in enums[f.enum].values}
+                number = names[value] if value is not None else \
+                    min(v.value for v in enums[f.enum].values)
+                out += number.to_bytes(f.wire_size, "little")
+            elif f.type == "bool":
+                out += bytes([1 if value else 0])
+            else:
+                out += int(value or 0).to_bytes(f.wire_size, "little",
+                                                signed=f.type.startswith("int"))
+        return bytes(out)
+
+
+@dataclass
+class NvmMap:
+    fram_size: int
+    regions: list[NvmRegion]
+
+    @property
+    def used(self):
+        return max((r.address + r.region_size for r in self.regions), default=0)
+
+    def regions_of(self, app):
+        return [r for r in self.regions if r.owner is app]
+
+
 @dataclass
 class Definitions:
     enums: list[Enum]
     structs: list[Struct]
     apps: list[App]
+    nvm: NvmMap = field(default_factory=lambda: NvmMap(0, []))
 
     @property
     def wakeup_apps(self):
@@ -758,6 +827,54 @@ def _resolve_sends(apps):
             app.sends.append(Send(target, command))
 
 
+def _parse_nvm_map(path, apps, enums):
+    """nvm_map.yaml: FRAM regions laid out in file order (DS-74)."""
+    data = _load_yaml(path)
+    where = str(path)
+    _check_keys(data, where, ("fram_size", "regions"))
+    fram_size = _integer(data["fram_size"], f"{where}: fram_size", 1, NVM_FRAM_SIZE_MAX)
+    by_name = {a.name: a for a in apps}
+    regions = []
+    address = 0
+    for i, node in enumerate(_sequence(data, "regions", where)):
+        rwhere = f"{where}: regions[{i}]"
+        _check_keys(node, rwhere, ("name", "owner", "version", "description", "fields"))
+        name = _name(node["name"], f"{rwhere}.name")
+        owner = by_name.get(node["owner"])
+        if owner is None:
+            raise DefinitionError(
+                f"{rwhere}.owner: there is no app {node['owner']!r}; a region's owner is "
+                "the one app that writes it (DS-74)")
+        defaults = {}
+        field_nodes = []
+        for j, fnode in enumerate(_sequence(node, "fields", rwhere)):
+            fnode = dict(fnode) if isinstance(fnode, dict) else fnode
+            if isinstance(fnode, dict) and "default" in fnode:
+                defaults[fnode.get("name")] = fnode.pop("default")
+            field_nodes.append(fnode)
+        fields = _parse_fields(field_nodes, f"{rwhere}.fields", enums, allow_empty=False)
+        for j, f in enumerate(fields):
+            if f.type in FLOAT_TYPES:
+                raise DefinitionError(
+                    f"{rwhere}.fields[{j}]: {f.type} is not supported in FRAM records yet")
+            if f.name in defaults:
+                _initial_value(f, defaults[f.name], f"{rwhere}.fields[{j}].default", enums)
+        region = NvmRegion(name, owner, _integer(node["version"], f"{rwhere}.version", 1, 255),
+                           _text(node["description"], f"{rwhere}.description"), fields,
+                           defaults, address, where)
+        if region.size > NVM_PAYLOAD_MAX:
+            raise DefinitionError(
+                f"{rwhere}: {region.size} bytes; a record holds at most {NVM_PAYLOAD_MAX}")
+        regions.append(region)
+        address += -(-region.region_size // NVM_ALIGN) * NVM_ALIGN
+    _check_unique(regions, "name", "region", where)
+    nvm = NvmMap(fram_size, regions)
+    if nvm.used > fram_size:
+        raise DefinitionError(
+            f"{where}: the regions need {nvm.used} bytes, more than fram_size ({fram_size})")
+    return nvm
+
+
 def load_definitions(defs_dir, extra_app_dirs=()):
     """Read and check every definition under defs_dir, plus the app files in
     each of extra_app_dirs. Raises DefinitionError."""
@@ -812,7 +929,9 @@ def load_definitions(defs_dir, extra_app_dirs=()):
                     "rename one of them")
             defined[n] = source
 
-    return Definitions(enums, structs, apps)
+    nvm_path = defs_dir / "nvm_map.yaml"
+    nvm = _parse_nvm_map(nvm_path, apps, by_name) if nvm_path.is_file() else NvmMap(0, [])
+    return Definitions(enums, structs, apps, nvm)
 
 
 # --- Output ---------------------------------------------------------------
@@ -854,6 +973,11 @@ def render(defs):
         env.get_template("cmd_routes.c.j2").render(defs=defs)
     outputs[Path("src/tlm_encode.c")] = \
         env.get_template("tlm_encode.c.j2").render(defs=defs)
+    # One per app, with or without records, so the build knows the outputs
+    # from the app files alone.
+    for app in defs.apps:
+        outputs[Path(f"include/nvm/{app.name}.h")] = env.get_template("nvm_owner.h.j2").render(
+            app=app, regions=defs.nvm.regions_of(app), enums=defs.enums_by_name)
     return outputs
 
 
@@ -906,6 +1030,21 @@ def command_dictionary(defs):
                            for f, offset in app.housekeeping.wire_layout],
             },
         } for app in defs.apps],
+        # The FRAM map, for the ground's dump decoder (DS-74).
+        "nvm": {
+            "fram_size": defs.nvm.fram_size,
+            "header_len": NVM_HEADER_LEN,
+            "crc_len": NVM_CRC_LEN,
+            "regions": [{
+                "name": r.name,
+                "owner": r.owner.name,
+                "address": r.address,
+                "slot_size": r.slot_size,
+                "version": r.version,
+                "size": r.size,
+                "fields": [_hk_entry(f, offset, defs) for f, offset in r.struct.wire_layout],
+            } for r in defs.nvm.regions],
+        },
     }
 
 

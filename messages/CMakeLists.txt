@@ -44,6 +44,8 @@ set(msg_tlm ${MSG_GEN_DIR}/src/tlm_encode.c)
 foreach(def ${msg_app_defs})
   get_filename_component(app ${def} NAME_WE)
   list(APPEND msg_headers ${MSG_GEN_DIR}/include/msg/${app}.h)
+  # Each app's FRAM records (DS-74), from nvm_map.yaml; empty if it has none.
+  list(APPEND msg_headers ${MSG_GEN_DIR}/include/nvm/${app}.h)
   list(APPEND msg_sources ${MSG_GEN_DIR}/src/msg_${app}.c)
 endforeach()
 
@@ -52,6 +54,7 @@ add_custom_command(
   COMMAND ${PYTHON_EXECUTABLE} ${MSG_GENERATOR} --defs ${MSG_DEFS_DIR} ${msg_extra_args}
           --out ${MSG_GEN_DIR}
   DEPENDS ${MSG_GENERATOR} ${msg_templates} ${MSG_DEFS_DIR}/common.yaml ${msg_app_defs}
+          ${MSG_DEFS_DIR}/nvm_map.yaml
   COMMENT "Generating message headers and channels from messages/*.yaml"
 )
 

@@ -112,6 +112,24 @@ zbus buffer (`CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE`, set in
 channel. `include/silversat/resource_map.h` uses `APP_COUNT` and
 `APP_WAKEUP_COUNT` from `msg/common.h` to check the size of the buffer pool.
 
+## FRAM records
+
+Records that survive a reset are defined in `nvm_map.yaml` (DS-71, DS-74),
+each with one owning app, a version, and fields with defaults. For an owner
+`foo`, the generator writes `nvm/foo.h`, which only `foo` includes:
+
+```c
+struct nvm_bar record;
+
+nvm_bar_read(&record);   /* 0 from FRAM; -ENOENT or -EIO: the default */
+record.count++;
+nvm_bar_write(&record);  /* 0 once stored; -EIO if FRAM has failed */
+```
+
+A read always fills the record: when FRAM is blank, missing, or failed, it
+gets the default from the map (DS-75). To change a record's fields, change
+its version too.
+
 ## Test-only apps
 
 App ids run from 1 to 63: the frame manager's report to health has one

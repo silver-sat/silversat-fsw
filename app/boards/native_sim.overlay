@@ -14,6 +14,11 @@
 	aliases {
 		radio-uart = &uart1;
 		test-mode-signal = &test_mode_signal;
+		/*
+		 * The FRAM (DS-70) is the board's simulated EEPROM, kept in a
+		 * file (eeprom.bin), so records survive between runs.
+		 */
+		fram = &eeprom0;
 	};
 
 	/*

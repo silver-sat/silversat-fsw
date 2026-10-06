@@ -1,0 +1,72 @@
+# FRAM region map (DS-71, DS-74, DS-75).
+#
+# Every record in FRAM is defined here, once. The generator (msggen.py)
+# lays the regions out in order, checks they fit, and writes for each owner
+# nvm/<owner>.h: the record's struct, its encoding, its flash default, and
+# the region handle, which only the owner includes. Nobody assigns
+# addresses by hand, and only the owner writes its records.
+#
+# Each record is stored twice (two slots) with a header and a CRC, so a
+# write torn by a power failure never loses the previous value. A record
+# that can't be read, because FRAM is blank, corrupt or missing, reads as
+# its default (DS-75). Change a record's fields only with a new version:
+# a stored record of another version reads as the default.
+#
+# Field types are those of the message definitions: bool, uint8 to uint64,
+# int8 to int64, or an enum from common.yaml. Each field may give a
+# default; otherwise it defaults to 0, false, or the enum's first value.
+
+# Until the part is chosen, a 256 Kbit SPI FRAM (for example, Infineon
+# FM25V02A or Fujitsu MB85RS256).
+fram_size: 32768
+
+regions:
+  - name: command_state
+    owner: command_ingest
+    version: 1
+    description: >
+      The command counter floor for each key slot, the active key slot,
+      and the last ground contact (DS-46, DS-53, DS-54). Written when a
+      command is accepted, before its ACK.
+    fields:
+      - name: floor_slot0
+        type: uint64
+        default: 1767225600000   # CMD_COUNTER_EPOCH_MS, the mission epoch
+        description: Key slot 0's counter floor.
+      - name: floor_slot1
+        type: uint64
+        default: 1767225600000
+        description: Key slot 1's counter floor.
+      - name: active_slot
+        type: uint8
+        description: The key slot in use (DS-54).
+      - name: contacted
+        type: bool
+        description: True once the ground has been heard from (DS-46).
+      - name: last_accepted_met_ms
+        type: int64
+        description: Mission elapsed time of the last accepted command.
+
+  - name: mode_state
+    owner: mode_manager
+    version: 1
+    description: The current mode and why, so safe mode survives a reset (DS-41).
+    fields:
+      - name: mode
+        type: mode
+        default: safe
+        description: The mode when last changed.
+      - name: reason
+        type: mode_reason
+        description: Why the spacecraft entered it.
+
+  - name: deployment
+    owner: mode_manager
+    version: 1
+    description: >
+      Whether the separation delay is over, so deploy mode is used only
+      once in the mission (DS-42, DS-45).
+    fields:
+      - name: complete
+        type: bool
+        description: True once the separation delay has ended.

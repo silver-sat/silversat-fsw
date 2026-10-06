@@ -1,0 +1,16 @@
+/*
+ * The FRAM is a fake the tests can fail, tear, and corrupt
+ * (tests/fakes/fake_fram.c).
+ */
+
+/ {
+	aliases {
+		fram = &fake_fram;
+	};
+
+	fake_fram: fake-fram {
+		compatible = "silversat,fake-fram";
+		status = "okay";
+		size = <DT_SIZE_K(32)>;
+	};
+};
