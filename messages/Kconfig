@@ -44,6 +44,6 @@ configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE
 # publishes. include/silversat/resource_map.h computes the number and
 # fails the build, saying what to set here, if this is too small (DS-07).
 configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE
-	default 36
+	default 40
 
 endif # SS_MESSAGES

@@ -75,6 +75,9 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
  */
 #define HEALTH_PRIORITY PRIORITY_HOUSEKEEPING
 
+/* Woken once a major frame to scrub one FRAM region (DS-70). */
+#define NVM_PRIORITY PRIORITY_HOUSEKEEPING
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 #define FRAME_MANAGER_STACK_SIZE 1024
@@ -83,6 +86,7 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define TELEMETRY_OUTPUT_STACK_SIZE 1024 /* one link frame */
 #define MODE_MANAGER_STACK_SIZE     1024
 #define HEALTH_STACK_SIZE           1024
+#define NVM_STACK_SIZE              1536 /* one link frame, one FRAM slot */
 
 /* ---- UART assignments --------------------------------------------------- */
 
@@ -300,6 +304,17 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.protected = true,
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,
+		.auto_retry_cap = 0,
+	},
+	/*
+	 * Not protected: it isn't on the ground command path, and the apps'
+	 * own records carry on without it. A stall stops it; the ground can
+	 * start it again (DS-43).
+	 */
+	[APP_ID_NVM] = {
+		.protected = false,
+		.stall_threshold = 3,
+		.reenable = REENABLE_GROUND,
 		.auto_retry_cap = 0,
 	},
 #if defined(SS_TEST_APP_ATTRS)

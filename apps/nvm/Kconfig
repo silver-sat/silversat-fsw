@@ -1,0 +1,11 @@
+# The nvm app (DS-70, DS-74, DS-75).
+
+config SS_NVM_APP
+	bool "nvm app"
+	depends on SS_MESSAGES
+	select SS_NVM
+	select SS_LINK
+	help
+	  Looks after the FRAM service: publishes its housekeeping, takes
+	  the ground's retry and dump commands, and scrubs one region a
+	  major frame.

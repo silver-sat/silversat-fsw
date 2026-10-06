@@ -29,7 +29,7 @@ struct link_frame {
 /* From the radio app to command ingest: signed ground commands. */
 extern struct k_msgq uplink_msgq;
 
-/* From command ingest (and later telemetry output) to the radio app. */
+/* From command ingest, telemetry output and the nvm app (dumps) to the radio app. */
 extern struct k_msgq downlink_msgq;
 
 #endif /* SILVERSAT_LINK_H_ */

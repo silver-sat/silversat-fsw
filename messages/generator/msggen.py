@@ -37,6 +37,8 @@ Output, in <out>/:
     include/nvm/<app>.h      the app's FRAM records: struct, encoding, default,
                              region handle, typed read and write (DS-74);
                              one per app, empty if it has none
+    include/nvm/map.h        every region's place, read-only, for the nvm
+                             app's scrubbing (DS-74)
 
 --json FILE also writes the dictionary (DS-61): every command with its
 arguments, ranges and modes; each app's housekeeping layout; who sends which
@@ -1032,6 +1034,7 @@ def render(defs):
         env.get_template("cmd_routes.c.j2").render(defs=defs)
     outputs[Path("src/tlm_encode.c")] = \
         env.get_template("tlm_encode.c.j2").render(defs=defs)
+    outputs[Path("include/nvm/map.h")] = env.get_template("nvm_map.h.j2").render(nvm=defs.nvm)
     # One per app, with or without records, so the build knows the outputs
     # from the app files alone.
     for app in defs.apps:

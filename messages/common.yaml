@@ -57,6 +57,17 @@ enums:
           deployment wait, doesn't deploy the antenna, and accepts ground
           commands.
 
+  - name: nvm_store
+    type: uint8
+    description: Where the FRAM service keeps records (DS-70, DS-75), for the dump command.
+    values:
+      - name: fram
+        value: 0
+        description: The FRAM.
+      - name: mirror
+        value: 1
+        description: The mirror, the STM32's backup SRAM.
+
   - name: mode_reason
     type: uint8
     description: Why the spacecraft entered its current mode (DS-41). Carried in the beacon (DS-69).

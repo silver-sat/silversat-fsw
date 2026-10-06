@@ -62,9 +62,22 @@ add_custom_command(
   COMMENT "Encoding the housekeeping vectors with tools/telemetry.py"
 )
 
+# A FRAM image, laid out by the ground's dump decoder.
+add_custom_command(
+  OUTPUT ${VECTOR_DIR}/nvm_vectors.h
+  COMMAND ${PYTHON_EXECUTABLE} ${TOOLS}/nvm_dump.py
+          --vectors ${CMAKE_CURRENT_SOURCE_DIR}/nvm_vectors.yaml
+          --c-image ${VECTOR_DIR}/nvm_vectors.h
+  DEPENDS ${TOOLS}/nvm_dump.py ${TOOLS}/telemetry.py ${TOOLS}/link_codec.py
+          ${TOOLS}/command_text.py ${CMAKE_CURRENT_SOURCE_DIR}/nvm_vectors.yaml
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../messages/nvm_map.yaml
+  COMMENT "Building the FRAM image vectors with tools/nvm_dump.py"
+)
+
 add_custom_target(libs_vectors
   DEPENDS ${VECTOR_DIR}/signed_vectors.h ${VECTOR_DIR}/route_vectors.h
-          ${VECTOR_DIR}/link_vectors.h ${VECTOR_DIR}/tlm_vectors.h)
+          ${VECTOR_DIR}/link_vectors.h ${VECTOR_DIR}/tlm_vectors.h
+          ${VECTOR_DIR}/nvm_vectors.h)
 add_dependencies(app libs_vectors)
 
 target_sources(app PRIVATE src/auth.c src/counter.c src/route.c src/link_codec.c

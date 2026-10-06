@@ -1,0 +1,10 @@
+common:
+  tags:
+    - app
+    - nvm
+
+tests:
+  app.nvm:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64

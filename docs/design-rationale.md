@@ -256,6 +256,14 @@ What a reset loses is everything since the last checkpoint. FRAM endures about 1
 
 A separate head index is a second value that can tear independently of the entry it points to. Each entry carries its own boot number; the newest valid entry is found by scanning.
 
+### Why the scrub counts bad slots but doesn't repair them
+
+The nvm app could copy the good slot over a bad one. But then it would be writing another app's record, which is the one thing DS-74 forbids: two writers of one record can race, and a repair written while the owner is mid-write could put back the older value. A bad slot already does no harm, since a read takes the other slot, and the owner's next write goes over the bad slot anyway (writes go to the slot not holding the newest record). So the scrub only reads and counts, and the count tells the ground whether FRAM is wearing or being hit, which is what the scrub is for.
+
+### Why a dump sends raw bytes, decoded on the ground
+
+The dump command could decode records on board and send their fields. Sending bytes as stored instead keeps the flight side to a few lines that can't misread anything, shows the ground exactly what is in the part (torn writes, stale versions and blank slots included), and works for a record the flight software no longer understands. The ground already has the map, in the JSON dictionary, so `tools/nvm_dump.py` does the decoding. One packet per command keeps the app from holding the downlink: the ground asks for the parts it wants, and a full downlink refuses the command rather than dropping other traffic.
+
 ### Why operation without FRAM
 
 FRAM is unproven in flight for this team. SilverSat 1 lessons recommended keeping it on a non-critical bus; SilverSat 2 reverses that (SPI removes the I2C hang concern) but requires that FRAM loss degrades operation rather than ending it: flash defaults, backup SRAM mirrors, and defined per-record fallbacks.

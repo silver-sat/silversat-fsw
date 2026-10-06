@@ -11,5 +11,6 @@ rsource "radio/Kconfig"
 rsource "telemetry_output/Kconfig"
 rsource "mode_manager/Kconfig"
 rsource "health/Kconfig"
+rsource "nvm/Kconfig"
 
 endmenu

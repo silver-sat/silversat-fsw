@@ -12,6 +12,7 @@ add_subdirectory_ifdef(CONFIG_SS_RADIO radio)
 add_subdirectory_ifdef(CONFIG_SS_TELEMETRY_OUTPUT telemetry_output)
 add_subdirectory_ifdef(CONFIG_SS_MODE_MANAGER mode_manager)
 add_subdirectory_ifdef(CONFIG_SS_HEALTH health)
+add_subdirectory_ifdef(CONFIG_SS_NVM_APP nvm)
 
 if(CONFIG_SS_MESSAGES)
   # Compiles the resource map's build checks in every build that has

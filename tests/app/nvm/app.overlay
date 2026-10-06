@@ -1,0 +1,23 @@
+/*
+ * FRAM and its mirror are fakes the tests can fail and corrupt
+ * (tests/fakes/).
+ */
+
+/ {
+	aliases {
+		fram = &fake_fram;
+		nvm-mirror = &fake_mirror;
+	};
+
+	fake_fram: fake-fram {
+		compatible = "silversat,fake-fram";
+		status = "okay";
+		size = <DT_SIZE_K(32)>;
+	};
+
+	fake_mirror: fake-mirror {
+		compatible = "silversat,fake-retained-mem";
+		status = "okay";
+		size = <DT_SIZE_K(4)>;
+	};
+};

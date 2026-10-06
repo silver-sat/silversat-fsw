@@ -17,6 +17,10 @@
  * Rings (DS-71's boot log) are entries in the same slot form, each written
  * once at its number modulo the ring's length, in FRAM and, if the ring is
  * mirrored, in the mirror too.
+ *
+ * For the nvm app, nvm_check() reads every slot of a region and counts the
+ * bad ones, and nvm_raw_read() reads a store's bytes as they are. Neither
+ * writes.
  */
 
 #include <errno.h>
@@ -342,6 +346,63 @@ int nvm_ring_read(const struct nvm_region *region, uint8_t index, uint8_t *paylo
 	}
 	/* Never written, another version, or corrupt; or no store to look in. */
 	return looked ? -ENOENT : -EIO;
+}
+
+int nvm_raw_read(uint8_t store, uint16_t address, uint8_t *buf, size_t len)
+{
+	enum store s = store == NVM_STORE_MIRROR ? MIRROR : FRAM;
+	ssize_t size;
+	int rc;
+
+	if (store > NVM_STORE_MIRROR) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&nvm_lock, K_FOREVER);
+	if (!available[s]) {
+		k_mutex_unlock(&nvm_lock);
+		return -EIO;
+	}
+	size = s == FRAM ? (ssize_t)eeprom_get_size(devices[s]) : retained_mem_size(devices[s]);
+	if (size < 0 || (size_t)address + len > (size_t)size) {
+		k_mutex_unlock(&nvm_lock);
+		return -EINVAL;
+	}
+	rc = store_read(s, address, buf, len);
+	if (rc != 0) {
+		fail(s);
+		rc = -EIO;
+	}
+	k_mutex_unlock(&nvm_lock);
+	return rc;
+}
+
+int nvm_check(const struct nvm_region *region)
+{
+	uint8_t buf[NVM_SLOT_SIZE(NVM_PAYLOAD_MAX)];
+	int slots = region->ring > 0 ? region->ring : 2;
+	int bad = 0;
+
+	k_mutex_lock(&nvm_lock, K_FOREVER);
+	for (enum store s = FRAM; s < STORES; s++) {
+		if (!in_use(region, s)) {
+			continue;
+		}
+		for (int slot = 0; slot < slots; slot++) {
+			uint32_t generation;
+			int state = read_slot(region, s, slot, buf, &generation);
+
+			if (state < 0) {
+				fail(s);
+				k_mutex_unlock(&nvm_lock);
+				return -EIO;
+			}
+			if (state == SLOT_BAD) {
+				bad++;
+			}
+		}
+	}
+	k_mutex_unlock(&nvm_lock);
+	return bad;
 }
 
 static bool is_available(enum store s)

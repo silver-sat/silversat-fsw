@@ -1,0 +1,45 @@
+{% import "_macros.j2" as m %}
+{{ m.banner("messages/nvm_map.yaml") }}
+
+#ifndef SILVERSAT_NVM_MAP_H_
+#define SILVERSAT_NVM_MAP_H_
+
+/*
+ * Every FRAM region's place, read-only, for the nvm app's scrubbing and
+ * dump checks (DS-74). Only the nvm app includes this. It checks records
+ * and never writes one: each owner writes its own records, through its
+ * nvm/<owner>.h, and that is where the defaults are.
+ */
+
+#include "silversat/nvm.h"
+
+/* Bytes of FRAM and of the mirror the map assumes, and uses. */
+#define NVM_FRAM_SIZE {{ nvm.fram_size }}
+#define NVM_FRAM_USED {{ nvm.used }}
+#define NVM_MIRROR_SIZE {{ nvm.mirror_size }}
+#define NVM_MIRROR_USED {{ nvm.mirror_used }}
+
+#define NVM_REGION_COUNT {{ nvm.regions | length }}
+{% if nvm.regions %}
+
+static const struct nvm_region nvm_map[NVM_REGION_COUNT] = {
+{% for r in nvm.regions %}
+	/* {{ r.name }}, owned by {{ r.owner.name }} */
+	{
+		.name = "{{ r.name }}",
+		.address = 0x{{ "%04x" % r.address }},
+		.size = {{ r.size }},
+		.version = {{ r.version }},
+{% if r.mirrored %}
+		.mirrored = true,
+		.mirror_address = 0x{{ "%04x" % r.mirror_address }},
+{% endif %}
+{% if r.ring %}
+		.ring = {{ r.ring }},
+{% endif %}
+	},
+{% endfor %}
+};
+{% endif %}
+
+#endif /* SILVERSAT_NVM_MAP_H_ */

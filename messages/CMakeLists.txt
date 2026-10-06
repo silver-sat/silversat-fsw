@@ -7,6 +7,7 @@
 #   <build>/silversat_msg/include/msg/common.h
 #   <build>/silversat_msg/include/msg/<app>.h
 #   <build>/silversat_msg/include/nvm/<app>.h   FRAM records (DS-74)
+#   <build>/silversat_msg/include/nvm/map.h      every region, read-only
 #   <build>/silversat_msg/src/msg_<app>.c
 #   <build>/silversat_msg/src/cmd_routes.c       only with CONFIG_SS_CMD_ROUTES
 #   <build>/silversat_msg/src/tlm_encode.c       only with CONFIG_SS_TLM_ENCODE
@@ -39,7 +40,7 @@ foreach(dir ${SS_MESSAGES_EXTRA_APPS})
 endforeach()
 file(GLOB msg_templates CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generator/templates/*.j2)
 
-set(msg_headers ${MSG_GEN_DIR}/include/msg/common.h)
+set(msg_headers ${MSG_GEN_DIR}/include/msg/common.h ${MSG_GEN_DIR}/include/nvm/map.h)
 set(msg_sources)
 # Routing for every command; compiled only into builds with command ingest.
 set(msg_routes ${MSG_GEN_DIR}/src/cmd_routes.c)
