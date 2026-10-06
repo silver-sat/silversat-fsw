@@ -15,17 +15,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The emulated tests, one job per native_sim platform, in parallel: each
-  # job has half the builds and its own compiler cache, so the wall time
-  # roughly halves with nothing left out. Building, not running, is most of
-  # the time.
+  # The emulated tests, in four jobs in parallel: each native_sim platform,
+  # in two halves (twister --subset). Each build spends about a minute in
+  # CMake configuration, which no compiler cache speeds up, so the way to a
+  # short run is fewer builds per job. Nothing is left out: together the
+  # four jobs run every test on both platforms.
   native_sim_platform:
-    name: native_sim tests (${{ matrix.width }})
+    name: native_sim tests (${{ matrix.width }}, part ${{ matrix.part }})
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        width: [32-bit, 64-bit]
+        part: [1, 2]
         include:
           - width: 32-bit
             platform: native_sim
@@ -62,7 +65,7 @@ jobs:
           toolchains: arm-zephyr-eabi
           # Each job builds different code, so each keeps its own compiler
           # cache; sharing one key restored another job's cache, all misses.
-          ccache-cache-key: native-sim-tests-${{ matrix.width }}
+          ccache-cache-key: native-sim-tests-${{ matrix.width }}-part-${{ matrix.part }}
           ccache-max-size: 1GB
 
       - name: Install message generator requirements
@@ -70,13 +73,13 @@ jobs:
 
       - name: Run the Python tests
         # Once is enough: they don't depend on the platform.
-        if: matrix.platform == 'native_sim/native/64'
+        if: matrix.platform == 'native_sim/native/64' && matrix.part == 1
         working-directory: silversat-fsw
         run: make test-python
 
       - name: Run twister
         working-directory: silversat-fsw
-        run: make twister PLATFORMS=${{ matrix.platform }}
+        run: make twister PLATFORMS=${{ matrix.platform }} SUBSET=${{ matrix.part }}/2
 
       - name: Compiler cache statistics
         if: always()
@@ -86,7 +89,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: twister-results-${{ matrix.width }}
+          name: twister-results-${{ matrix.width }}-part-${{ matrix.part }}
           path: |
             silversat-fsw/twister-out/twister.xml
             silversat-fsw/twister-out/twister.log
@@ -94,8 +97,8 @@ jobs:
           if-no-files-found: ignore
 
   # The check the branch rules require is named "native_sim tests". This job
-  # carries that name and passes only if every platform job passed, so the
-  # rules don't change when platforms do.
+  # carries that name and passes only if all four jobs passed, so the rules
+  # don't change when the jobs do.
   native_sim:
     name: native_sim tests
     needs: native_sim_platform

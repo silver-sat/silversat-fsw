@@ -16,9 +16,11 @@ BUILD_DIR  ?= build
 REPO_ROOT  := $(shell pwd)
 VERBOSITY  ?= -v
 SANITIZERS ?= --enable-asan --enable-ubsan
-# The platforms `make twister` tests. CI runs one per job, in parallel:
-#   make twister PLATFORMS=native_sim
+# The platforms `make twister` tests, and which part of the tests. CI runs
+# each platform in two halves, four jobs in parallel:
+#   make twister PLATFORMS=native_sim SUBSET=1/2
 PLATFORMS  ?= $(SIM) $(SIM)/native/64
+SUBSET     ?=
 
 # Where the flatsat lives. Overridable:  make flash FLATSAT=other-host
 FLATSAT    ?= flatsat
@@ -39,7 +41,7 @@ test: test-python twister  ## Run every test: Python, then emulated
 
 twister:  ## Run the emulated tests on PLATFORMS (both native_sim widths)
 	west twister $(foreach p,$(PLATFORMS),-p $(p)) -T $(TESTS) --inline-logs \
-	  $(VERBOSITY) $(SANITIZERS)
+	  $(VERBOSITY) $(SANITIZERS) $(if $(SUBSET),--subset $(SUBSET))
 
 test-quick: test-python  ## Run only the 64-bit tests (faster while iterating)
 	west twister -p $(SIM)/native/64 -T $(TESTS) --inline-logs \
