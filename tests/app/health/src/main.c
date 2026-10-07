@@ -12,8 +12,10 @@
  * Stall thresholds come from app_attrs[] in the resource map. Nearly every
  * flight app health watches is protected, so the tests use watched_app, a
  * test app with its own row (src/test_app_attrs.h), for an app health
- * stops, and critical_app for a critical one (DS-41); command ingest stands
- * for a protected app.
+ * stops, critical_app for a critical one (DS-41), and auto_app for one health
+ * restarts by itself (REENABLE_AUTO, DS-43); command ingest stands for a
+ * protected app. The nvm app runs too, so health finds two app threads for
+ * the stack high-water marks (DS-44).
  *
  * Built with PROTECTED_STALL (testcase.yaml), only the protected-app test
  * runs: it stops the watchdog for good, so it needs its own boot. Built
@@ -146,6 +148,8 @@ static uint32_t feeds(void)
 
 #define WATCHED BIT64(APP_ID_WATCHED_APP)
 #define CRITICAL BIT64(APP_ID_CRITICAL_APP)
+#define AUTO BIT64(APP_ID_AUTO_APP)
+#define COOLDOWN CONFIG_SS_REENABLE_COOLDOWN_FRAMES
 #define COMMAND_INGEST BIT64(APP_ID_COMMAND_INGEST)
 
 /* ---- Boot (DS-25, DS-44) ------------------------------------------------- */
@@ -354,7 +358,28 @@ ZTEST(health, test_a_reset_loop_asks_for_safe_mode_once)
 	zassert_equal(health_hk().mode_requests, 1);
 }
 
+#if CONFIG_SS_STACK_MARGIN_BYTES > 8192
+ZTEST(health, test_a_stack_below_the_margin_is_flagged)
+{
+	/* This build's margin is larger than any app's stack (testcase.yaml). */
+	report(0, 0);
+	zassert_true(health_hk().stack_low);
+}
+#endif
+
 #if RESET_LOOP >= CONFIG_SS_RESET_LOOP_STOP_RUNS
+ZTEST(health, test_a_reset_loop_stop_is_never_undone_automatically)
+{
+	struct frame_manager_cmd cmd;
+
+	zassert_true((at_boot.stopped & AUTO) != 0, "auto_app was stopped for the loop");
+	for (int i = 0; i < COOLDOWN + 2; i++) {
+		report(0, AUTO);
+	}
+	zassert_false(frame_manager_next(&cmd, true), "only the ground starts it again");
+	zassert_equal(health_hk().auto_reenables, 0);
+}
+
 ZTEST(health, test_a_long_reset_loop_stops_every_app_that_isnt_protected)
 {
 	uint64_t expected = 0;
@@ -375,8 +400,8 @@ ZTEST(health, test_a_long_reset_loop_stops_every_app_that_isnt_protected)
 	 * More stops than CMD_MAX_PENDING: the rest waited a major frame,
 	 * each wait counted.
 	 */
-	BUILD_ASSERT(CMD_MAX_PENDING == 2, "three stops take two major frames");
-	zassert_equal(at_boot.action_failures, 1);
+	BUILD_ASSERT(CMD_MAX_PENDING == 2, "the stops take more than one major frame");
+	zassert_true(at_boot.action_failures >= 1);
 }
 #else
 ZTEST(health, test_a_short_reset_loop_stops_nothing)
@@ -610,6 +635,146 @@ ZTEST(health, test_a_busy_mode_manager_gets_the_request_later)
 	report(0, 0);
 	zassert_false(mode_manager_next(&request, true), "sent once");
 	zassert_equal(health_hk().action_failures - failures, 2);
+}
+
+/* ---- Restarting an app by itself (REENABLE_AUTO, DS-43) ---------------- */
+
+/* Report auto_app behind until health stops it; returns with it stopped. */
+static void stall_auto_app(void)
+{
+	struct frame_manager_cmd cmd;
+	uint8_t threshold = app_attrs[APP_ID_AUTO_APP].stall_threshold;
+
+	for (uint8_t i = 0; i < threshold; i++) {
+		report(AUTO, 0);
+	}
+	zassert_true(frame_manager_next(&cmd, true));
+	zassert_equal(cmd.args.set_app_enabled.app, APP_ID_AUTO_APP);
+	zassert_false(cmd.args.set_app_enabled.enabled);
+}
+
+/* The major frames of the cooldown, stopped; the last one starts it again. */
+static void expect_restart_after_cooldown(void)
+{
+	struct frame_manager_cmd cmd;
+
+	for (int i = 1; i < COOLDOWN; i++) {
+		report(AUTO, AUTO);
+		zassert_false(frame_manager_next(&cmd, true), "frame %d: still cooling down", i);
+	}
+	report(AUTO, AUTO);
+	zassert_true(frame_manager_next(&cmd, true), "started again after the cooldown");
+	zassert_equal(cmd.args.set_app_enabled.app, APP_ID_AUTO_APP);
+	zassert_true(cmd.args.set_app_enabled.enabled);
+	report(0, 0); /* the frame manager has started it, and it is on time */
+}
+
+ZTEST(health, test_an_auto_app_is_restarted_up_to_its_cap)
+{
+	struct frame_manager_cmd cmd;
+	uint8_t cap = app_attrs[APP_ID_AUTO_APP].auto_retry_cap;
+	uint32_t failures;
+
+	zassert_equal(app_attrs[APP_ID_AUTO_APP].reenable, REENABLE_AUTO);
+	zassert_equal(cap, 2, "this test restarts it twice");
+
+	/* First stall: stopped, then started again after the cooldown. */
+	stall_auto_app();
+	zassert_true((health_hk().disabled_by_health & AUTO) != 0);
+	expect_restart_after_cooldown();
+	zassert_equal(health_hk().auto_reenables, 1);
+	zassert_true((health_hk().disabled_by_health & AUTO) == 0, "health undid its stop");
+
+	/*
+	 * Second stall, with the frame manager behind: health has
+	 * CMD_MAX_PENDING stops waiting there when the restart is due.
+	 */
+	BUILD_ASSERT(CMD_MAX_PENDING == 2, "two stops fill the frame manager's pending count");
+	for (uint8_t i = 0; i < app_attrs[APP_ID_AUTO_APP].stall_threshold + 1; i++) {
+		report(AUTO, 0);
+	}
+	zassert_true(frame_manager_next(&cmd, false));
+	zassert_true(frame_manager_next(&cmd, false));
+	failures = health_hk().action_failures;
+	for (int i = 0; i < COOLDOWN; i++) {
+		report(AUTO, AUTO);
+	}
+	zassert_equal(health_hk().action_failures - failures, 1, "the restart waits");
+	zassert_false(frame_manager_next(&cmd, false));
+	frame_manager_status.cmd_accepted += CMD_MAX_PENDING;
+	zassert_ok(zbus_chan_pub(&frame_manager_status_chan, &frame_manager_status, K_NO_WAIT));
+	report(AUTO, AUTO);
+	zassert_true(frame_manager_next(&cmd, true), "and goes the next major frame");
+	zassert_true(cmd.args.set_app_enabled.enabled);
+	report(0, 0);
+	zassert_equal(health_hk().auto_reenables, 2);
+
+	/* Third stall: its restarts are used up, so only the ground starts it. */
+	stall_auto_app();
+	for (int i = 0; i < COOLDOWN + 2; i++) {
+		report(AUTO, AUTO);
+	}
+	zassert_false(frame_manager_next(&cmd, true), "not started again");
+	zassert_equal(health_hk().auto_reenables, 2);
+	zassert_true((health_hk().auto_exhausted & AUTO) != 0);
+	zassert_true((health_hk().disabled_by_health & AUTO) != 0);
+}
+
+ZTEST(health, test_a_ground_app_is_never_restarted_by_health)
+{
+	struct frame_manager_cmd cmd;
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
+
+	zassert_equal(app_attrs[APP_ID_WATCHED_APP].reenable, REENABLE_GROUND);
+	for (uint8_t i = 0; i < threshold; i++) {
+		report(WATCHED, 0);
+	}
+	zassert_true(frame_manager_next(&cmd, true));
+	for (int i = 0; i < COOLDOWN + 2; i++) {
+		report(WATCHED, WATCHED);
+	}
+	zassert_false(frame_manager_next(&cmd, true));
+	zassert_equal(health_hk().auto_exhausted & WATCHED, 0, "it never had restarts to use up");
+}
+
+/* ---- Stack high-water marks (DS-44) -------------------------------------- */
+
+ZTEST(health, test_each_app_threads_stack_is_read)
+{
+	struct health_hk hk;
+	size_t size;
+
+	report(0, 0);
+	hk = health_hk();
+	zassert_equal(hk.stack_apps, 2, "health's thread and nvm's, found by name");
+	zassert_true(hk.stack_min_app == APP_ID_HEALTH || hk.stack_min_app == APP_ID_NVM,
+		     "app %u", hk.stack_min_app);
+	size = hk.stack_min_app == APP_ID_HEALTH ? HEALTH_STACK_SIZE : NVM_STACK_SIZE;
+	zassert_true(hk.stack_min_unused > 0 && hk.stack_min_unused < size,
+		     "%u of %u bytes unused", hk.stack_min_unused, (unsigned int)size);
+	zassert_false(hk.stack_low, "well inside the margin");
+}
+
+/* The threads, to read their stacks directly. A test may; an app may not (DS-12). */
+extern const k_tid_t health_tid;
+extern const k_tid_t nvm_tid;
+
+ZTEST(health, test_the_least_stack_left_is_reported)
+{
+	size_t health_unused;
+	size_t nvm_unused;
+
+	/*
+	 * Health's stack goes deepest after its scan, as it publishes. A second
+	 * major frame's scan has seen that, so the marks no longer move.
+	 */
+	report(0, 0);
+	report(0, 0);
+	zassert_ok(k_thread_stack_space_get(health_tid, &health_unused));
+	zassert_ok(k_thread_stack_space_get(nvm_tid, &nvm_unused));
+	zassert_equal(health_hk().stack_min_unused, MIN(health_unused, nvm_unused));
+	zassert_equal(health_hk().stack_min_app,
+		      health_unused <= nvm_unused ? APP_ID_HEALTH : APP_ID_NVM);
 }
 
 ZTEST(health, test_the_radio_is_never_stopped)

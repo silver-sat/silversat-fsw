@@ -140,6 +140,12 @@ Health asks the mode manager for safe mode with `request_mode`, a command marked
 
 A request may give only a reason another app detects: low battery, a reset loop, a failed app. The transitions table allows deploy to safe for `deployment_complete`, and safe to test for `test_signal`, because the mode manager itself decides those, at the end of the separation delay and once at boot. An app able to give those reasons could end deploy mode early or enter test mode in flight. Writing down which reasons are requests closes that hole in one line.
 
+### How health finds each app's stack
+
+Each app's thread is a static object in the app's own file, and DS-12 forbids reaching into another app's directory, so health can't name it in C. Instead every app defines its thread as `K_THREAD_DEFINE(<app>_tid, ...)`, Zephyr names the thread after it, and the generator writes `app_thread_name()` from the app list. Health walks Zephyr's thread list once a major frame and matches names. A convention only works if everyone follows it, so a test checks every app's directory.
+
+Health reports the smallest margin and which app has it, not every app's, because health's housekeeping must fit the 64-byte zbus buffer every message shares (DS-07). The ground learns which app to look at; the others have more room.
+
 ### Why a reset loop is graded
 
 After the first deployment, every boot starts in safe mode anyway (DS-41), so "boot into safe mode after repeated short runs" adds little by itself. The request still records `reset_loop` as the reason, so the ground knows why. If the loop goes on in safe mode, the cause is something safe mode still runs, so health also stops every app it can (the ones that aren't protected) and leaves the spacecraft with only the apps it can't do without, waiting for the ground. Counting from the boot log means nothing new is stored, and a log entry that's missing ends the count: health never acts on a loop it can't see.

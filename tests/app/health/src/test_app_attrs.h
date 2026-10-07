@@ -22,3 +22,12 @@
 	.auto_retry_cap = 0,
 	.critical = true,
 },
+
+/* Watched, restarted by health after its cooldown, at most twice (DS-43). */
+[APP_ID_AUTO_APP] = {
+	.protected = false,
+	.stall_threshold = 3,
+	.reenable = REENABLE_AUTO,
+	.auto_retry_cap = 2,
+	.critical = false,
+},

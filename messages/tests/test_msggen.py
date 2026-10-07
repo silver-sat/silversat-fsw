@@ -119,6 +119,25 @@ def app_with(**changes):
 # --- Valid definitions ----------------------------------------------------
 
 
+def test_app_thread_names(tmp_path):
+    common = generate(write_defs(tmp_path))["include/msg/common.h"]
+    assert "static inline const char *app_thread_name(uint8_t app)" in common
+    assert '\tcase APP_ID_SENSOR:\n\t\treturn "sensor_tid";' in common
+    assert '\tcase APP_ID_QUIET:\n\t\treturn "quiet_tid";' in common
+    assert "\tdefault:\n\t\treturn NULL;" in common
+
+
+def test_every_flight_app_names_its_thread_for_health():
+    """app_thread_name() assumes K_THREAD_DEFINE(<app>_tid, ...) in the
+    app's own directory; health finds each app's thread by that name (DS-44)."""
+    repo = MESSAGES_DIR.parent
+    for definition in sorted((MESSAGES_DIR / "apps").glob("*.yaml")):
+        app = yaml.safe_load(definition.read_text())["app"]
+        sources = "".join(f.read_text() for f in (repo / "apps" / app).glob("*.c"))
+        assert f"K_THREAD_DEFINE({app}_tid," in sources, \
+            f"apps/{app}/ must define its thread as K_THREAD_DEFINE({app}_tid, ...)"
+
+
 def test_flight_definitions_are_valid():
     defs = msggen.load_definitions(MESSAGES_DIR)
     assert "frame_manager" in [a.name for a in defs.apps]

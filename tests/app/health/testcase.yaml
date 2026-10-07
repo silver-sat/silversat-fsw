@@ -26,6 +26,8 @@ tests:
   app.health.reset_loop_safe:
     extra_args:
       - EXTRA_CFLAGS=-DAFTER_RESET -DRESET_LOOP=3
+      # And a stack margin larger than any app's stack, so stack_low is set.
+      - CONFIG_SS_STACK_MARGIN_BYTES=65536
     platform_allow:
       - native_sim
   app.health.reset_loop_stop:
