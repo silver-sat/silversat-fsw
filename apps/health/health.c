@@ -20,7 +20,9 @@
  *          mode, reason app_failure (DS-41). If its re-enable policy is
  *          REENABLE_AUTO, health starts it again after
  *          CONFIG_SS_REENABLE_COOLDOWN_FRAMES, up to its auto_retry_cap
- *          times; after that only the ground restarts it (DS-43);
+ *          times; after that only the ground restarts it (DS-43). When
+ *          the ground restarts an app, which health sees in the report,
+ *          the app's budget of automatic restarts is renewed;
  *   3. stores the run checkpoint, so the next boot carries MET on
  *      (boot.c, which also does health's work at boot: the boot number,
  *      the reset cause, and the boot log, DS-25, DS-44);
@@ -107,6 +109,13 @@ static uint8_t auto_reenables[APP_ID_MAX + 1];
 
 /* Major frames health has handled, for the cooldown. */
 static uint32_t major_frames;
+
+/*
+ * To tell a ground restart from health's own: the apps the last report
+ * showed stopped, and the apps health has started again itself.
+ */
+static uint64_t last_disabled;
+static uint64_t health_started;
 
 BUILD_ASSERT(MODE_REASON_MAX < 32, "safe_requests has a bit for each reason");
 
@@ -240,6 +249,7 @@ static void reenable_due_apps(void)
 			return; /* the frame manager is busy; the rest go next major frame */
 		}
 		reenable_waiting &= ~BIT64(app);
+		health_started |= BIT64(app);
 		auto_reenables[app]++;
 		hk.auto_reenables++;
 		hk.disabled_by_health &= ~BIT64(app);
@@ -291,6 +301,33 @@ static void check_stacks(void)
 	}
 }
 
+/*
+ * Apps the frame manager has started again since the last report. Those
+ * health didn't start, the ground did (DS-43): the ground has looked at
+ * the app and chosen to run it, so its budget of automatic restarts is
+ * renewed, any restart health had waiting is cancelled, and it is no
+ * longer reported stopped by health.
+ */
+static void notice_restarts(const struct frame_report *report)
+{
+	uint64_t started = last_disabled & ~report->disabled;
+
+	last_disabled = report->disabled;
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		if ((started & BIT64(app)) == 0) {
+			continue;
+		}
+		if ((health_started & BIT64(app)) != 0) {
+			health_started &= ~BIT64(app); /* health's own restart */
+			continue;
+		}
+		auto_reenables[app] = 0;
+		reenable_waiting &= ~BIT64(app);
+		hk.auto_exhausted &= ~BIT64(app);
+		hk.disabled_by_health &= ~BIT64(app);
+	}
+}
+
 static void check(const struct frame_report *report)
 {
 	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
@@ -328,6 +365,7 @@ static void step(const struct frame_tick *tick)
 	    (!have_report || report.major_frame != last_major_frame)) {
 		have_report = true;
 		last_major_frame = report.major_frame;
+		notice_restarts(&report);
 		check(&report);
 	}
 	send_waiting();

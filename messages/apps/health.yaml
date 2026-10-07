@@ -37,12 +37,15 @@ housekeeping:
   fields:
     - name: disabled_by_health
       type: uint64
-      description: Apps health has stopped; bit n is app n.
+      description: >
+        Apps health has stopped and that haven't been started again since;
+        bit n is app n.
     - name: auto_exhausted
       type: uint64
       description: >
         AUTO apps that have used all their automatic restarts and now wait
-        for the ground; bit n is app n.
+        for the ground; bit n is app n. A ground restart clears its bit and
+        renews its restarts.
     - name: feeds
       type: uint32
       description: Times health has fed the watchdog.

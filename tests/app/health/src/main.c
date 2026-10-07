@@ -718,6 +718,30 @@ ZTEST(health, test_an_auto_app_is_restarted_up_to_its_cap)
 	zassert_equal(health_hk().auto_reenables, 2);
 	zassert_true((health_hk().auto_exhausted & AUTO) != 0);
 	zassert_true((health_hk().disabled_by_health & AUTO) != 0);
+
+	/* The ground starts it: its restarts are renewed, and it is no longer reported stopped. */
+	report(0, 0);
+	zassert_equal(health_hk().auto_exhausted & AUTO, 0);
+	zassert_equal(health_hk().disabled_by_health & AUTO, 0);
+	stall_auto_app();
+	expect_restart_after_cooldown();
+	zassert_equal(health_hk().auto_reenables, 3, "a renewed restart");
+}
+
+ZTEST(health, test_a_ground_restart_in_the_cooldown_cancels_healths)
+{
+	struct frame_manager_cmd cmd;
+	uint32_t restarts = health_hk().auto_reenables;
+
+	stall_auto_app();
+	report(AUTO, AUTO);
+	report(0, 0); /* the ground started it before the cooldown ended */
+	for (int i = 0; i < COOLDOWN + 2; i++) {
+		report(0, 0);
+	}
+	zassert_false(frame_manager_next(&cmd, true), "health doesn't start it again");
+	zassert_equal(health_hk().auto_reenables, restarts);
+	zassert_equal(health_hk().disabled_by_health & AUTO, 0);
 }
 
 ZTEST(health, test_a_ground_app_is_never_restarted_by_health)
@@ -735,6 +759,11 @@ ZTEST(health, test_a_ground_app_is_never_restarted_by_health)
 	}
 	zassert_false(frame_manager_next(&cmd, true));
 	zassert_equal(health_hk().auto_exhausted & WATCHED, 0, "it never had restarts to use up");
+
+	/* The ground starts it: no longer reported stopped by health. */
+	zassert_true((health_hk().disabled_by_health & WATCHED) != 0);
+	report(0, 0);
+	zassert_equal(health_hk().disabled_by_health & WATCHED, 0);
 }
 
 /* ---- Stack high-water marks (DS-44) -------------------------------------- */
