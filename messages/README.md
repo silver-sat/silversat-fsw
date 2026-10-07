@@ -37,7 +37,8 @@ Your app includes only `msg/foo.h` and `msg/common.h`.
 1. Add an entry under `commands:` in `apps/<app>.yaml`, with a new `id`. Never
    reuse an ID or delete a command that has flown (DS-62).
 2. List the modes it is allowed in, for example `modes: [safe, nominal]`.
-   There is no default (DS-50).
+   There is no default (DS-50). A command only other apps send is
+   `internal: true` instead (see below).
 3. Commands set state; they do not toggle it (DS-35).
 4. Rebuild. The generator checks your change and stops with a message naming
    the file and the entry if something is wrong.
@@ -87,6 +88,21 @@ build. Each call returns 0 if the command was sent, or `-EBUSY` if your app
 already has `CMD_MAX_PENDING` commands that app hasn't handled; try again
 next frame. Commands set state rather than toggling it (DS-35), so sending
 one again is safe.
+
+A command that only other apps may send, never the ground, is marked
+`internal: true` and has no `modes:`:
+
+```yaml
+commands:
+  - name: request_mode
+    id: 2
+    internal: true
+    description: Another app asks for a mode change, with its reason.
+```
+
+Command ingest's routing leaves it out, so ground text naming it is an
+unknown command, and the dictionary lists it under `internal_commands`
+rather than `commands`, so the ground tools refuse it too.
 
 ## Command text
 

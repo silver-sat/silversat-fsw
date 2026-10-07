@@ -14,7 +14,8 @@ Input, in <defs>/:
     common.yaml       shared types: enums (mode, severity, ...), the frame
                       tick, app status, and the types of data channels
     apps/<app>.yaml   one app: its id, whether the frame manager wakes it,
-                      its commands (with the modes each is allowed in),
+                      its commands (with the modes each is allowed in, or
+                      internal: true for one only other apps may send),
                       housekeeping, data channels (with initial values),
                       and the internal commands it sends (sends:)
     nvm_map.yaml      FRAM records, each owned by one app; rings of records
@@ -31,7 +32,8 @@ Output, in <out>/:
     src/msg_<app>.c          the app's channels, its senders, and build checks
                              that every message fits a zbus buffer
     src/cmd_routes.c         decoding and routing of ground command text
-                             (command ingest, DS-50)
+                             (command ingest, DS-50); internal commands
+                             are left out, so the ground can't send them
     src/tlm_encode.c         each app's housekeeping, encoded little-endian for
                              the downlink (telemetry output, DS-61, DS-64)
     include/nvm/<app>.h      the app's FRAM records: struct, encoding, default,
@@ -40,9 +42,9 @@ Output, in <out>/:
     include/nvm/map.h        every region's place, read-only, for the nvm
                              app's scrubbing (DS-74)
 
---json FILE also writes the dictionary (DS-61): every command with its
-arguments, ranges and modes; each app's housekeeping layout; who sends which
-internal command; and the FRAM map. The ground formats command text
+--json FILE also writes the dictionary (DS-61): every ground command with
+its arguments, ranges and modes, and the internal commands apart; each app's
+housekeeping layout; who sends which internal command; and the FRAM map. The ground formats command text
 (tools/command_text.py) and decodes telemetry (tools/telemetry.py) from it.
 
 Leave out --out to check the definitions without writing anything.
@@ -254,7 +256,10 @@ class Command:
     fields: list[Field]
     constant: str             # C name of the id, for example FRAME_MANAGER_CMD_SET_ENTRY_ENABLED
     struct: str               # C name of the arguments struct
-    modes: list[str]          # the modes it is allowed in (DS-50)
+    modes: list[str]          # the modes it is allowed in (DS-50); [] if internal
+    # Only other apps send it, through send_<app>_<command>() (DS-68): the
+    # ground can't, so it has no modes and isn't routed from command text.
+    internal: bool = False
 
 
 @dataclass
@@ -364,6 +369,11 @@ class App:
     @property
     def commands_with_args(self):
         return [c for c in self.commands if c.fields]
+
+    @property
+    def ground_commands(self):
+        """The commands the ground may send: all but the internal ones."""
+        return [c for c in self.commands if not c.internal]
 
     @property
     def send_targets(self):
@@ -498,8 +508,9 @@ class Definitions:
 
     @property
     def command_enums(self):
-        """Enums used by some command argument, in definition order."""
-        used = {f.enum for a in self.apps for c in a.commands for f in c.fields if f.enum}
+        """Enums used by some ground command's argument, in definition order:
+        the ones command text must decode."""
+        used = {f.enum for a in self.apps for c in a.ground_commands for f in c.fields if f.enum}
         return [e for e in self.enums if e.name in used]
 
 
@@ -694,7 +705,7 @@ def _parse_modes(node, where, enums):
 
 def _parse_command(node, where, app_name, enums):
     # modes is required, but _parse_modes says so with an example.
-    _check_keys(node, where, ("name", "id", "description"), ("fields", "modes"))
+    _check_keys(node, where, ("name", "id", "description"), ("fields", "modes", "internal"))
     name = _name(node["name"], f"{where}.name")
     if name in RESERVED_COMMAND_NAMES:
         raise DefinitionError(
@@ -710,6 +721,13 @@ def _parse_command(node, where, app_name, enums):
     if len(fields) > COMMAND_ARGS_MAX:
         raise DefinitionError(
             f"{where}.fields: a command has at most {COMMAND_ARGS_MAX} arguments")
+    internal = node.get("internal", False)
+    if not isinstance(internal, bool):
+        raise DefinitionError(
+            f"{where}.internal: must be true (only other apps send it) or false")
+    if internal and "modes" in node:
+        raise DefinitionError(
+            f"{where}: an internal command has no modes; the ground never sends it")
     return Command(
         name=name,
         id=_integer(node["id"], f"{where}.id", 1, COMMAND_ID_MAX),
@@ -717,7 +735,8 @@ def _parse_command(node, where, app_name, enums):
         fields=fields,
         constant=f"{app_name}_cmd_{name}".upper(),
         struct=f"{app_name}_{name}",
-        modes=_parse_modes(node, f"{where}.modes", enums),
+        modes=[] if internal else _parse_modes(node, f"{where}.modes", enums),
+        internal=internal,
     )
 
 
@@ -1085,7 +1104,14 @@ def command_dictionary(defs):
                 "description": c.description,
                 "modes": c.modes,
                 "args": [_field_entry(f, defs) for f in c.fields],
-            } for c in app.commands],
+            } for c in app.ground_commands],
+            # Sent only by other apps (DS-68); the ground can't send these.
+            "internal_commands": [{
+                "name": c.name,
+                "id": c.id,
+                "description": c.description,
+                "args": [_field_entry(f, defs) for f in c.fields],
+            } for c in app.commands if c.internal],
             "sends": app.send_names,
             "housekeeping": {
                 "size": app.housekeeping.wire_size,

@@ -5,7 +5,9 @@
  * Command routing (DS-50 stages 6 and 7, DS-68): decode the text of an
  * authenticated ground command and publish it to the target app's command
  * channel. Only command ingest calls cmd_route(); this file includes every
- * app's header so that command ingest itself never has to.
+ * app's header so that command ingest itself never has to. Internal
+ * commands (internal: true) aren't here: only other apps send them, so the
+ * ground can't.
  */
 
 #include <errno.h>
@@ -26,7 +28,7 @@
 
 BUILD_ASSERT(MODE_MAX < 32, "the allowed-modes mask has 32 bits");
 
-{% if defs.apps | map(attribute="commands") | select | list %}
+{% if defs.apps | map(attribute="ground_commands") | select | list %}
 /*
  * Ground commands each app has been sent but not yet handled, at most
  * CMD_MAX_PENDING per app (DS-07; see silversat/cmd_deliver.h).
@@ -81,7 +83,7 @@ static const struct cmd_text_name {{ e.name }}_names[] = {
 	}
 {% endmacro %}
 {% for app in defs.apps %}
-{% for c in app.commands %}
+{% for c in app.ground_commands %}
 
 static enum cmd_route_result
 route_{{ app.name }}_{{ c.name }}(const struct cmd_text *t, struct cmd_route_info *info)
@@ -122,7 +124,7 @@ struct route {
 
 static const struct route routes[] = {
 {% for app in defs.apps %}
-{% for c in app.commands %}
+{% for c in app.ground_commands %}
 	{
 		.app = {{ app.id_constant }},
 		.command = "{{ c.name }}",
@@ -133,7 +135,7 @@ static const struct route routes[] = {
 	},
 {% endfor %}
 {% endfor %}
-{% if not defs.apps | map(attribute="commands") | select | list %}
+{% if not defs.apps | map(attribute="ground_commands") | select | list %}
 	{0}, /* no commands are defined yet */
 {% endif %}
 };

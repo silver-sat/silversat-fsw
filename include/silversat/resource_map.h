@@ -225,7 +225,7 @@ enum reenable_policy {
 /*
  * One row per app, read by the frame manager (protected) and health (the
  * rest). Indexed by enum app_id. An app with no row gets all zeros: not
- * protected, not watched by health, never re-enabled.
+ * protected, not watched by health, never re-enabled, not critical.
  */
 struct app_attr {
 	/*
@@ -242,6 +242,13 @@ struct app_attr {
 	enum reenable_policy reenable;
 	/* For REENABLE_AUTO: automatic re-enables before falling back. */
 	uint8_t auto_retry_cap;
+	/*
+	 * When health stops a critical app, it also asks the mode manager for
+	 * safe mode, reason app_failure (DS-41). Only for an app the
+	 * spacecraft can't safely run nominal without; a protected app resets
+	 * instead, so this never applies to one.
+	 */
+	bool critical;
 };
 
 /*
@@ -260,6 +267,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 	/*
 	 * Protected (DS-43): it is the only publisher of the mode, and runs
@@ -270,6 +278,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 3,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 	/* Protected (DS-43): without it the ground cannot command the spacecraft. */
 	[APP_ID_COMMAND_INGEST] = {
@@ -277,6 +286,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 3,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 	/*
 	 * Protected (DS-43): it carries every ground command in. Stopped, the
@@ -288,6 +298,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 3,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 	/* Protected (DS-43): without it the ground sees nothing. */
 	[APP_ID_TELEMETRY_OUTPUT] = {
@@ -295,6 +306,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 3,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 	/*
 	 * Protected (DS-43). Health can't watch itself: if it stalls, it
@@ -305,6 +317,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 0,
 		.reenable = REENABLE_NEVER,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 	/*
 	 * Not protected: it isn't on the ground command path, and the apps'
@@ -316,6 +329,7 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 		.stall_threshold = 3,
 		.reenable = REENABLE_GROUND,
 		.auto_retry_cap = 0,
+		.critical = false,
 	},
 #if defined(SS_TEST_APP_ATTRS)
 	/*

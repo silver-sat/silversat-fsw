@@ -1,0 +1,14 @@
+# A test-only critical app: health stops it at its threshold and also asks
+# the mode manager for safe mode (DS-41). No flight app is critical yet.
+# Its attribute row is in src/test_app_attrs.h.
+
+app: critical_app
+id: 54
+description: A critical test app for health to watch.
+wakeup: true
+
+housekeeping:
+  description: Nothing; the tests only report it stuck.
+  fields:
+    - name: unused
+      type: uint8

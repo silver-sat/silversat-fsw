@@ -132,7 +132,17 @@ Anything can enter safe mode; only the ground exits it. Autonomy's job is to rea
 
 If each app reacted to faults by commanding other apps, the answer to "what does the spacecraft do when the battery is low?" would be scattered across every app that noticed. The mode manager's two tables (transitions and actions) put every cross-app response in one place a student can read. An app still acts at once on its own hardware when waiting would do harm, such as cutting an over-current load, because that response involves nobody else.
 
-Actions are keyed by event, not only by mode change, because a trigger can fire when the mode is already right. The spacecraft boots in safe mode and waits for the ground, so the command-loss timer may well fire in safe mode; it must still stop transmission.
+Actions are keyed by event, not only by mode change, because a trigger can fire when the mode is already right. The spacecraft boots in safe mode and waits for the ground, so the command-loss timer may well fire in safe mode; it must still stop transmission, and command loss becomes the reason, as any new cause does in safe mode.
+
+### Why a request is an internal command, with only some reasons
+
+Health asks the mode manager for safe mode with `request_mode`, a command marked `internal: true`. A separate request channel would have needed its own subscriber, sender, pending bound and pool budget, which the command channel already has. The ground can't send it, because routing leaves it out; the ground has `set_mode`.
+
+A request may give only a reason another app detects: low battery, a reset loop, a failed app. The transitions table allows deploy to safe for `deployment_complete`, and safe to test for `test_signal`, because the mode manager itself decides those, at the end of the separation delay and once at boot. An app able to give those reasons could end deploy mode early or enter test mode in flight. Writing down which reasons are requests closes that hole in one line.
+
+### Why a reset loop is graded
+
+After the first deployment, every boot starts in safe mode anyway (DS-41), so "boot into safe mode after repeated short runs" adds little by itself. The request still records `reset_loop` as the reason, so the ground knows why. If the loop goes on in safe mode, the cause is something safe mode still runs, so health also stops every app it can (the ones that aren't protected) and leaves the spacecraft with only the apps it can't do without, waiting for the ground. Counting from the boot log means nothing new is stored, and a log entry that's missing ends the count: health never acts on a loop it can't see.
 
 ### Why deploy mode silences by leaving apps out
 

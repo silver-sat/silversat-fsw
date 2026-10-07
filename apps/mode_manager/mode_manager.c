@@ -25,8 +25,17 @@
  *
  * Triggers: the mode manager checks its own once a major frame: the
  * separation delay and the command-loss timer (DS-46). Triggers that other
- * apps detect (low battery, a failed app) will arrive as requests, starting
- * with health.
+ * apps detect arrive as requests (request_mode, an internal command the
+ * ground can't send, DS-40): from health, a reset loop or a failed critical
+ * app. A request may give only a reason another app detects (low battery,
+ * reset loop, app failure), and goes through the same transitions table as
+ * everything else, so a reset loop in deploy mode can't skip the separation
+ * delay.
+ *
+ * A new cause while already in safe mode, a request or the command-loss
+ * timer firing, replaces the reason, so the ground sees the latest cause
+ * (DS-41). The ground's own set_mode for the current mode still changes
+ * nothing (DS-35).
  *
  * Across a reset (DS-41, DS-42, DS-74): two FRAM records, also kept in the
  * mirror (DS-75). deployment says whether the separation delay has ever
@@ -231,6 +240,55 @@ static int change_mode(uint8_t to, uint8_t reason)
 	return 0;
 }
 
+/*
+ * A new cause while already in safe mode (DS-41): the reason is what the
+ * ground needs to know, so the latest cause replaces it. No transition, so
+ * no enter or exit actions. Returns true if the reason changed.
+ */
+static bool replace_safe_reason(uint8_t reason)
+{
+	if (state.mode != MODE_SAFE || state.reason == reason) {
+		return false;
+	}
+	state.reason = reason;
+	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
+	store_mode();
+	return true;
+}
+
+/*
+ * The reasons another app may give: conditions other apps detect. The rest
+ * belong to the ground (ground_command) or to the mode manager's own
+ * triggers: an app giving deployment_complete could end deploy mode early,
+ * and test_signal could enter test mode after boot (DS-42).
+ */
+#define REQUEST_REASONS                                                                            \
+	(BIT(MODE_REASON_LOW_BATTERY) | BIT(MODE_REASON_RESET_LOOP) | BIT(MODE_REASON_APP_FAILURE))
+
+/*
+ * Another app's request (DS-40). Returns 0 if it changed the mode or the
+ * reason, or was for the current mode; -EPERM if refused.
+ */
+static int request_mode(const struct mode_manager_request_mode *req)
+{
+	/* Check the range first: BIT() of a value of 32 or more is undefined. */
+	if (req->reason > MODE_REASON_MAX || (REQUEST_REASONS & BIT(req->reason)) == 0) {
+		hk.refused++;
+		return -EPERM;
+	}
+	if (req->mode == state.mode) {
+		if (replace_safe_reason(req->reason)) {
+			hk.requests++;
+		}
+		return 0;
+	}
+	if (change_mode(req->mode, req->reason) != 0) {
+		return -EPERM;
+	}
+	hk.requests++;
+	return 0;
+}
+
 /* ---- Triggers --------------------------------------------------------------- */
 
 static bool test_signal_present(void)
@@ -319,7 +377,10 @@ static void check_command_loss(void)
 		loss_actions_done = false;
 		loss_contact_met_ms = contact.last_accepted_met_ms;
 		hk.command_loss++;
-		(void)change_mode(MODE_SAFE, MODE_REASON_COMMAND_LOSS);
+		/* Already in safe mode: the reason becomes command loss all the same. */
+		if (!replace_safe_reason(MODE_REASON_COMMAND_LOSS)) {
+			(void)change_mode(MODE_SAFE, MODE_REASON_COMMAND_LOSS);
+		}
 	}
 	/* Until every action has been sent, try again each major frame. */
 	if (!loss_actions_done) {
@@ -335,6 +396,9 @@ static int handle_command(const struct mode_manager_cmd *cmd)
 	case MODE_MANAGER_CMD_SET_MODE:
 		/* Only command ingest sends this, so it is the ground's. */
 		return change_mode(cmd->args.set_mode.mode, MODE_REASON_GROUND_COMMAND);
+	case MODE_MANAGER_CMD_REQUEST_MODE:
+		/* internal: true, so only another app sends this, never the ground. */
+		return request_mode(&cmd->args.request_mode);
 	default:
 		return -ENOTSUP;
 	}

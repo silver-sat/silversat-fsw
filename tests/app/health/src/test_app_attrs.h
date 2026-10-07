@@ -11,4 +11,14 @@
 	.stall_threshold = 3,
 	.reenable = REENABLE_GROUND,
 	.auto_retry_cap = 0,
+	.critical = false,
+},
+
+/* Watched, not protected, and critical: stopping it also asks for safe mode (DS-41). */
+[APP_ID_CRITICAL_APP] = {
+	.protected = false,
+	.stall_threshold = 3,
+	.reenable = REENABLE_GROUND,
+	.auto_retry_cap = 0,
+	.critical = true,
 },

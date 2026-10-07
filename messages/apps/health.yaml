@@ -3,7 +3,9 @@
 # Health watches every app's progress through the frame manager's report,
 # stops a stalled app's wakeups, and is the only feeder of the hardware
 # watchdog. When a protected app stalls, it stops feeding the watchdog, and
-# the watchdog resets the spacecraft.
+# the watchdog resets the spacecraft. At boot it counts short runs in the
+# boot log; a reset loop asks for safe mode, and a long one also stops every
+# app that isn't protected (DS-44).
 
 app: health
 id: 6
@@ -11,9 +13,12 @@ description: Watches the apps and feeds the hardware watchdog.
 # Woken once a major frame, in slot 0, to read the frame manager's report.
 wakeup: true
 
-# Its response to a stalled app (DS-43).
+# Its responses: stopping a stalled app (DS-43), and asking the mode manager
+# for safe mode after a reset loop or a failed critical app (DS-40, DS-41,
+# DS-44).
 sends:
   - frame_manager.set_app_enabled
+  - mode_manager.request_mode
 
 data_channels:
   - name: mission_time_chan
@@ -44,7 +49,9 @@ housekeeping:
         watchdog, or 0. The watchdog resets the spacecraft soon after.
     - name: action_failures
       type: uint32
-      description: Times set_app_enabled could not be sent; retried at the next report.
+      description: >
+        Times set_app_enabled or request_mode could not be sent; each is
+        retried at the next major frame.
     - name: boot_number
       type: uint32
       description: This boot's number (DS-44).
@@ -54,3 +61,11 @@ housekeeping:
     - name: store_failures
       type: uint32
       description: Checkpoints or boot log entries that reached neither FRAM nor its mirror.
+    - name: short_runs
+      type: uint8
+      description: >
+        Runs in a row, up to this boot, that ended within the reset-loop
+        time, from the boot log (DS-44). 0 if the last run was long.
+    - name: mode_requests
+      type: uint32
+      description: Requests sent to the mode manager (request_mode).

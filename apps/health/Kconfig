@@ -22,4 +22,32 @@ config SS_WATCHDOG_TIMEOUT_MS
 	  one late or missed feed and resets within a few seconds of a hang
 	  (DS-43).
 
+config SS_RESET_LOOP_RUN_MINUTES
+	int "A run shorter than this counts toward a reset loop (minutes)"
+	default 10
+	range 1 1440
+	help
+	  A run that ends sooner than this, by its last checkpoint, is a
+	  short run (DS-44). Ten minutes is long enough for every app to have
+	  run many major frames, so a fault that resets soon after boot is
+	  caught.
+
+config SS_RESET_LOOP_SAFE_RUNS
+	int "Short runs in a row before health asks for safe mode"
+	default 3
+	range 2 16
+	help
+	  At this many short runs in a row, health asks the mode manager for
+	  safe mode with reason reset_loop (DS-44).
+
+config SS_RESET_LOOP_STOP_RUNS
+	int "Short runs in a row before health stops every app that isn't protected"
+	default 6
+	range 2 16
+	help
+	  If the loop goes on, in safe mode too, health also stops every app
+	  it watches that isn't protected, until the ground starts them again
+	  (DS-44). At most 16, the boot log's length. Must be at least
+	  SS_RESET_LOOP_SAFE_RUNS.
+
 endif # SS_HEALTH

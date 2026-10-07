@@ -1,9 +1,9 @@
 # Mode manager messages (DS-40, DS-41, DS-46).
 #
 # The mode manager is the only publisher of mode_chan. It changes the mode
-# when the ground commands it, or when one of its own triggers fires (the
-# command-loss timer). Triggers detected by other apps arrive later, as
-# requests, with the first app that needs one (health).
+# when the ground commands it, when one of its own triggers fires (the
+# command-loss timer), or when another app requests it (request_mode, an
+# internal command: health, for a reset loop or a failed critical app).
 
 app: mode_manager
 id: 2
@@ -26,6 +26,26 @@ commands:
       - name: mode
         type: mode
         description: The mode to enter.
+
+  - name: request_mode
+    id: 2
+    # Only other apps send it (DS-40, DS-68); the ground uses set_mode.
+    internal: true
+    description: >
+      Another app asks for a mode change because of a condition it detected
+      (DS-40). Allowed only if the transitions table allows it for the
+      reason. A request for safe mode while already in safe mode replaces
+      the reason, so the ground sees the latest cause (DS-41).
+    fields:
+      - name: mode
+        type: mode
+        description: The mode to enter.
+      - name: reason
+        type: mode_reason
+        description: >
+          Why: low_battery, reset_loop or app_failure, conditions other apps
+          detect. Any other reason is refused: the ground and the mode
+          manager's own triggers give those.
 
 # Actions the mode manager takes (DS-40), as internal commands.
 sends:
@@ -55,7 +75,14 @@ housekeeping:
       description: Mode changes since boot.
     - name: refused
       type: uint32
-      description: Mode changes refused because the transition table doesn't allow them (DS-40).
+      description: >
+        Mode changes refused because the transition table doesn't allow them
+        (DS-40), and requests with a reason no app may give.
+    - name: requests
+      type: uint32
+      description: >
+        Requests from other apps that changed the mode, or the reason in safe
+        mode (request_mode).
     - name: command_loss
       type: uint32
       description: Times the command-loss timer has fired (DS-46).
