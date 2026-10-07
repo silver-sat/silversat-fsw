@@ -17,11 +17,19 @@
  *          (frame_manager set_app_enabled). Its stall can't then hold
  *          zbus pool buffers or spread. If the app is critical (its
  *          attribute row), health also asks the mode manager for safe
- *          mode, reason app_failure (DS-41);
+ *          mode, reason app_failure (DS-41). If its re-enable policy is
+ *          REENABLE_AUTO, health starts it again after
+ *          CONFIG_SS_REENABLE_COOLDOWN_FRAMES, up to its auto_retry_cap
+ *          times; after that only the ground restarts it (DS-43). When
+ *          the ground restarts an app, which health sees in the report,
+ *          the app's budget of automatic restarts is renewed;
  *   3. stores the run checkpoint, so the next boot carries MET on
  *      (boot.c, which also does health's work at boot: the boot number,
  *      the reset cause, and the boot log, DS-25, DS-44);
- *   4. feeds the hardware watchdog, unless a reset is coming.
+ *   4. reads every app thread's stack high-water mark: the least stack
+ *      left unused, and which app (DS-44). Each app's thread is named
+ *      <app>_tid (app_thread_name()), so health finds it by name;
+ *   5. feeds the hardware watchdog, unless a reset is coming.
  *
  * A reset loop (DS-44): at boot, boot.c counts the short runs in a row in
  * the boot log. At CONFIG_SS_RESET_LOOP_SAFE_RUNS, health asks the mode
@@ -30,7 +38,8 @@
  * the mode manager refuses it in deploy mode, which only the separation
  * delay ends (DS-42). If the loop goes on to CONFIG_SS_RESET_LOOP_STOP_RUNS,
  * in safe mode too, health also stops every app it watches that isn't
- * protected, until the ground starts them again.
+ * protected, until the ground starts them again: only a stall's stop is
+ * ever undone automatically (REENABLE_AUTO), never a reset loop's.
  *
  * Requests go to the mode manager as an internal command (request_mode,
  * DS-40); like set_app_enabled, one that can't be sent is tried again next
@@ -42,11 +51,12 @@
  * Health runs at the lowest app priority, so an app that hogs the CPU also
  * starves health and causes a reset.
  *
- * Still to come: events for each response (DS-10), and re-enable policies.
+ * Still to come: events for each response (DS-10).
  */
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/watchdog.h>
@@ -89,6 +99,24 @@ static uint32_t safe_requests;
 /* Apps still to stop for a reset loop: bit n is app n. */
 static uint64_t loop_stops;
 
+/*
+ * REENABLE_AUTO (DS-43): apps waiting out their cooldown, the major frame
+ * each is due to start again, and how many times each has been started.
+ */
+static uint64_t reenable_waiting;
+static uint32_t reenable_due[APP_ID_MAX + 1];
+static uint8_t auto_reenables[APP_ID_MAX + 1];
+
+/* Major frames health has handled, for the cooldown. */
+static uint32_t major_frames;
+
+/*
+ * To tell a ground restart from health's own: the apps the last report
+ * showed stopped, and the apps health has started again itself.
+ */
+static uint64_t last_disabled;
+static uint64_t health_started;
+
 BUILD_ASSERT(MODE_REASON_MAX < 32, "safe_requests has a bit for each reason");
 
 static void watchdog_start(void)
@@ -118,6 +146,24 @@ static void watchdog_feed(void)
 	}
 }
 
+/*
+ * An app health has just stopped for a stall: if its policy is
+ * REENABLE_AUTO, start it again after the cooldown, until it has used its
+ * auto_retry_cap restarts. Then it falls back to REENABLE_GROUND (DS-43).
+ */
+static void schedule_reenable(uint8_t app)
+{
+	if (app_attrs[app].reenable != REENABLE_AUTO) {
+		return;
+	}
+	if (auto_reenables[app] >= app_attrs[app].auto_retry_cap) {
+		hk.auto_exhausted |= BIT64(app);
+		return;
+	}
+	reenable_waiting |= BIT64(app);
+	reenable_due[app] = major_frames + CONFIG_SS_REENABLE_COOLDOWN_FRAMES;
+}
+
 /* An app reached its threshold and hasn't been stopped. */
 static void respond(uint8_t app)
 {
@@ -136,6 +182,7 @@ static void respond(uint8_t app)
 		if (app_attrs[app].critical) {
 			safe_requests |= BIT(MODE_REASON_APP_FAILURE);
 		}
+		schedule_reenable(app);
 	} else {
 		hk.action_failures++;
 	}
@@ -190,6 +237,97 @@ static void send_waiting(void)
 	}
 }
 
+/* Start again each AUTO app whose cooldown is over (DS-43). */
+static void reenable_due_apps(void)
+{
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		if ((reenable_waiting & BIT64(app)) == 0 || major_frames < reenable_due[app]) {
+			continue;
+		}
+		if (send_frame_manager_set_app_enabled(app, true) != 0) {
+			hk.action_failures++;
+			return; /* the frame manager is busy; the rest go next major frame */
+		}
+		reenable_waiting &= ~BIT64(app);
+		health_started |= BIT64(app);
+		auto_reenables[app]++;
+		hk.auto_reenables++;
+		hk.disabled_by_health &= ~BIT64(app);
+	}
+}
+
+/*
+ * Each app thread's stack high-water mark (DS-44). Called for every thread;
+ * only app threads count, found by the name each app gives its thread.
+ */
+static void scan_stack(const struct k_thread *thread, void *user_data)
+{
+	const char *name = k_thread_name_get((k_tid_t)thread);
+	uint8_t *apps = user_data;
+	size_t unused;
+
+	if (name == NULL) {
+		return;
+	}
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		const char *app_name = app_thread_name(app);
+
+		if (app_name == NULL || strcmp(name, app_name) != 0) {
+			continue;
+		}
+		if (k_thread_stack_space_get(thread, &unused) != 0) {
+			return;
+		}
+		(*apps)++;
+		if (hk.stack_min_app == 0 || unused < hk.stack_min_unused) {
+			hk.stack_min_app = app;
+			hk.stack_min_unused = (uint32_t)unused;
+		}
+		return;
+	}
+}
+
+static void check_stacks(void)
+{
+	uint8_t apps = 0;
+
+	hk.stack_min_app = 0;
+	hk.stack_min_unused = 0;
+	k_thread_foreach_unlocked(scan_stack, &apps);
+	hk.stack_apps = apps;
+	/* Once low, it stays low: the high-water mark never goes down. */
+	if (apps > 0 && hk.stack_min_unused < CONFIG_SS_STACK_MARGIN_BYTES) {
+		hk.stack_low = true;
+	}
+}
+
+/*
+ * Apps the frame manager has started again since the last report. Those
+ * health didn't start, the ground did (DS-43): the ground has looked at
+ * the app and chosen to run it, so its budget of automatic restarts is
+ * renewed, any restart health had waiting is cancelled, and it is no
+ * longer reported stopped by health.
+ */
+static void notice_restarts(const struct frame_report *report)
+{
+	uint64_t started = last_disabled & ~report->disabled;
+
+	last_disabled = report->disabled;
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		if ((started & BIT64(app)) == 0) {
+			continue;
+		}
+		if ((health_started & BIT64(app)) != 0) {
+			health_started &= ~BIT64(app); /* health's own restart */
+			continue;
+		}
+		auto_reenables[app] = 0;
+		reenable_waiting &= ~BIT64(app);
+		hk.auto_exhausted &= ~BIT64(app);
+		hk.disabled_by_health &= ~BIT64(app);
+	}
+}
+
 static void check(const struct frame_report *report)
 {
 	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
@@ -222,13 +360,17 @@ static void step(const struct frame_tick *tick)
 {
 	struct frame_report report;
 
+	major_frames++;
 	if (zbus_chan_read(&frame_report_chan, &report, K_NO_WAIT) == 0 &&
 	    (!have_report || report.major_frame != last_major_frame)) {
 		have_report = true;
 		last_major_frame = report.major_frame;
+		notice_restarts(&report);
 		check(&report);
 	}
 	send_waiting();
+	reenable_due_apps();
+	check_stacks();
 	boot_checkpoint(tick->met_ms, tick->uptime_ms);
 	watchdog_feed();
 	hk.store_failures = boot_store_failures();

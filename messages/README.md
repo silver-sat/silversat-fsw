@@ -129,6 +129,13 @@ zbus buffer (`CONFIG_ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE`, set in
 channel. `include/silversat/resource_map.h` uses `APP_COUNT` and
 `APP_WAKEUP_COUNT` from `msg/common.h` to check the size of the buffer pool.
 
+What counts is the C struct, padding included, not the bytes on the wire.
+A struct whose fields alternate between sizes wastes bytes on padding: a
+`bool` before a `uint64` takes eight. If your housekeeping is close to the
+limit, list its fields largest first (64-bit, then 32-bit, then 16-bit,
+then bytes and flags), as `apps/health.yaml` does. Raising the buffer size
+instead grows every buffer in the pool, so ask first.
+
 ## FRAM records
 
 Records that survive a reset are defined in `nvm_map.yaml` (DS-71, DS-74),

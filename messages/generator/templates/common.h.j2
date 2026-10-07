@@ -5,6 +5,7 @@
 #define SILVERSAT_MSG_COMMON_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zephyr/zbus/zbus.h>
@@ -24,6 +25,24 @@ enum app_id {
 #define APP_COUNT {{ defs.apps | length }}
 #define APP_WAKEUP_COUNT {{ defs.wakeup_apps | length }}
 #define APP_ID_MAX {{ defs.apps | map(attribute="id") | max }}
+
+/*
+ * The name of an app's thread, or NULL for an id with no app. Every app
+ * defines its thread as K_THREAD_DEFINE(<app>_tid, ...), and Zephyr names
+ * the thread after it, so health can find each app's thread, to read its
+ * stack's high-water mark, without reaching into the app (DS-12, DS-44).
+ */
+static inline const char *app_thread_name(uint8_t app)
+{
+	switch (app) {
+{% for app in defs.apps %}
+	case {{ app.id_constant }}:
+		return "{{ app.name }}_tid";
+{% endfor %}
+	default:
+		return NULL;
+	}
+}
 
 /*
  * (sender, target app) pairs among the internal commands declared under

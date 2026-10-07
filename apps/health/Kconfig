@@ -6,10 +6,18 @@ config SS_HEALTH
 	select SS_NVM
 	select HWINFO
 	select WATCHDOG if $(dt_alias_enabled,watchdog0)
+	# Each app's stack high-water mark (DS-44): stacks are filled with a
+	# known pattern when each thread is created, and health finds each
+	# app's thread by name.
+	select INIT_STACKS
+	select THREAD_STACK_INFO
+	select THREAD_MONITOR
+	select THREAD_NAME
 	help
 	  Watches every app's progress through the frame manager's report,
-	  stops a stalled app's wakeups, and is the only feeder of the
-	  hardware watchdog.
+	  stops a stalled app's wakeups, restarts the ones whose re-enable
+	  policy is AUTO, reports the app threads' stack high-water marks, and
+	  is the only feeder of the hardware watchdog.
 
 if SS_HEALTH
 
@@ -21,6 +29,25 @@ config SS_WATCHDOG_TIMEOUT_MS
 	  Health feeds the watchdog once a major frame (1 s). 3 s tolerates
 	  one late or missed feed and resets within a few seconds of a hang
 	  (DS-43).
+
+config SS_REENABLE_COOLDOWN_FRAMES
+	int "Major frames before health restarts an AUTO app"
+	default 10
+	range 1 3600
+	help
+	  An app whose re-enable policy is REENABLE_AUTO is started again this
+	  many major frames after health stopped it for a stall, up to its
+	  auto_retry_cap times; after that only the ground restarts it
+	  (DS-43).
+
+config SS_STACK_MARGIN_BYTES
+	int "Stack bytes an app should never use (bytes)"
+	default 256
+	range 0 65536
+	help
+	  Health sets stack_low in its housekeeping when any app's thread has
+	  had less than this much of its stack unused (DS-44): its stack size
+	  in the resource map should grow before it overflows.
 
 config SS_RESET_LOOP_RUN_MINUTES
 	int "A run shorter than this counts toward a reset loop (minutes)"

@@ -5,7 +5,9 @@
 # watchdog. When a protected app stalls, it stops feeding the watchdog, and
 # the watchdog resets the spacecraft. At boot it counts short runs in the
 # boot log; a reset loop asks for safe mode, and a long one also stops every
-# app that isn't protected (DS-44).
+# app that isn't protected (DS-44). It restarts stopped apps whose re-enable
+# policy is AUTO (DS-43), and reports each app thread's stack high-water
+# mark (DS-44).
 
 app: health
 id: 6
@@ -29,24 +31,27 @@ data_channels:
 
 housekeeping:
   description: Health state, published every major frame.
+  # Largest fields first (64-bit, then 32-bit, then bytes and flags), so the
+  # C struct has no padding: it must fit the 64-byte zbus buffer every
+  # message shares (DS-07), and with padding it wouldn't.
   fields:
-    - name: watchdog
-      type: bool
-      description: True if there is a hardware watchdog and health set it up.
+    - name: disabled_by_health
+      type: uint64
+      description: >
+        Apps health has stopped and that haven't been started again since;
+        bit n is app n.
+    - name: auto_exhausted
+      type: uint64
+      description: >
+        AUTO apps that have used all their automatic restarts and now wait
+        for the ground; bit n is app n. A ground restart clears its bit and
+        renews its restarts.
     - name: feeds
       type: uint32
       description: Times health has fed the watchdog.
     - name: stalls
       type: uint32
       description: Stalls detected, each counted once when it reaches the app's threshold.
-    - name: disabled_by_health
-      type: uint64
-      description: Apps health has stopped; bit n is app n.
-    - name: reset_app
-      type: uint8
-      description: >
-        The protected app whose stall made health stop feeding the
-        watchdog, or 0. The watchdog resets the spacecraft soon after.
     - name: action_failures
       type: uint32
       description: >
@@ -61,11 +66,38 @@ housekeeping:
     - name: store_failures
       type: uint32
       description: Checkpoints or boot log entries that reached neither FRAM nor its mirror.
+    - name: mode_requests
+      type: uint32
+      description: Requests sent to the mode manager (request_mode).
+    - name: auto_reenables
+      type: uint32
+      description: >
+        Times health has started an app again after its cooldown, for apps
+        whose re-enable policy is AUTO (DS-43).
+    - name: stack_min_unused
+      type: uint32
+      description: That app's stack bytes never used since boot.
+    - name: watchdog
+      type: bool
+      description: True if there is a hardware watchdog and health set it up.
+    - name: reset_app
+      type: uint8
+      description: >
+        The protected app whose stall made health stop feeding the
+        watchdog, or 0. The watchdog resets the spacecraft soon after.
     - name: short_runs
       type: uint8
       description: >
         Runs in a row, up to this boot, that ended within the reset-loop
         time, from the boot log (DS-44). 0 if the last run was long.
-    - name: mode_requests
-      type: uint32
-      description: Requests sent to the mode manager (request_mode).
+    - name: stack_apps
+      type: uint8
+      description: App threads health found to read stack high-water marks from (DS-44).
+    - name: stack_min_app
+      type: uint8
+      description: The app whose thread has the least stack never used, or 0 if none was found.
+    - name: stack_low
+      type: bool
+      description: >
+        True once any app's unused stack is below CONFIG_SS_STACK_MARGIN_BYTES:
+        that app's stack size should grow.

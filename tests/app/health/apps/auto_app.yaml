@@ -1,0 +1,14 @@
+# A test-only app whose re-enable policy is AUTO: health starts it again
+# after its cooldown, up to its cap (DS-43). No flight app uses AUTO yet.
+# Its attribute row is in src/test_app_attrs.h.
+
+app: auto_app
+id: 55
+description: A test app health restarts by itself.
+wakeup: true
+
+housekeeping:
+  description: Nothing; the tests only report it stuck.
+  fields:
+    - name: unused
+      type: uint8
