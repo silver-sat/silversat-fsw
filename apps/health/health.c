@@ -15,11 +15,26 @@
  *          single address space; a reset is honest.
  *        - any other app: tells the frame manager to stop waking it
  *          (frame_manager set_app_enabled). Its stall can't then hold
- *          zbus pool buffers or spread;
+ *          zbus pool buffers or spread. If the app is critical (its
+ *          attribute row), health also asks the mode manager for safe
+ *          mode, reason app_failure (DS-41);
  *   3. stores the run checkpoint, so the next boot carries MET on
  *      (boot.c, which also does health's work at boot: the boot number,
  *      the reset cause, and the boot log, DS-25, DS-44);
  *   4. feeds the hardware watchdog, unless a reset is coming.
+ *
+ * A reset loop (DS-44): at boot, boot.c counts the short runs in a row in
+ * the boot log. At CONFIG_SS_RESET_LOOP_SAFE_RUNS, health asks the mode
+ * manager for safe mode, reason reset_loop. After every deployment boot the
+ * spacecraft is already in safe mode, so this mostly records the reason;
+ * the mode manager refuses it in deploy mode, which only the separation
+ * delay ends (DS-42). If the loop goes on to CONFIG_SS_RESET_LOOP_STOP_RUNS,
+ * in safe mode too, health also stops every app it watches that isn't
+ * protected, until the ground starts them again.
+ *
+ * Requests go to the mode manager as an internal command (request_mode,
+ * DS-40); like set_app_enabled, one that can't be sent is tried again next
+ * major frame.
  *
  * Health is the only feeder, so the chain is frame manager, then health,
  * then watchdog: if the frame manager stops, health isn't woken; if health
@@ -27,8 +42,7 @@
  * Health runs at the lowest app priority, so an app that hogs the CPU also
  * starves health and causes a reset.
  *
- * Still to come: events for each response (DS-10), re-enable policies, and
- * asking the mode manager for safe mode when a critical app fails (DS-41).
+ * Still to come: events for each response (DS-10), and re-enable policies.
  */
 
 #include <stdbool.h>
@@ -65,6 +79,17 @@ static uint32_t last_major_frame;
 
 /* Set when a protected app stalls: health stops feeding the watchdog. */
 static bool reset_coming;
+
+/*
+ * Safe-mode requests not yet sent: BIT(enum mode_reason) for each reason,
+ * so each reason is sent once however often it arises before it goes.
+ */
+static uint32_t safe_requests;
+
+/* Apps still to stop for a reset loop: bit n is app n. */
+static uint64_t loop_stops;
+
+BUILD_ASSERT(MODE_REASON_MAX < 32, "safe_requests has a bit for each reason");
 
 static void watchdog_start(void)
 {
@@ -108,8 +133,60 @@ static void respond(uint8_t app)
 	/* If it can't be sent now, the next report tries again. */
 	if (send_frame_manager_set_app_enabled(app, false) == 0) {
 		hk.disabled_by_health |= BIT64(app);
+		if (app_attrs[app].critical) {
+			safe_requests |= BIT(MODE_REASON_APP_FAILURE);
+		}
 	} else {
 		hk.action_failures++;
+	}
+}
+
+/* Act on a reset loop that boot.c counted (DS-44). */
+static void check_reset_loop(void)
+{
+	hk.short_runs = boot_short_runs();
+	if (hk.short_runs >= CONFIG_SS_RESET_LOOP_SAFE_RUNS) {
+		safe_requests |= BIT(MODE_REASON_RESET_LOOP);
+	}
+	if (hk.short_runs < CONFIG_SS_RESET_LOOP_STOP_RUNS) {
+		return;
+	}
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		/* Every app health watches and could stop for a stall. */
+		if (!app_attrs[app].protected && app_attrs[app].stall_threshold > 0) {
+			loop_stops |= BIT64(app);
+		}
+	}
+}
+
+/*
+ * Send what is waiting: safe-mode requests, then reset-loop stops. Anything
+ * that can't be sent now (the target already has CMD_MAX_PENDING commands
+ * waiting) stays, and goes next major frame.
+ */
+static void send_waiting(void)
+{
+	for (uint8_t reason = 0; reason <= MODE_REASON_MAX; reason++) {
+		if ((safe_requests & BIT(reason)) == 0) {
+			continue;
+		}
+		if (send_mode_manager_request_mode(MODE_SAFE, reason) == 0) {
+			safe_requests &= ~BIT(reason);
+			hk.mode_requests++;
+		} else {
+			hk.action_failures++;
+		}
+	}
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		if ((loop_stops & BIT64(app)) == 0) {
+			continue;
+		}
+		if (send_frame_manager_set_app_enabled(app, false) != 0) {
+			hk.action_failures++;
+			return; /* the frame manager is busy; the rest go next major frame */
+		}
+		loop_stops &= ~BIT64(app);
+		hk.disabled_by_health |= BIT64(app);
 	}
 }
 
@@ -151,6 +228,7 @@ static void step(const struct frame_tick *tick)
 		last_major_frame = report.major_frame;
 		check(&report);
 	}
+	send_waiting();
 	boot_checkpoint(tick->met_ms, tick->uptime_ms);
 	watchdog_feed();
 	hk.store_failures = boot_store_failures();
@@ -170,6 +248,7 @@ static void health_main(void *a, void *b, void *c)
 	hk.boot_number = boot_number();
 	hk.reset_cause = boot_reset_cause();
 	hk.store_failures = boot_store_failures();
+	check_reset_loop();
 	zbus_chan_pub(&health_hk_chan, &hk, K_NO_WAIT);
 
 	while (zbus_sub_wait_msg(&health_sub, &chan, &msg, K_FOREVER) == 0) {

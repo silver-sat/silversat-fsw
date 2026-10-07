@@ -21,3 +21,15 @@ tests:
       - EXTRA_CFLAGS=-DAFTER_RESET
     platform_allow:
       - native_sim
+  # Two boot logs showing a reset loop (DS-44): at the safe-mode threshold,
+  # and longer than the stop threshold (7 short runs, counted up to 6).
+  app.health.reset_loop_safe:
+    extra_args:
+      - EXTRA_CFLAGS=-DAFTER_RESET -DRESET_LOOP=3
+    platform_allow:
+      - native_sim
+  app.health.reset_loop_stop:
+    extra_args:
+      - EXTRA_CFLAGS=-DAFTER_RESET -DRESET_LOOP=7
+    platform_allow:
+      - native_sim

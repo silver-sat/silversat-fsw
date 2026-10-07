@@ -6,17 +6,22 @@
  * Health runs as it does in flight, against a fake watchdog that counts
  * feeds (fake_watchdog.c). The tests stand in for the frame manager: they
  * publish frame_report_chan, wake health, and receive the commands health
- * sends it, counting them handled only when a test says so.
+ * sends it, counting them handled only when a test says so. They stand in
+ * for the mode manager too, receiving health's requests (request_mode).
  *
- * Stall thresholds come from app_attrs[] in the resource map. Every flight
- * app health watches is protected, so the tests use watched_app, a test
- * app with its own row (src/test_app_attrs.h), for an app health stops;
- * command ingest stands for a protected app.
+ * Stall thresholds come from app_attrs[] in the resource map. Nearly every
+ * flight app health watches is protected, so the tests use watched_app, a
+ * test app with its own row (src/test_app_attrs.h), for an app health
+ * stops, and critical_app for a critical one (DS-41); command ingest stands
+ * for a protected app.
  *
  * Built with PROTECTED_STALL (testcase.yaml), only the protected-app test
  * runs: it stops the watchdog for good, so it needs its own boot. Built
- * with AFTER_RESET, FRAM holds the checkpoint of an earlier run before
- * health's boot work, as after a reset.
+ * with AFTER_RESET, FRAM holds the checkpoint and boot log of earlier runs
+ * before health's boot work, as after a reset: two short runs, one short of
+ * a reset loop. Built with RESET_LOOP=n too, the boot log shows n short runs
+ * in a row (DS-44), then one exactly at the limit, and only the boot and
+ * reset-loop tests run.
  */
 
 #include <zephyr/drivers/hwinfo.h>
@@ -32,6 +37,7 @@
 #include "msg/common.h"
 #include "msg/frame_manager.h"
 #include "msg/health.h"
+#include "msg/mode_manager.h"
 #include "nvm/health.h"
 #include "silversat/resource_map.h"
 
@@ -87,6 +93,44 @@ static bool frame_manager_next(struct frame_manager_cmd *cmd, bool handle)
 	return true;
 }
 
+/* ---- Standing in for the mode manager ----------------------------------- */
+
+ZBUS_MSG_SUBSCRIBER_DEFINE(mode_manager_sub);
+ZBUS_CHAN_ADD_OBS(mode_manager_cmd_chan, mode_manager_sub, 3);
+
+static struct app_status mode_manager_status;
+
+/* The next request health sent the mode manager, if any; handled only if handle is true. */
+static bool mode_manager_next(struct mode_manager_cmd *cmd, bool handle)
+{
+	const struct zbus_channel *chan;
+	union mode_manager_msg msg;
+
+	if (zbus_sub_wait_msg(&mode_manager_sub, &chan, &msg, K_NO_WAIT) != 0) {
+		return false;
+	}
+	*cmd = msg.cmd;
+	if (handle) {
+		mode_manager_status.cmd_accepted++;
+		zassert_ok(zbus_chan_pub(&mode_manager_status_chan, &mode_manager_status,
+					 K_NO_WAIT));
+	}
+	return true;
+}
+
+#if !defined(RESET_LOOP) && !defined(PROTECTED_STALL)
+/* The next request should be for safe mode, for this reason. */
+static void expect_safe_request(uint8_t reason)
+{
+	struct mode_manager_cmd cmd;
+
+	zassert_true(mode_manager_next(&cmd, true), "a request for reason %u", reason);
+	zassert_equal(cmd.id, MODE_MANAGER_CMD_REQUEST_MODE);
+	zassert_equal(cmd.args.request_mode.mode, MODE_SAFE);
+	zassert_equal(cmd.args.request_mode.reason, reason);
+}
+#endif
+
 static struct health_hk health_hk(void)
 {
 	struct health_hk hk;
@@ -101,6 +145,7 @@ static uint32_t feeds(void)
 }
 
 #define WATCHED BIT64(APP_ID_WATCHED_APP)
+#define CRITICAL BIT64(APP_ID_CRITICAL_APP)
 #define COMMAND_INGEST BIT64(APP_ID_COMMAND_INGEST)
 
 /* ---- Boot (DS-25, DS-44) ------------------------------------------------- */
@@ -114,19 +159,65 @@ static const struct nvm_run_checkpoint earlier = {
 	.reset_app = APP_ID_COMMAND_INGEST,
 };
 
+#define SHORT_MS 5000 /* well under CONFIG_SS_RESET_LOOP_RUN_MINUTES */
+/* Exactly the limit: not short. */
+#define LONG_MS ((int64_t)CONFIG_SS_RESET_LOOP_RUN_MINUTES * 60 * 1000)
+
+/* Boot `number`'s log entry: the run before it lasted run_ms. */
+static int log_boot(uint32_t number, int64_t run_ms)
+{
+	const struct nvm_boot_log entry = {.previous_run_ms = run_ms};
+
+	return nvm_boot_log_write(number, &entry);
+}
+
 static int seed(void)
 {
-	return nvm_run_checkpoint_write(&earlier);
+	int rc = nvm_run_checkpoint_write(&earlier); /* run 41: short */
+
+#if defined(RESET_LOOP)
+	/* Runs 41 back to 42 - RESET_LOOP short, and the one before that long. */
+	for (uint32_t boot = 41; boot > 42 - RESET_LOOP; boot--) {
+		rc |= log_boot(boot, SHORT_MS);
+	}
+	rc |= log_boot(42 - RESET_LOOP, LONG_MS);
+#else
+	/*
+	 * Run 40 short too. Boot 40's place holds boot 24's entry, 16 boots
+	 * older, also short: it must not count, so this is two short runs.
+	 */
+	rc |= log_boot(41, SHORT_MS);
+	rc |= log_boot(24, SHORT_MS);
+#endif
+	return rc;
 }
 
 /* After the FRAM service starts (90), before health's boot work (95). */
 SYS_INIT(seed, APPLICATION, 91);
 #define BOOT 42
 #define MET_AT_BOOT 1000000
+#if defined(RESET_LOOP)
+/* Counted up to CONFIG_SS_RESET_LOOP_STOP_RUNS: no response needs more. */
+#define SHORT_RUNS MIN(RESET_LOOP, CONFIG_SS_RESET_LOOP_STOP_RUNS)
+#else
+#define SHORT_RUNS 2
+#endif
 #else
 #define BOOT 1
 #define MET_AT_BOOT 0
+#define SHORT_RUNS 0
 #endif
+
+/*
+ * What health sent in its first major frames, recorded by setup(): a boot's
+ * work happens once per run, so the tests can't each repeat it.
+ */
+static struct {
+	uint32_t requests;     /* request_mode, each for safe mode */
+	uint8_t last_reason;
+	uint64_t stopped;      /* set_app_enabled false: bit n is app n */
+	uint32_t action_failures;
+} at_boot;
 
 static struct nvm_run_checkpoint checkpoint_now(void)
 {
@@ -138,7 +229,31 @@ static struct nvm_run_checkpoint checkpoint_now(void)
 
 static void *setup(void)
 {
+	struct mode_manager_cmd request;
+	struct frame_manager_cmd cmd;
+
 	k_sleep(K_MSEC(10)); /* let health start and set up the watchdog */
+
+	/*
+	 * Three major frames, the frame manager and the mode manager handling
+	 * everything: enough for a reset loop's stops to all go, CMD_MAX_PENDING
+	 * a major frame.
+	 */
+	for (int i = 0; i < 3; i++) {
+		report(0, 0);
+		while (mode_manager_next(&request, true)) {
+			zassert_equal(request.id, MODE_MANAGER_CMD_REQUEST_MODE);
+			zassert_equal(request.args.request_mode.mode, MODE_SAFE);
+			at_boot.requests++;
+			at_boot.last_reason = request.args.request_mode.reason;
+		}
+		while (frame_manager_next(&cmd, true)) {
+			zassert_equal(cmd.id, FRAME_MANAGER_CMD_SET_APP_ENABLED);
+			zassert_false(cmd.args.set_app_enabled.enabled);
+			at_boot.stopped |= BIT64(cmd.args.set_app_enabled.app);
+		}
+	}
+	at_boot.action_failures = health_hk().action_failures;
 	return NULL;
 }
 
@@ -146,10 +261,13 @@ static void *setup(void)
 static void before(void *fixture)
 {
 	struct frame_manager_cmd cmd;
+	struct mode_manager_cmd request;
 
 	ARG_UNUSED(fixture);
 	report(0, 0);
 	while (frame_manager_next(&cmd, true)) {
+	}
+	while (mode_manager_next(&request, true)) {
 	}
 }
 
@@ -183,6 +301,11 @@ ZTEST(health, test_this_boot_is_logged)
 #endif
 }
 
+ZTEST(health, test_short_runs_are_counted_from_the_boot_log)
+{
+	zassert_equal(health_hk().short_runs, SHORT_RUNS);
+}
+
 ZTEST(health, test_the_reset_cause_is_read_and_cleared)
 {
 	uint32_t cause;
@@ -210,7 +333,68 @@ ZTEST(health, test_a_checkpoint_each_major_frame)
 	zassert_equal(after.reset_app, 0);
 }
 
-#if !defined(PROTECTED_STALL)
+#if defined(RESET_LOOP)
+
+/* ---- A reset loop (DS-44) ----------------------------------------------- */
+
+ZTEST(health, test_a_reset_loop_still_feeds_the_watchdog)
+{
+	uint32_t before_feeds = feeds();
+
+	/* Its response must not reset the spacecraft again. */
+	report(0, 0);
+	report(0, 0);
+	zassert_equal(feeds() - before_feeds, 2);
+}
+
+ZTEST(health, test_a_reset_loop_asks_for_safe_mode_once)
+{
+	zassert_equal(at_boot.requests, 1);
+	zassert_equal(at_boot.last_reason, MODE_REASON_RESET_LOOP);
+	zassert_equal(health_hk().mode_requests, 1);
+}
+
+#if RESET_LOOP >= CONFIG_SS_RESET_LOOP_STOP_RUNS
+ZTEST(health, test_a_long_reset_loop_stops_every_app_that_isnt_protected)
+{
+	uint64_t expected = 0;
+
+	for (uint8_t app = 1; app <= APP_ID_MAX; app++) {
+		if (!app_attrs[app].protected && app_attrs[app].stall_threshold > 0) {
+			expected |= BIT64(app);
+		}
+	}
+	zassert_true((expected & WATCHED) != 0 && (expected & CRITICAL) != 0 &&
+			     (expected & BIT64(APP_ID_NVM)) != 0,
+		     "the test apps and nvm");
+	zassert_equal(at_boot.stopped, expected, "every watched app that isn't protected");
+	zassert_equal(health_hk().disabled_by_health, expected);
+	zassert_equal(at_boot.requests, 1, "a stopped critical app adds no app_failure request");
+
+	/*
+	 * More stops than CMD_MAX_PENDING: the rest waited a major frame,
+	 * each wait counted.
+	 */
+	BUILD_ASSERT(CMD_MAX_PENDING == 2, "three stops take two major frames");
+	zassert_equal(at_boot.action_failures, 1);
+}
+#else
+ZTEST(health, test_a_short_reset_loop_stops_nothing)
+{
+	zassert_equal(at_boot.stopped, 0);
+	zassert_equal(health_hk().disabled_by_health, 0);
+}
+#endif
+
+#elif !defined(PROTECTED_STALL)
+
+ZTEST(health, test_no_reset_loop_no_request)
+{
+	/* Fewer short runs than CONFIG_SS_RESET_LOOP_SAFE_RUNS. */
+	BUILD_ASSERT(SHORT_RUNS < CONFIG_SS_RESET_LOOP_SAFE_RUNS);
+	zassert_equal(at_boot.requests, 0);
+	zassert_equal(at_boot.stopped, 0);
+}
 
 /* ---- The watchdog ------------------------------------------------------- */
 
@@ -349,6 +533,83 @@ ZTEST(health, test_keeps_asking_until_the_frame_manager_acts)
 	zassert_ok(zbus_chan_pub(&frame_manager_status_chan, &frame_manager_status, K_NO_WAIT));
 	report(WATCHED, WATCHED);
 	zassert_false(frame_manager_next(&cmd, true));
+}
+
+/* ---- A critical app (DS-41) ---------------------------------------------- */
+
+ZTEST(health, test_a_stopped_critical_app_asks_for_safe_mode)
+{
+	struct frame_manager_cmd cmd;
+	struct mode_manager_cmd request;
+	uint32_t requests = health_hk().mode_requests;
+	uint8_t threshold = app_attrs[APP_ID_CRITICAL_APP].stall_threshold;
+
+	zassert_true(app_attrs[APP_ID_CRITICAL_APP].critical);
+	for (uint8_t i = 1; i < threshold; i++) {
+		report(CRITICAL, 0);
+	}
+	zassert_false(mode_manager_next(&request, true), "not before it is stopped");
+	report(CRITICAL, 0);
+	zassert_true(frame_manager_next(&cmd, true));
+	zassert_equal(cmd.args.set_app_enabled.app, APP_ID_CRITICAL_APP);
+	expect_safe_request(MODE_REASON_APP_FAILURE);
+	zassert_equal(health_hk().mode_requests - requests, 1);
+
+	/* Stopped: nothing more. */
+	report(CRITICAL, CRITICAL);
+	zassert_false(mode_manager_next(&request, true));
+}
+
+ZTEST(health, test_an_app_that_isnt_critical_asks_for_nothing)
+{
+	struct frame_manager_cmd cmd;
+	struct mode_manager_cmd request;
+	uint8_t threshold = app_attrs[APP_ID_WATCHED_APP].stall_threshold;
+
+	zassert_false(app_attrs[APP_ID_WATCHED_APP].critical);
+	for (uint8_t i = 0; i < threshold; i++) {
+		report(WATCHED, 0);
+	}
+	zassert_true(frame_manager_next(&cmd, true), "stopped");
+	zassert_false(mode_manager_next(&request, true), "but no safe mode");
+	report(WATCHED, WATCHED);
+}
+
+ZTEST(health, test_a_busy_mode_manager_gets_the_request_later)
+{
+	struct frame_manager_cmd cmd;
+	struct mode_manager_cmd request;
+	uint32_t failures = health_hk().action_failures;
+	uint8_t threshold = app_attrs[APP_ID_CRITICAL_APP].stall_threshold;
+
+	/* The mode manager already has CMD_MAX_PENDING requests from health waiting. */
+	for (int i = 0; i < CMD_MAX_PENDING; i++) {
+		for (uint8_t j = 0; j < threshold; j++) {
+			report(CRITICAL, 0);
+		}
+		zassert_true(frame_manager_next(&cmd, true));
+		report(CRITICAL, CRITICAL);
+		report(0, 0); /* started again by the ground */
+	}
+	for (uint8_t j = 0; j < threshold; j++) {
+		report(CRITICAL, 0);
+	}
+	zassert_true(frame_manager_next(&cmd, true), "still stopped");
+	zassert_equal(health_hk().action_failures - failures, 1, "the request waits");
+
+	/* Still busy the next major frame: tried and counted again. */
+	report(CRITICAL, CRITICAL);
+	zassert_equal(health_hk().action_failures - failures, 2);
+
+	/* The mode manager catches up: the request goes at the next major frame. */
+	for (int i = 0; i < CMD_MAX_PENDING; i++) {
+		expect_safe_request(MODE_REASON_APP_FAILURE);
+	}
+	report(0, 0);
+	expect_safe_request(MODE_REASON_APP_FAILURE);
+	report(0, 0);
+	zassert_false(mode_manager_next(&request, true), "sent once");
+	zassert_equal(health_hk().action_failures - failures, 2);
 }
 
 ZTEST(health, test_the_radio_is_never_stopped)

@@ -13,6 +13,12 @@
 uint32_t boot_number(void);
 uint32_t boot_reset_cause(void);
 
+/*
+ * Short runs in a row up to this boot (a reset loop, DS-44), at most
+ * CONFIG_SS_RESET_LOOP_STOP_RUNS. 0 if the last run was long.
+ */
+uint8_t boot_short_runs(void);
+
 /* Store where this run has got to: once a major frame. */
 void boot_checkpoint(int64_t met_ms, int64_t uptime_ms);
 

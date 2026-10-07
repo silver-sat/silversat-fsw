@@ -38,6 +38,10 @@ vectors:
   - {text: "typed_app pin", mode: safe, result: unknown_command}
   - {text: "typed_app pingx", mode: safe, result: unknown_command}
   - {text: "mode_manager ping", mode: safe, result: unknown_command}
+  # An internal command is not routed from the ground, in any mode (DS-68).
+  - {text: "typed_app internal_only 1", mode: safe, result: unknown_command}
+  - {text: "typed_app internal_only 1", mode: nominal, result: unknown_command}
+  - {text: "mode_manager request_mode safe reset_loop", mode: safe, result: unknown_command}
 
   # Argument count, then mode, then arguments
   - {text: "typed_app ping extra", mode: safe, result: bad_arg_count}

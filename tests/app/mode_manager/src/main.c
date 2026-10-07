@@ -8,6 +8,7 @@
  *     a week passes in one call;
  *   - command ingest: they publish ground_contact_chan, as if a command had
  *     been accepted, and send set_mode on the command channel;
+ *   - health: they send request_mode, as another app would (DS-40);
  *   - the radio: they receive its command channel, and count commands
  *     handled on its status channel only when a test says so.
  */
@@ -124,6 +125,17 @@ static int set_mode(uint8_t mode)
 	return command(&cmd);
 }
 
+/* Another app's request (DS-40). Returns 1 if accepted, 0 if refused. */
+static int request(uint8_t mode, uint8_t reason)
+{
+	const struct mode_manager_cmd cmd = {
+		.id = MODE_MANAGER_CMD_REQUEST_MODE,
+		.args.request_mode = {.mode = mode, .reason = reason},
+	};
+
+	return command(&cmd);
+}
+
 static struct mode_state mode_now(void)
 {
 	struct mode_state state;
@@ -154,6 +166,10 @@ static int64_t epoch;
 static struct {
 	struct mode_state at_boot;
 	int ground_set_safe_in_deploy;
+	int reset_loop_in_deploy;
+	int claimed_deployment;
+	int claimed_test_signal;
+	uint8_t after_requests_in_deploy;
 	uint8_t after_first_wakeup;
 	uint8_t after_late_signal;
 	uint8_t just_before_delay;
@@ -166,6 +182,10 @@ static void *setup(void)
 	k_sleep(K_MSEC(10));
 	boot.at_boot = mode_now();
 	boot.ground_set_safe_in_deploy = set_mode(MODE_SAFE);
+	boot.reset_loop_in_deploy = request(MODE_SAFE, MODE_REASON_RESET_LOOP);
+	boot.claimed_deployment = request(MODE_SAFE, MODE_REASON_DEPLOYMENT_COMPLETE);
+	boot.claimed_test_signal = request(MODE_TEST, MODE_REASON_TEST_SIGNAL);
+	boot.after_requests_in_deploy = mode_now().mode;
 
 	/* The first wakeup reads the test signal, absent here. */
 	wake_at(1000);
@@ -208,6 +228,16 @@ ZTEST(mode_manager, test_boot_starts_in_deploy)
 	zassert_equal(boot.at_boot.mode, MODE_DEPLOY);
 	zassert_equal(boot.at_boot.reason, MODE_REASON_BOOT);
 	zassert_equal(boot.ground_set_safe_in_deploy, 0, "no ground command ends deploy early");
+}
+
+ZTEST(mode_manager, test_boot_a_request_cannot_end_deploy_early)
+{
+	/* Only the separation delay ends deploy mode (DS-42), not even a reset loop. */
+	zassert_equal(boot.reset_loop_in_deploy, 0);
+	/* And no app can claim the mode manager's own triggers. */
+	zassert_equal(boot.claimed_deployment, 0);
+	zassert_equal(boot.claimed_test_signal, 0);
+	zassert_equal(boot.after_requests_in_deploy, MODE_DEPLOY);
 }
 
 ZTEST(mode_manager, test_boot_test_signal_is_read_only_at_boot)
@@ -298,6 +328,123 @@ ZTEST(mode_manager, test_mode_is_published_every_major_frame)
 	zassert_equal(mode_now().mode, MODE_SAFE);
 }
 
+/* ---- Requests from other apps (DS-40, DS-41) ----------------------------- */
+
+ZTEST(mode_manager, test_a_request_enters_safe_mode)
+{
+	struct mode_manager_hk start = mm_hk();
+	struct nvm_mode_state stored;
+	struct mode_state state;
+
+	wake_at(epoch + 7000);
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_RESET_LOOP), 1);
+	state = mode_now();
+	zassert_equal(state.mode, MODE_SAFE);
+	zassert_equal(state.reason, MODE_REASON_RESET_LOOP);
+	zassert_equal(state.since_met_ms, epoch + 7000);
+	zassert_equal(mm_hk().requests - start.requests, 1);
+	zassert_equal(mm_hk().transitions - start.transitions, 2, "to nominal, then to safe");
+	zassert_ok(nvm_mode_state_read(&stored));
+	zassert_equal(stored.reason, MODE_REASON_RESET_LOOP, "kept through a reset (DS-41)");
+}
+
+ZTEST(mode_manager, test_a_request_in_safe_mode_replaces_the_reason)
+{
+	struct mode_manager_hk start = mm_hk();
+	struct mode_state before = mode_now();
+	struct nvm_mode_state stored;
+
+	zassert_not_equal(before.reason, MODE_REASON_APP_FAILURE);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_APP_FAILURE), 1);
+	zassert_equal(mode_now().mode, MODE_SAFE);
+	zassert_equal(mode_now().reason, MODE_REASON_APP_FAILURE, "the latest cause");
+	zassert_equal(mode_now().since_met_ms, before.since_met_ms, "not a new entry");
+	zassert_equal(mm_hk().reason, MODE_REASON_APP_FAILURE);
+	zassert_equal(mm_hk().transitions, start.transitions, "no transition");
+	zassert_equal(mm_hk().requests - start.requests, 1);
+	zassert_ok(nvm_mode_state_read(&stored));
+	zassert_equal(stored.reason, MODE_REASON_APP_FAILURE);
+
+	/* The same cause again changes nothing. */
+	zassert_equal(request(MODE_SAFE, MODE_REASON_APP_FAILURE), 1);
+	zassert_equal(mm_hk().requests - start.requests, 1);
+
+	/* Nor does a reason out of range, which would otherwise be stored as it is. */
+	zassert_equal(request(MODE_SAFE, 32 + MODE_REASON_RESET_LOOP), 0);
+	zassert_equal(mode_now().reason, MODE_REASON_APP_FAILURE);
+}
+
+ZTEST(mode_manager, test_a_request_for_another_current_mode_changes_nothing)
+{
+	struct mode_manager_hk start = mm_hk();
+
+	/* Only safe mode's reason is replaced: elsewhere the reason is why the ground chose it. */
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_equal(request(MODE_NOMINAL, MODE_REASON_LOW_BATTERY), 1);
+	zassert_equal(mode_now().mode, MODE_NOMINAL);
+	zassert_equal(mode_now().reason, MODE_REASON_GROUND_COMMAND);
+	zassert_equal(mm_hk().requests, start.requests);
+}
+
+ZTEST(mode_manager, test_the_ground_setting_safe_keeps_the_reason)
+{
+	/* A ground set_mode for the current mode changes nothing (DS-35), not even the reason. */
+	zassert_equal(request(MODE_SAFE, MODE_REASON_RESET_LOOP), 1);
+	zassert_equal(set_mode(MODE_SAFE), 1);
+	zassert_equal(mode_now().reason, MODE_REASON_RESET_LOOP);
+}
+
+ZTEST(mode_manager, test_a_request_cannot_leave_safe_mode)
+{
+	uint32_t refused = mm_hk().refused;
+
+	/* Only the ground leaves safe mode (DS-41). */
+	zassert_equal(request(MODE_NOMINAL, MODE_REASON_RESET_LOOP), 0);
+	zassert_equal(mode_now().mode, MODE_SAFE);
+	zassert_equal(mm_hk().refused - refused, 1);
+}
+
+ZTEST(mode_manager, test_a_request_cannot_speak_for_the_ground)
+{
+	struct mode_manager_hk start = mm_hk();
+
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_GROUND_COMMAND), 0);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_BOOT), 0);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_MAX + 1), 0);
+	zassert_equal(request(MODE_SAFE, 200), 0, "far past the reasons mask");
+	zassert_equal(request(MODE_SAFE, 32 + MODE_REASON_RESET_LOOP), 0,
+		      "past the mask, though its low bits name an allowed reason");
+	zassert_equal(mode_now().mode, MODE_NOMINAL);
+	zassert_equal(mm_hk().refused - start.refused, 5);
+	zassert_equal(mm_hk().requests, start.requests);
+}
+
+ZTEST(mode_manager, test_a_request_cannot_claim_the_mode_managers_triggers)
+{
+	struct radio_cmd cmd;
+
+	/* Command loss is the mode manager's own timer (DS-46). */
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_COMMAND_LOSS), 0);
+	zassert_equal(request(MODE_SAFE, MODE_REASON_DEPLOYMENT_COMPLETE), 0);
+	zassert_equal(mode_now().mode, MODE_NOMINAL);
+	zassert_false(radio_next(&cmd, true), "and none of its actions ran");
+}
+
+ZTEST(mode_manager, test_each_reason_another_app_may_give)
+{
+	const uint8_t reasons[] = {MODE_REASON_LOW_BATTERY, MODE_REASON_RESET_LOOP,
+				   MODE_REASON_APP_FAILURE};
+
+	for (size_t i = 0; i < ARRAY_SIZE(reasons); i++) {
+		zassert_equal(set_mode(MODE_NOMINAL), 1);
+		zassert_equal(request(MODE_SAFE, reasons[i]), 1, "reason %u", reasons[i]);
+		zassert_equal(mode_now().reason, reasons[i]);
+	}
+}
+
 /* ---- The command-loss timer (DS-46) -------------------------------------- */
 
 ZTEST(mode_manager, test_no_timer_before_first_contact)
@@ -345,14 +492,28 @@ ZTEST(mode_manager, test_command_loss_in_safe_mode_still_silences)
 {
 	struct radio_cmd cmd;
 
-	/* Already in safe mode: no transition, but the action still runs. */
+	struct mode_manager_hk start;
+	struct nvm_mode_state stored;
+	struct mode_state before;
+
+	/*
+	 * Already in safe mode, entered by the ground: no transition, but the
+	 * action still runs, and command loss becomes the reason (DS-41).
+	 */
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_equal(set_mode(MODE_SAFE), 1);
+	start = mm_hk();
+	before = mode_now();
 	contact_at(epoch);
 	wake_at(epoch + TIMEOUT_MS);
 	zassert_true(radio_next(&cmd, true));
 	zassert_false(cmd.args.set_transmit.enabled);
 	zassert_equal(mode_now().mode, MODE_SAFE);
-	zassert_not_equal(mode_now().reason, MODE_REASON_COMMAND_LOSS,
-			  "the reason is why safe mode was entered, which hasn't changed");
+	zassert_equal(mode_now().reason, MODE_REASON_COMMAND_LOSS, "the latest cause");
+	zassert_equal(mode_now().since_met_ms, before.since_met_ms, "not a new entry");
+	zassert_equal(mm_hk().transitions, start.transitions, "no transition");
+	zassert_ok(nvm_mode_state_read(&stored));
+	zassert_equal(stored.reason, MODE_REASON_COMMAND_LOSS, "kept through a reset");
 }
 
 ZTEST(mode_manager, test_command_loss_fires_once_per_silence)

@@ -747,6 +747,72 @@ def test_send_argument_named_cmd(tmp_path):
         msggen.load_definitions(root)
 
 
+# --- Internal commands (DS-68) --------------------------------------------
+
+# SENSOR with a command only other apps may send, with an enum argument no
+# ground command uses.
+INTERNAL = {**SENSOR, "commands": SENSOR["commands"] + [
+    {"name": "request", "id": 3, "description": "From another app.", "internal": True,
+     "fields": [{"name": "level", "type": "severity", "description": "How bad."}]},
+]}
+INTERNAL_SENDER = {**QUIET, "sends": ["sensor.request"]}
+
+
+def test_internal_command_is_not_routed(tmp_path):
+    out = generate(write_defs(tmp_path, apps=[INTERNAL, INTERNAL_SENDER]))
+    routes = out["src/cmd_routes.c"]
+    assert '.command = "set_rate",' in routes
+    assert "request" not in routes, "the ground can't send it"
+    assert "severity_names" not in routes, "no ground command decodes a severity"
+    header = out["include/msg/sensor.h"]
+    assert "SENSOR_CMD_REQUEST = 3," in header
+    assert "struct sensor_request {" in header
+    assert "int send_sensor_request(uint8_t level);" in out["include/msg/quiet.h"]
+
+
+def test_internal_command_in_the_dictionary(tmp_path):
+    defs = msggen.load_definitions(write_defs(tmp_path, apps=[INTERNAL, INTERNAL_SENDER]))
+    sensor = next(a for a in msggen.command_dictionary(defs)["apps"] if a["name"] == "sensor")
+    assert [c["name"] for c in sensor["commands"]] == ["set_rate", "reinit"]
+    assert [c["name"] for c in sensor["internal_commands"]] == ["request"]
+    assert "modes" not in sensor["internal_commands"][0]
+    assert sensor["internal_commands"][0]["args"][0]["name"] == "level"
+
+
+def test_internal_command_has_no_modes(tmp_path):
+    app = app_with(commands=[{"name": "go", "id": 1, "description": "d", "internal": True,
+                              "modes": MODES}])
+    with pytest.raises(msggen.DefinitionError, match="an internal command has no modes"):
+        msggen.load_definitions(write_defs(tmp_path, apps=[app]))
+
+
+def test_internal_must_be_a_bool(tmp_path):
+    app = app_with(commands=[{"name": "go", "id": 1, "description": "d", "internal": "yes"}])
+    with pytest.raises(msggen.DefinitionError, match="internal: must be true"):
+        msggen.load_definitions(write_defs(tmp_path, apps=[app]))
+
+
+def test_a_ground_command_still_needs_modes(tmp_path):
+    app = app_with(commands=[{"name": "go", "id": 1, "description": "d", "internal": False}])
+    with pytest.raises(msggen.DefinitionError, match="list the modes"):
+        msggen.load_definitions(write_defs(tmp_path, apps=[app]))
+
+
+@needs_gcc
+def test_internal_commands_compile(tmp_path):
+    results = compile_generated(tmp_path, data_size=64, apps=[INTERNAL, INTERNAL_SENDER])
+    for name, result in results.items():
+        assert result.returncode == 0, f"{name}: {result.stderr}"
+
+
+@needs_gcc
+def test_routes_compile_with_only_internal_commands(tmp_path):
+    only = {**QUIET, "commands": [{"name": "go", "id": 1, "description": "d",
+                                   "internal": True}]}
+    result = compile_generated(tmp_path, data_size=64, apps=[only])["cmd_routes.c"]
+    assert result.returncode == 0, result.stderr
+
+
 # --- Initial values for data channels -------------------------------------
 
 STATE = {"name": "state", "description": "A state.", "fields": [
