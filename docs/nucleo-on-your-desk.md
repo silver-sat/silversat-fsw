@@ -68,11 +68,14 @@ st-flash --reset write ~/Downloads/zephyr.bin 0x08000000
 
 ## 4. Watch the console
 
-Find the board's serial port, then open it at 115200 baud:
+Find the board's serial port, then open it at 115200 baud. On a Mac, use
+the port's `/dev/cu.` name. Each port also has a `/dev/tty.` name, which
+waits for a modem's carrier-detect signal before it opens, and with these
+boards that means forever.
 
 ```sh
-ls /dev/tty.usbmodem*          # macOS; on Linux, ls /dev/ttyACM*
-tio -b 115200 /dev/tty.usbmodem1234
+ls /dev/cu.usbmodem*           # macOS; on Linux, ls /dev/ttyACM*
+tio -b 115200 /dev/cu.usbmodem1234
 ```
 
 To quit `tio`, press Ctrl-T, then Q.
@@ -140,9 +143,9 @@ receives); not D0 and D1, which belong to the console.
 
 Don't connect any power pins: each board has its own USB cable. If the
 FT232H has an I2C mode switch, set it off. It appears on a Mac as
-`/dev/tty.usbserial-XXXXXXXX`.
+`/dev/cu.usbserial-XXXXXXXX`.
 
-**Check bytes arrive.** `tio -b 19200 /dev/tty.usbserial-XXXXXXXX` shows a
+**Check bytes arrive.** `tio -b 19200 /dev/cu.usbserial-XXXXXXXX` shows a
 burst of binary every second. In hex (Ctrl-T then `?` lists tio's keys)
 each frame starts and ends with `c0`, and housekeeping starts `48` (`H`).
 Quit tio before the next step: only one program can have the port open.
@@ -151,7 +154,7 @@ Quit tio before the next step: only one program can have the port open.
 needs Python 3 and `python3 -m pip install pyyaml jinja2`):
 
 ```sh
-python3 sim/radio_sim.py --port /dev/tty.usbserial-XXXXXXXX --baud 19200 --listen
+python3 sim/radio_sim.py --port /dev/cu.usbserial-XXXXXXXX --baud 19200 --listen
 ```
 
 ```
@@ -166,7 +169,7 @@ definitions. Ctrl-C stops it.
 which the development build accepts, and the reply is printed:
 
 ```sh
-python3 sim/radio_sim.py --port /dev/tty.usbserial-XXXXXXXX --baud 19200 \
+python3 sim/radio_sim.py --port /dev/cu.usbserial-XXXXXXXX --baud 19200 \
     --listen nvm retry
 ```
 

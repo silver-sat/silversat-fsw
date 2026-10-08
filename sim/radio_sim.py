@@ -15,7 +15,7 @@ the link codec (DS-65): ground commands go to avionics as KISS data frames
 signs the command with the published test key, sends it, and prints the
 replies. --fault picks a fault from the menu (FAULTS) to test the link.
 
-    python3 sim/radio_sim.py --port /dev/tty.usbserial-1234 --baud 19200 --listen
+    python3 sim/radio_sim.py --port /dev/cu.usbserial-1234 --baud 19200 --listen
 
 prints every packet avionics sends, decoded by name (tools/telemetry.py):
 housekeeping, command replies and memory dumps, until Ctrl-C or
@@ -25,6 +25,7 @@ the fly: Python 3 with PyYAML and Jinja2.
 """
 
 import argparse
+import fcntl
 import os
 import select
 import sys
@@ -52,6 +53,22 @@ FAULTS = {
     "skip_seq": "the sequence number jumps by two, as if a frame were lost",
     "other_type": "the frame has a type byte avionics doesn't handle (0x01)",
 }
+
+
+def open_port(path):
+    """Open a serial port for reading and writing, without waiting for a
+    modem. On macOS, opening a port's /dev/tty.* name blocks until the
+    carrier-detect line is asserted, which a USB-serial adapter wired only
+    to TX, RX and ground never does; /dev/cu.* doesn't wait. So open without
+    blocking, tell the line to ignore carrier detect (CLOCAL), then go back
+    to ordinary blocking reads. Either name then works."""
+    fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    attrs = termios.tcgetattr(fd)
+    attrs[2] |= termios.CLOCAL   # cflag: no modem control lines
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    return fd
 
 
 def set_baud(fd, baud):
@@ -83,7 +100,7 @@ class RadioSim:
     """The radio board's side of the radio UART."""
 
     def __init__(self, path, baud=None):
-        self.fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
+        self.fd = open_port(path)
         tty.setraw(self.fd)
         if baud is not None:
             set_baud(self.fd, baud)

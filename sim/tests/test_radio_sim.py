@@ -155,6 +155,23 @@ def test_baud_is_set_both_ways():
         os.close(avionics)
 
 
+def test_the_port_ignores_carrier_detect_and_blocks_for_reads():
+    """Opened without waiting for a modem (macOS's /dev/tty.* names wait for
+    carrier detect, forever with a bare USB-serial adapter), then back to
+    ordinary blocking reads."""
+    import fcntl
+
+    avionics, radio = os.openpty()
+    try:
+        sim = radio_sim.RadioSim(os.ttyname(radio))
+        assert termios.tcgetattr(sim.fd)[2] & termios.CLOCAL
+        assert not fcntl.fcntl(sim.fd, fcntl.F_GETFL) & os.O_NONBLOCK
+        sim.close()
+    finally:
+        os.close(radio)
+        os.close(avionics)
+
+
 def test_an_unsupported_baud_is_refused():
     avionics, radio = os.openpty()
     try:
