@@ -443,21 +443,16 @@ ZTEST(nvm_app, test_an_unknown_command_is_rejected)
  */
 static void settle(void)
 {
-	struct event event;
-
 	wake();
-	while (event_take(&event) == 0) {
-	}
+	app_test_drain_events();
 }
 
-/* The next event should be the nvm app's event id. Returns it. */
+/* The nvm app should have raised this event. Returns it. */
 static struct event expect_event(uint16_t id)
 {
 	struct event event;
 
-	zassert_ok(event_take(&event), "event %u", id);
-	zassert_equal(event.app, APP_ID_NVM);
-	zassert_equal(event.id, id, "event %u, not %u", id, event.id);
+	zassert_true(app_test_find_event(APP_ID_NVM, id, &event), "event %u", id);
 	return event;
 }
 

@@ -153,23 +153,12 @@ static struct mode_manager_hk mm_hk(void)
 	return hk;
 }
 
-/* Throw away queued events, so a test sees only its own. */
-static void drain_events(void)
-{
-	struct event event;
-
-	while (event_take(&event) == 0) {
-	}
-}
-
-/* The next event should be the mode manager's event id, with these arguments. */
+/* The mode manager should have raised this event, with these arguments. */
 static void expect_event(uint16_t id, int32_t mode, int32_t reason)
 {
 	struct event event;
 
-	zassert_ok(event_take(&event), "an event");
-	zassert_equal(event.app, APP_ID_MODE_MANAGER);
-	zassert_equal(event.id, id);
+	zassert_true(app_test_find_event(APP_ID_MODE_MANAGER, id, &event), "event %u", id);
 	zassert_equal(event.arg0, mode);
 	zassert_equal(event.arg1, reason);
 }
@@ -239,7 +228,7 @@ static void before(void *fixture)
 	zassert_ok(zbus_chan_pub(&ground_contact_chan, &never, K_NO_WAIT));
 	zassert_equal(set_mode(MODE_SAFE), 1);
 	radio_catch_up(0);
-	drain_events();
+	app_test_drain_events();
 }
 
 ZTEST_SUITE(mode_manager, NULL, setup, before, NULL, NULL);

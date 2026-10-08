@@ -12,6 +12,9 @@
 
 #include "app_test.h"
 #include "silversat/resource_map.h"
+#if defined(CONFIG_SS_EVENT)
+#include "silversat/event.h"
+#endif
 
 struct frame_tick app_test_tick(uint32_t count)
 {
@@ -57,3 +60,26 @@ int app_test_wait_status(const struct zbus_channel *status_chan, uint32_t steps,
 	}
 	return rc;
 }
+
+#if defined(CONFIG_SS_EVENT)
+void app_test_drain_events(void)
+{
+	struct event event;
+
+	while (event_take(&event) == 0) {
+	}
+}
+
+bool app_test_find_event(uint8_t app, uint16_t id, struct event *out)
+{
+	struct event event;
+
+	while (event_take(&event) == 0) {
+		if (event.app == app && event.id == id) {
+			*out = event;
+			return true;
+		}
+	}
+	return false;
+}
+#endif
