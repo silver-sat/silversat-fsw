@@ -47,7 +47,12 @@ COMMON = {
             {"name": "cmd_rejected", "type": "uint32"},
         ]},
         {"name": "event", "description": "An event.", "fields": [
+            {"name": "met_ms", "type": "int64"},
+            {"name": "app", "type": "uint8"},
             {"name": "severity", "type": "severity"},
+            {"name": "id", "type": "uint16"},
+            {"name": "arg0", "type": "int32"},
+            {"name": "arg1", "type": "int32"},
         ]},
     ],
 }
@@ -840,6 +845,113 @@ def test_routes_compile_with_only_internal_commands(tmp_path):
                                    "internal": True}]}
     result = compile_generated(tmp_path, data_size=64, apps=[only])["cmd_routes.c"]
     assert result.returncode == 0, result.stderr
+
+
+# --- Events (DS-10) --------------------------------------------------------
+
+# SENSOR with events: one with an app and an enum argument, one with none.
+EVENTFUL = {**SENSOR, "events": [
+    {"name": "glitch", "id": 1, "severity": "error", "description": "A glitch.",
+     "args": [{"name": "source", "type": "app", "description": "Who."},
+              {"name": "level", "type": "severity", "description": "How bad."}]},
+    {"name": "tick", "id": 2, "severity": "info", "description": "A tick."},
+]}
+
+
+def event_app(**event):
+    base = {"name": "e", "id": 1, "severity": "info", "description": "d"}
+    return {**SENSOR, "events": [{**base, **event}]}
+
+
+def test_event_header(tmp_path):
+    header = generate(write_defs(tmp_path, apps=[EVENTFUL]))["include/msg/sensor.h"]
+    assert '#include "silversat/event.h"' in header
+    assert "enum sensor_event_id {\n\tSENSOR_EVENT_GLITCH = 1,\n\tSENSOR_EVENT_TICK = 2,\n};" \
+        in header
+    assert ("static inline void emit_sensor_glitch(int64_t met_ms, int32_t source, "
+            "int32_t level)") in header
+    assert ".severity = SEVERITY_ERROR," in header
+    assert ".arg0 = source," in header and ".arg1 = level," in header
+    assert ".arg_values[0] = app_name((uint8_t)source)," in header
+    assert ".arg_values[1] = severity_name((uint32_t)level)," in header
+    assert "static inline void emit_sensor_tick(int64_t met_ms)" in header
+    assert ".arg0 = 0," in header
+
+
+def test_no_events_no_event_header(tmp_path):
+    header = generate(write_defs(tmp_path))["include/msg/sensor.h"]
+    assert "silversat/event.h" not in header
+    assert "event_id" not in header
+
+
+def test_event_encoder(tmp_path):
+    source = generate(write_defs(tmp_path, apps=[EVENTFUL]))["src/tlm_encode.c"]
+    assert "int tlm_encode_event(const struct event *event, uint8_t *out, size_t out_size)" \
+        in source
+    assert "out[0] = TLM_KIND_EVENT;" in source
+    assert "(uint8_t)event->severity" in source
+
+
+def test_event_dictionary(tmp_path):
+    d = msggen.command_dictionary(msggen.load_definitions(write_defs(tmp_path, apps=[EVENTFUL])))
+    sensor = next(a for a in d["apps"] if a["name"] == "sensor")
+    assert [(e["name"], e["id"], e["severity"]) for e in sensor["events"]] == [
+        ("glitch", 1, "error"), ("tick", 2, "info")]
+    assert sensor["events"][0]["args"][0] == {"name": "source", "type": "app",
+                                              "description": "Who."}
+    assert [f["name"] for f in d["event"]["fields"]] == [
+        "met_ms", "app", "severity", "id", "arg0", "arg1"]
+    assert d["event"]["size"] == 20
+    assert d["enums"]["mode"] == [{"name": "safe", "value": 0}, {"name": "nominal", "value": 1}]
+
+
+@pytest.mark.parametrize("event, message", [
+    ({"severity": "dire"}, "not a severity"),
+    ({"id": 0}, "id"),
+    ({"id": 65536}, "id"),
+    ({"args": [{"name": "x", "type": "float32", "description": "d"}]}, "not int32, app"),
+    ({"args": [{"name": "met_ms", "description": "d"}]}, "met_ms is the emit function"),
+    ({"args": [{"name": f"a{i}", "description": "d"} for i in range(3)]}, "at most 2"),
+    ({"args": [{"name": "a", "description": "d"}, {"name": "a", "description": "d"}]},
+     "argument name"),
+    ({"colour": "red"}, "unknown key colour"),
+])
+def test_bad_events(tmp_path, event, message):
+    with pytest.raises(msggen.DefinitionError, match=message):
+        msggen.load_definitions(write_defs(tmp_path, apps=[event_app(**event)]))
+
+
+def test_event_names_and_ids_are_unique(tmp_path):
+    two = {**SENSOR, "events": [{"name": "e", "id": 1, "severity": "info", "description": "d"},
+                                {"name": "e", "id": 2, "severity": "info", "description": "d"}]}
+    with pytest.raises(msggen.DefinitionError, match="event name"):
+        msggen.load_definitions(write_defs(tmp_path / "a", apps=[two]))
+    two["events"][1]["name"] = "f"
+    two["events"][1]["id"] = 1
+    with pytest.raises(msggen.DefinitionError, match="event id"):
+        msggen.load_definitions(write_defs(tmp_path / "b", apps=[two]))
+
+
+def test_events_need_struct_event(tmp_path):
+    common = copy.deepcopy(COMMON)
+    common["structs"] = [s for s in common["structs"] if s["name"] != "event"]
+    with pytest.raises(msggen.DefinitionError, match="need struct event"):
+        msggen.load_definitions(write_defs(tmp_path, common=common, apps=[EVENTFUL]))
+
+
+def test_events_need_the_whole_struct_event(tmp_path):
+    common = copy.deepcopy(COMMON)
+    event = next(s for s in common["structs"] if s["name"] == "event")
+    event["fields"] = event["fields"][:-1]
+    with pytest.raises(msggen.DefinitionError, match="exactly the fields"):
+        msggen.load_definitions(write_defs(tmp_path, common=common, apps=[EVENTFUL]))
+
+
+@needs_gcc
+def test_events_compile(tmp_path):
+    results = compile_generated(tmp_path, data_size=64, apps=[EVENTFUL, QUIET])
+    for name, result in results.items():
+        assert result.returncode == 0, f"{name}: {result.stderr}"
 
 
 # --- Initial values for data channels -------------------------------------

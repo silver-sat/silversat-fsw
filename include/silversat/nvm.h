@@ -131,6 +131,13 @@ bool nvm_available(void);
 bool nvm_mirror_available(void);
 
 /*
+ * Whether the board has the store at all (a fram or nvm-mirror alias), so
+ * a store that was never fitted isn't reported as failed.
+ */
+bool nvm_fram_fitted(void);
+bool nvm_mirror_fitted(void);
+
+/*
  * After a failure, try FRAM and the mirror again (DS-75: the ground can
  * command a retry). Returns 0 if FRAM is available, -EIO if not.
  */

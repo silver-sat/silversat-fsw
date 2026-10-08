@@ -50,6 +50,7 @@ static struct nvm_run_checkpoint checkpoint;
 static uint32_t reset_cause;
 static uint32_t failures;
 static uint8_t short_runs;
+static int64_t met_at_boot_ms;
 
 static void store(void)
 {
@@ -131,6 +132,7 @@ static int health_boot(void)
 	/* Stored at once, so a reset before the first checkpoint still counts this boot. */
 	store();
 	short_runs = count_short_runs(checkpoint.boot_number);
+	met_at_boot_ms = checkpoint.met_ms;
 
 	{
 		const struct mission_time time = {
@@ -154,6 +156,11 @@ uint32_t boot_number(void)
 uint32_t boot_reset_cause(void)
 {
 	return reset_cause;
+}
+
+int64_t boot_met_ms(void)
+{
+	return met_at_boot_ms;
 }
 
 uint8_t boot_short_runs(void)

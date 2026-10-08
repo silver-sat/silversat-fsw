@@ -211,6 +211,14 @@ The cFS pattern is a housekeeping request: telemetry output asks, each app answe
 
 The encoders are generated (DS-61) so telemetry output never includes another app's header (DS-68), and the ground decoder reads the same layout from the JSON dictionary. Each downlink packet starts with a printable letter giving its kind (DS-66), so a hex dump or a terminal shows at a glance whether a packet is a reply or telemetry.
 
+### Why events travel in a queue, not on zbus
+
+Housekeeping is a value: only the latest matters, so a last-value channel fits. Events are the opposite: each one matters, and they come from every app to one reader. On zbus each published event would be a queued copy holding a buffer from the shared pool until telemetry output read it, and a fault that makes an app raise events every frame could drain the pool that commands need. Bounding that would take a count per app, shared between apps. A static queue of events bounds it in one place: it holds 16, costs no pool buffers, and an app that raises too many loses its own events, not anyone's commands. Link frames already travel this way, for the same reason (DS-11).
+
+### Why a full event queue keeps the oldest
+
+When something goes wrong, one fault tends to cause others: an app stalls, health stops it, a critical app's loss asks for safe mode, and so on. The first event is usually the cause; the rest are consequences. A queue that drops new events when full keeps the start of the story, and the drop count says how much of the end was lost. Keeping the newest would show the ground the latest symptoms and lose the cause.
+
 ### Why CRC before KISS escaping
 
 1. The CRC bytes themselves must be escaped; appending a CRC after escaping would occasionally put a raw frame delimiter in the stream.

@@ -18,7 +18,7 @@ replies. --fault picks a fault from the menu (FAULTS) to test the link.
     python3 sim/radio_sim.py --port /dev/cu.usbserial-1234 --baud 19200 --listen
 
 prints every packet avionics sends, decoded by name (tools/telemetry.py):
-housekeeping, command replies and memory dumps, until Ctrl-C or
+housekeeping, events, command replies and memory dumps, until Ctrl-C or
 --duration seconds. With a command as well, it sends the command first.
 Decoding names needs the message dictionary, generated from messages/ on
 the fly: Python 3 with PyYAML and Jinja2.
@@ -89,6 +89,10 @@ def describe(dictionary, payload):
         return f"undecodable ({e}): {payload.hex(' ')}"
     if packet["kind"] == "reply":
         return packet["text"]
+    if packet["kind"] == "event":
+        args = "".join(f" {name}={value}" for name, value in packet["args"].items())
+        return (f"MET {packet['met_ms'] / 1000:.3f} s  EVENT {packet['app']} "
+                f"{packet['name']} ({packet['severity']}){args}")
     if packet["kind"] == "dump":
         return (f"dump {packet['store']} 0x{packet['address']:04x}, "
                 f"{len(packet['data'])} bytes: {packet['data'].hex(' ')}")
@@ -111,6 +115,8 @@ class RadioSim:
         self.errors = []
         # Housekeeping packets that arrived while replies() was waiting.
         self.housekeeping = []
+        # Any other packets that did (events, dumps).
+        self.other = []
 
     def close(self):
         os.close(self.fd)
@@ -174,8 +180,9 @@ class RadioSim:
         """Wait up to timeout seconds for count command replies, and return
         their text as strings. The first byte of every downlink packet says
         what it is: replies start with 'A' (ACK) or 'N' (NAK). Housekeeping
-        packets ('H') that arrive meanwhile go into self.housekeeping, so
-        telemetry never gets mistaken for a reply."""
+        packets ('H') that arrive meanwhile go into self.housekeeping, and
+        any other kind (events, dumps) into self.other, so telemetry never
+        gets mistaken for a reply."""
         texts = []
         deadline = time.monotonic() + timeout
         while len(texts) < count:
@@ -185,10 +192,12 @@ class RadioSim:
             for packet in self.receive(left, count=1):
                 if packet.type != TYPE_DATA:
                     continue
-                if packet.payload[:1] == b"H":
+                if packet.payload[:1] in (b"A", b"N"):
+                    texts.append(packet.payload.decode("ascii"))
+                elif packet.payload[:1] == b"H":
                     self.housekeeping.append(packet.payload)
                 else:
-                    texts.append(packet.payload.decode("ascii"))
+                    self.other.append(packet.payload)
         return texts
 
     def listen(self, dictionary, out=print, duration=None):

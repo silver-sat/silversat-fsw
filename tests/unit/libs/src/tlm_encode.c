@@ -1,5 +1,6 @@
 /*
- * Tests for the generated housekeeping encoders (DS-61, DS-64).
+ * Tests for the generated housekeeping and event encoders (DS-10, DS-61,
+ * DS-64).
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -30,6 +31,28 @@ ZTEST(tlm_encode, test_encoding_matches_the_ground)
 		zassert_equal(len, (int)v->len, "%s: length %d", v->name, len);
 		zassert_mem_equal(out, v->packet, v->len, "%s: bytes", v->name);
 	}
+}
+
+ZTEST(tlm_encode, test_event_encoding_matches_the_ground)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(event_vectors); i++) {
+		const struct event_vector *v = &event_vectors[i];
+		uint8_t out[255];
+		int len = tlm_encode_event(v->event, out, sizeof(out));
+
+		zassert_equal(len, (int)v->len, "%s: length %d", v->name, len);
+		zassert_mem_equal(out, v->packet, v->len, "%s: bytes", v->name);
+		zassert_equal(out[0], TLM_KIND_EVENT);
+	}
+}
+
+ZTEST(tlm_encode, test_an_event_needs_room)
+{
+	uint8_t out[255];
+	size_t len = event_vectors[0].len;
+
+	zassert_equal(tlm_encode_event(event_vectors[0].event, out, len - 1), -ENOSPC);
+	zassert_equal(tlm_encode_event(event_vectors[0].event, out, len), (int)len);
 }
 
 ZTEST(tlm_encode, test_every_app_is_listed_once)

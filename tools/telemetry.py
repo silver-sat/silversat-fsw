@@ -10,6 +10,10 @@ Every downlink packet starts with a printable kind byte:
     'D'       a memory dump from the nvm app: 'D', store (0 FRAM, 1 the
               mirror), address (2 bytes), length, then the bytes as stored.
               tools/nvm_dump.py puts dumps together and decodes the records.
+    'E'       an event (DS-10): 'E', then struct event from common.yaml: MET
+              (8 bytes), app id, severity, event id (2 bytes), and two
+              arguments (4 bytes each, signed), decoded by the event's name
+              and its arguments' names from the app's YAML.
 
 The housekeeping layouts come from the same YAML as the flight encoders
 (include/silversat/tlm_encode.h), through the generator's dictionary.
@@ -31,6 +35,7 @@ import command_text  # noqa: E402
 
 KIND_HK = ord("H")
 KIND_DUMP = ord("D")
+KIND_EVENT = ord("E")
 REPLY_KINDS = (ord("A"), ord("N"))
 HK_HEADER_LEN = 10
 DUMP_HEADER_LEN = 5          # 'D', store, address (2, little-endian), length
@@ -77,13 +82,15 @@ def _encode_field(field, value):
 
 
 def decode(dictionary, payload):
-    """One downlink packet, as a dict with "kind": "reply", "hk" or "dump"."""
+    """One downlink packet, as a dict with "kind": "reply", "hk", "dump" or "event"."""
     if not payload:
         raise ValueError("empty packet")
     if payload[0] in REPLY_KINDS:
         return {"kind": "reply", "text": payload.decode("ascii")}
     if payload[0] == KIND_DUMP:
         return _decode_dump(payload)
+    if payload[0] == KIND_EVENT:
+        return _decode_event(dictionary, payload)
     if payload[0] != KIND_HK:
         raise ValueError(f"unknown packet kind {payload[0]:#04x}")
     if len(payload) < HK_HEADER_LEN:
@@ -98,6 +105,39 @@ def decode(dictionary, payload):
         "app": app["name"],
         "met_ms": int.from_bytes(payload[2:HK_HEADER_LEN], "little", signed=True),
         "fields": {f["name"]: _decode_field(f, data) for f in hk["fields"]},
+    }
+
+
+def _event_arg(dictionary, arg, value):
+    """An event argument's value: an app's name, an enum value's name, or the
+    number, as the argument's type says."""
+    if arg["type"] == "app":
+        return next((a["name"] for a in dictionary["apps"] if a["id"] == value), value)
+    if arg["type"] != "int32":
+        values = dictionary["enums"].get(arg["type"], [])
+        return next((v["name"] for v in values if v["value"] == value), value)
+    return value
+
+
+def _decode_event(dictionary, payload):
+    """An 'E' packet (DS-10), by name."""
+    layout = dictionary["event"]
+    data = payload[1:]
+    if len(data) != layout["size"]:
+        raise ValueError(f"event packet is {len(data)} bytes after its kind, not {layout['size']}")
+    raw = {f["name"]: _decode_field(f, data) for f in layout["fields"]}
+    app = _app(dictionary, "id", raw["app"])
+    event = next((e for e in app["events"] if e["id"] == raw["id"]), None)
+    if event is None:
+        raise ValueError(f"{app['name']} has no event {raw['id']}")
+    values = [raw["arg0"], raw["arg1"]]
+    return {
+        "kind": "event",
+        "app": app["name"],
+        "name": event["name"],
+        "severity": raw["severity"],
+        "met_ms": raw["met_ms"],
+        "args": {a["name"]: _event_arg(dictionary, a, v) for a, v in zip(event["args"], values)},
     }
 
 
@@ -126,6 +166,28 @@ def encode_hk(dictionary, app_name, met_ms, values):
     return bytes([KIND_HK, app["id"]]) + met_ms.to_bytes(8, "little", signed=True) + body
 
 
+def encode_event(dictionary, app_name, event_name, met_ms, args):
+    """The 'E' packet the flight encoder sends for this event (DS-10). args
+    maps each argument's name to a number, or to a name for an argument of
+    type app or an enum."""
+    app = _app(dictionary, "name", app_name)
+    event = next(e for e in app["events"] if e["name"] == event_name)
+    numbers = []
+    for arg in event["args"]:
+        value = args[arg["name"]]
+        if arg["type"] == "app":
+            value = _app(dictionary, "name", value)["id"] if isinstance(value, str) else value
+        elif arg["type"] != "int32" and isinstance(value, str):
+            value = next(v["value"] for v in dictionary["enums"][arg["type"]]
+                         if v["name"] == value)
+        numbers.append(value)
+    numbers += [0] * (2 - len(numbers))
+    values = {"met_ms": met_ms, "app": app["id"], "severity": event["severity"],
+              "id": event["id"], "arg0": numbers[0], "arg1": numbers[1]}
+    return bytes([KIND_EVENT]) + b"".join(_encode_field(f, values[f["name"]])
+                                          for f in dictionary["event"]["fields"])
+
+
 # --- Shared vectors -------------------------------------------------------
 
 
@@ -145,6 +207,11 @@ def _c_value(field, value):
     if field["type"] == "int64":
         return f"{value}LL"
     return str(value)
+
+
+def _c_int32(value):
+    """An int32 as C: the smallest needs INT32_MIN, which a literal can't write."""
+    return "INT32_MIN" if value == -2**31 else str(value)
 
 
 def c_vectors(dictionary, path):
@@ -168,6 +235,25 @@ def c_vectors(dictionary, path):
     out += ["", "struct hk_vector {", "\tconst char *name;", f"\tconst struct {vectors[0]['app']}_hk *hk;",
             "\tint64_t met_ms;", "\tconst uint8_t *packet;", "\tsize_t len;", "};", "",
             "static const struct hk_vector hk_vectors[] = {"] + rows + ["};", ""]
+
+    # Events: the struct an emit function fills in, and the 'E' packet.
+    event_rows = []
+    for i, v in enumerate(yaml.safe_load(Path(path).read_text()).get("events", [])):
+        packet = encode_event(dictionary, v["app"], v["event"], v["met_ms"], v["args"])
+        decoded = {f["name"]: _decode_field(f, packet[1:]) for f in dictionary["event"]["fields"]}
+        severity = next(f for f in dictionary["event"]["fields"] if f["name"] == "severity")
+        init = ", ".join([f".met_ms = {v['met_ms']}LL", f".app = {decoded['app']}",
+                          f".severity = {_c_value(severity, decoded['severity'])}",
+                          f".id = {decoded['id']}", f".arg0 = {_c_int32(decoded['arg0'])}",
+                          f".arg1 = {_c_int32(decoded['arg1'])}"])
+        out.append(f"static const struct event event_{i} = {{{init}}};")
+        out.append(f"static const uint8_t event_packet_{i}[] = "
+                   f"{{{', '.join(f'0x{b:02x}' for b in packet)}}};")
+        event_rows.append(f'\t{{"{v["name"]}", &event_{i}, event_packet_{i}, '
+                          f'sizeof(event_packet_{i})}},')
+    out += ["struct event_vector {", "\tconst char *name;", "\tconst struct event *event;",
+            "\tconst uint8_t *packet;", "\tsize_t len;", "};", "",
+            "static const struct event_vector event_vectors[] = {"] + event_rows + ["};", ""]
     return "\n".join(out)
 
 

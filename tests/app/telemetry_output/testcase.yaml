@@ -8,3 +8,10 @@ tests:
     platform_allow:
       - native_sim
       - native_sim/native/64
+  # As the flight build has it: debug events stay off the link (DS-10).
+  # One platform keeps CI short.
+  app.telemetry_output.no_debug_events:
+    extra_configs:
+      - CONFIG_SS_EVENT_QUEUE_DEBUG=n
+    platform_allow:
+      - native_sim

@@ -3,6 +3,7 @@
 config SS_NVM_APP
 	bool "nvm app"
 	depends on SS_MESSAGES
+	select SS_EVENT
 	select SS_NVM
 	select SS_LINK
 	help

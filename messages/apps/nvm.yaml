@@ -35,6 +35,37 @@ commands:
         type: uint8
         description: Bytes, 1 to 240.
 
+# Events (DS-10): FRAM and the mirror failing and coming back (DS-75), and
+# the scrub finding bad slots (DS-70).
+events:
+  - name: fram_failed
+    id: 1
+    severity: error
+    description: FRAM has failed and is no longer used, until a retry (DS-75).
+  - name: mirror_failed
+    id: 2
+    severity: error
+    description: The mirror (backup SRAM) has failed and is no longer used, until a retry (DS-75).
+  - name: fram_restored
+    id: 3
+    severity: info
+    description: FRAM is in use again, after a retry.
+  - name: mirror_restored
+    id: 4
+    severity: info
+    description: The mirror is in use again, after a retry.
+  - name: bad_slots
+    id: 5
+    severity: warning
+    description: >
+      The scrub found slots failing their CRC in a region that was clean at
+      its last check (DS-70). Reported once, until the region is clean again.
+    args:
+      - name: region
+        description: The region's place in the FRAM map (nvm/map.h), from 0.
+      - name: count
+        description: Bad slots found, in FRAM and the mirror.
+
 housekeeping:
   description: The FRAM service's state and counts, published every major frame.
   fields:

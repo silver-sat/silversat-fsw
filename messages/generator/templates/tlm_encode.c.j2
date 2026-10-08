@@ -2,12 +2,13 @@
 {{ m.banner("the app definitions in messages/apps/") }}
 
 /*
- * Housekeeping encoders for the downlink (DS-61, DS-64). Each app's latest
- * housekeeping is read from its channel and written field by field,
- * little-endian, with no padding: never a copy of the struct, whose layout
- * differs between the M4 and native_sim. Only telemetry output calls
- * tlm_encode_hk(); this file includes every app's header so that telemetry
- * output itself never has to (DS-68).
+ * Housekeeping and event encoders for the downlink (DS-10, DS-61, DS-64).
+ * Each app's latest housekeeping is read from its channel and written field
+ * by field, little-endian, with no padding: never a copy of the struct,
+ * whose layout differs between the M4 and native_sim; an event is written
+ * the same way, from struct event's layout in common.yaml. Only telemetry
+ * output calls these; this file includes every app's header so that
+ * telemetry output itself never has to (DS-68).
  */
 
 #include <errno.h>
@@ -48,21 +49,21 @@ static void put_f64(double value, uint8_t *out)
 	sys_put_le64(bits, out);
 }
 {% endif %}
-{% macro put(f, offset) %}
+{% macro put(f, offset, var="hk.") %}
 {% if f.wire_kind == "bool" %}
-	out[{{ offset }}] = hk.{{ f.name }} ? 1 : 0;
+	out[{{ offset }}] = {{ var }}{{ f.name }} ? 1 : 0;
 {% elif f.wire_kind == "byte" %}
-	out[{{ offset }}] = (uint8_t)hk.{{ f.name }};
+	out[{{ offset }}] = (uint8_t){{ var }}{{ f.name }};
 {% elif f.wire_kind == "le16" %}
-	sys_put_le16((uint16_t)hk.{{ f.name }}, &out[{{ offset }}]);
+	sys_put_le16((uint16_t){{ var }}{{ f.name }}, &out[{{ offset }}]);
 {% elif f.wire_kind == "le32" %}
-	sys_put_le32((uint32_t)hk.{{ f.name }}, &out[{{ offset }}]);
+	sys_put_le32((uint32_t){{ var }}{{ f.name }}, &out[{{ offset }}]);
 {% elif f.wire_kind == "le64" %}
-	sys_put_le64((uint64_t)hk.{{ f.name }}, &out[{{ offset }}]);
+	sys_put_le64((uint64_t){{ var }}{{ f.name }}, &out[{{ offset }}]);
 {% elif f.wire_kind == "f32" %}
-	put_f32(hk.{{ f.name }}, &out[{{ offset }}]);
+	put_f32({{ var }}{{ f.name }}, &out[{{ offset }}]);
 {% else %}
-	put_f64(hk.{{ f.name }}, &out[{{ offset }}]);
+	put_f64({{ var }}{{ f.name }}, &out[{{ offset }}]);
 {% endif %}
 {% endmacro %}
 {% for app in defs.apps %}
@@ -121,3 +122,17 @@ int tlm_encode_hk(uint8_t app, int64_t met_ms, uint8_t *out, size_t out_size)
 	}
 	return -ENOENT;
 }
+{% if defs.event_struct %}
+
+int tlm_encode_event(const struct event *event, uint8_t *out, size_t out_size)
+{
+	if (out_size < 1 + {{ defs.event_struct.wire_size }}) {
+		return -ENOSPC;
+	}
+	out[0] = TLM_KIND_EVENT;
+{% for f, offset in defs.event_struct.wire_layout %}
+{{ put(f, offset + 1, "event->") -}}
+{% endfor %}
+	return 1 + {{ defs.event_struct.wire_size }};
+}
+{% endif %}

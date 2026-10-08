@@ -26,6 +26,7 @@
 #include "msg/mode_manager.h"
 #include "msg/radio.h"
 #include "nvm/mode_manager.h"
+#include "silversat/event.h"
 #include "silversat/resource_map.h"
 
 #define WAIT K_SECONDS(1)
@@ -152,6 +153,27 @@ static struct mode_manager_hk mm_hk(void)
 	return hk;
 }
 
+/* Throw away queued events, so a test sees only its own. */
+static void drain_events(void)
+{
+	struct event event;
+
+	while (event_take(&event) == 0) {
+	}
+}
+
+/* The next event should be the mode manager's event id, with these arguments. */
+static void expect_event(uint16_t id, int32_t mode, int32_t reason)
+{
+	struct event event;
+
+	zassert_ok(event_take(&event), "an event");
+	zassert_equal(event.app, APP_ID_MODE_MANAGER);
+	zassert_equal(event.id, id);
+	zassert_equal(event.arg0, mode);
+	zassert_equal(event.arg1, reason);
+}
+
 /*
  * Each test gets its own stretch of mission time, far from every other
  * test's, so a contact or a silence from one test can't reach the next.
@@ -217,6 +239,7 @@ static void before(void *fixture)
 	zassert_ok(zbus_chan_pub(&ground_contact_chan, &never, K_NO_WAIT));
 	zassert_equal(set_mode(MODE_SAFE), 1);
 	radio_catch_up(0);
+	drain_events();
 }
 
 ZTEST_SUITE(mode_manager, NULL, setup, before, NULL, NULL);
@@ -610,4 +633,52 @@ ZTEST(mode_manager, test_every_mode_change_is_stored)
 	zassert_equal(set_mode(MODE_SAFE), 1);
 	zassert_ok(nvm_mode_state_read(&stored));
 	zassert_equal(stored.mode, MODE_SAFE);
+}
+
+/* ---- Events (DS-10) --------------------------------------------------------- */
+
+ZTEST(mode_manager, test_a_mode_change_is_an_event)
+{
+	struct event event;
+
+	wake_at(epoch + 9000);
+	zassert_equal(set_mode(MODE_NOMINAL), 1);
+	zassert_ok(event_take(&event));
+	zassert_equal(event.app, APP_ID_MODE_MANAGER);
+	zassert_equal(event.id, MODE_MANAGER_EVENT_MODE_CHANGED);
+	zassert_equal(event.severity, SEVERITY_INFO);
+	zassert_equal(event.arg0, MODE_NOMINAL);
+	zassert_equal(event.arg1, MODE_REASON_GROUND_COMMAND);
+	zassert_equal(event.met_ms, epoch + 9000, "timed from the latest tick (DS-25)");
+	zassert_equal(event_take(&event), -ENOMSG, "one event a change");
+}
+
+ZTEST(mode_manager, test_a_new_reason_in_safe_mode_is_an_event)
+{
+	zassert_equal(request(MODE_SAFE, MODE_REASON_LOW_BATTERY), 1);
+	expect_event(MODE_MANAGER_EVENT_MODE_CHANGED, MODE_SAFE, MODE_REASON_LOW_BATTERY);
+}
+
+ZTEST(mode_manager, test_a_refused_change_is_an_event)
+{
+	struct event event;
+
+	zassert_equal(set_mode(MODE_DEPLOY), 0);
+	zassert_ok(event_take(&event));
+	zassert_equal(event.id, MODE_MANAGER_EVENT_CHANGE_REFUSED);
+	zassert_equal(event.severity, SEVERITY_WARNING);
+	zassert_equal(event.arg0, MODE_DEPLOY);
+	zassert_equal(event.arg1, MODE_REASON_GROUND_COMMAND);
+
+	/* A request with a reason no app may give. */
+	zassert_equal(request(MODE_SAFE, MODE_REASON_GROUND_COMMAND), 0);
+	expect_event(MODE_MANAGER_EVENT_CHANGE_REFUSED, MODE_SAFE, MODE_REASON_GROUND_COMMAND);
+}
+
+ZTEST(mode_manager, test_no_change_no_event)
+{
+	struct event event;
+
+	zassert_equal(set_mode(MODE_SAFE), 1);
+	zassert_equal(event_take(&event), -ENOMSG);
 }

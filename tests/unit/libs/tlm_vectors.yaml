@@ -1,6 +1,6 @@
-# Housekeeping vectors, shared by the flight encoder (src/tlm_encode.c) and
-# the ground decoder (tools/tests/test_telemetry.py). Python encodes each;
-# the C encoder must produce the same bytes.
+# Housekeeping and event vectors, shared by the flight encoders
+# (src/tlm_encode.c) and the ground decoder (tools/tests/test_telemetry.py).
+# Python encodes each; the C encoder must produce the same bytes.
 
 vectors:
   - name: zeros
@@ -20,3 +20,21 @@ vectors:
     values: {commands: 1, u8: 1, u16: 258, u32: 16909060, u64: 72623859790382856,
              i8: -128, i16: -32768, i32: -2147483648, i64: -9223372036854775808,
              flag: true, mode: safe, f32: -0.25, f64: -2.5}
+
+# E packets (DS-10): struct event, as typed_app's emit functions fill it.
+events:
+  - name: typed
+    app: typed_app
+    event: typed
+    met_ms: 1790812800000
+    args: {who: typed_app, mode: nominal}
+  - name: negative_number
+    app: typed_app
+    event: plain
+    met_ms: -1
+    args: {count: -2147483648}
+  - name: no_arguments
+    app: typed_app
+    event: bare
+    met_ms: 0
+    args: {}

@@ -47,6 +47,41 @@ Field types are `bool`, `uint8` to `uint64`, `int8` to `int64`, `float32`,
 `float64`, or the name of an enum in `common.yaml`. Command arguments can't
 be floats yet.
 
+## Events
+
+An event tells the ground something happened (DS-10). List your app's
+events under `events:` in its YAML:
+
+```yaml
+events:
+  - name: app_stalled
+    id: 1
+    severity: warning
+    description: An app has been a whole major frame behind for its stall threshold.
+    args:
+      - name: app
+        type: app
+        description: The stalled app.
+```
+
+- `id` is unique within your app, 1 to 65535. Never reuse one (DS-62).
+- `severity` is one of the values of `severity` in `common.yaml`.
+- Up to two `args`. Each is a 32-bit number in C; its `type` tells the
+  ground how to print it: `int32` (the default), `app` (an app's name), or
+  the name of an enum in `common.yaml` (a value's name).
+
+`msg/<your app>.h` gains an `emit_<app>_<event>()` for each:
+
+```c
+emit_health_app_stalled(now_met_ms, app);
+```
+
+Pass the MET of the current tick (DS-25). Emitting never waits, and never
+fails as far as your app can tell: a full queue drops the event and counts
+it. Raise an event when something changes, not every frame while it stays
+the same, or your events will crowd out everyone else's. In a development
+build each event is also logged on the console.
+
 ## Data channels and initial values
 
 A data channel (`data_channels:`) is a last-value channel carrying a type

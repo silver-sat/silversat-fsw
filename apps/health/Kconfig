@@ -3,6 +3,7 @@
 config SS_HEALTH
 	bool "Health"
 	depends on SS_MESSAGES
+	select SS_EVENT
 	select SS_NVM
 	select HWINFO
 	select WATCHDOG if $(dt_alias_enabled,watchdog0)

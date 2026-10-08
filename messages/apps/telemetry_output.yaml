@@ -2,8 +2,9 @@
 #
 # Telemetry output sends housekeeping to the ground: once a major frame it
 # takes the next app in turn, encodes that app's latest housekeeping
-# (include/silversat/tlm_encode.h), and puts it in the downlink queue. The
-# beacon (DS-69) and events come later.
+# (include/silversat/tlm_encode.h), and puts it in the downlink queue. Then
+# it sends queued events as E packets (DS-10). The beacon (DS-69) comes
+# later.
 
 app: telemetry_output
 id: 5
@@ -21,4 +22,17 @@ housekeeping:
       description: Packets lost because the downlink queue was full.
     - name: encode_errors
       type: uint32
-      description: Turns skipped because an app's housekeeping could not be read or encoded.
+      description: >
+        Housekeeping turns skipped because an app's housekeeping could not be
+        read or encoded, and events that could not be encoded.
+    - name: events_sent
+      type: uint32
+      description: Event packets put in the downlink queue (DS-10).
+    - name: events_lost
+      type: uint32
+      description: Events taken from the event queue but lost because the downlink queue filled.
+    - name: events_dropped
+      type: uint32
+      description: >
+        Events dropped because the event queue was full when they were raised,
+        since boot (silversat/event.h).

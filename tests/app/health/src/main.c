@@ -43,6 +43,7 @@
 #include "msg/health.h"
 #include "msg/mode_manager.h"
 #include "nvm/health.h"
+#include "silversat/event.h"
 #include "silversat/resource_map.h"
 #include "status.h"
 
@@ -224,7 +225,38 @@ static struct {
 	uint8_t last_reason;
 	uint64_t stopped;      /* set_app_enabled false: bit n is app n */
 	uint32_t action_failures;
+	/* Events (DS-10) */
+	uint32_t reset_loop_events;
+	int32_t reset_loop_runs;
+	uint64_t stopped_for_loop; /* app_stopped with cause 2 */
+	bool stack_low_event;
 } at_boot;
+
+/* Throw away queued events, so a test sees only its own. */
+static void drain_events(void)
+{
+	struct event event;
+
+	while (event_take(&event) == 0) {
+	}
+}
+
+/*
+ * Health's next event with this id, skipping any others. Returns false if
+ * there is none.
+ */
+static bool find_event(uint16_t id, struct event *out)
+{
+	struct event event;
+
+	while (event_take(&event) == 0) {
+		if (event.app == APP_ID_HEALTH && event.id == id) {
+			*out = event;
+			return true;
+		}
+	}
+	return false;
+}
 
 static struct nvm_run_checkpoint checkpoint_now(void)
 {
@@ -261,6 +293,23 @@ static void *setup(void)
 		}
 	}
 	at_boot.action_failures = health_hk().action_failures;
+	{
+		struct event event;
+
+		while (event_take(&event) == 0) {
+			if (event.app != APP_ID_HEALTH) {
+				continue;
+			}
+			if (event.id == HEALTH_EVENT_RESET_LOOP) {
+				at_boot.reset_loop_events++;
+				at_boot.reset_loop_runs = event.arg0;
+			} else if (event.id == HEALTH_EVENT_APP_STOPPED && event.arg1 == 2) {
+				at_boot.stopped_for_loop |= BIT64(event.arg0);
+			} else if (event.id == HEALTH_EVENT_STACK_LOW) {
+				at_boot.stack_low_event = true;
+			}
+		}
+	}
 	return NULL;
 }
 
@@ -276,6 +325,7 @@ static void before(void *fixture)
 	}
 	while (mode_manager_next(&request, true)) {
 	}
+	drain_events();
 }
 
 ZTEST_SUITE(health, NULL, setup, before, NULL, NULL);
@@ -354,6 +404,17 @@ ZTEST(health, test_a_reset_loop_still_feeds_the_watchdog)
 	zassert_equal(feeds() - before_feeds, 2);
 }
 
+ZTEST(health, test_a_reset_loop_is_an_event)
+{
+	struct event event;
+
+	zassert_equal(at_boot.reset_loop_events, 1);
+	zassert_equal(at_boot.reset_loop_runs, SHORT_RUNS);
+	report(0, 0);
+	report(0, 0);
+	zassert_false(find_event(HEALTH_EVENT_RESET_LOOP, &event), "once a boot");
+}
+
 ZTEST(health, test_a_reset_loop_asks_for_safe_mode_once)
 {
 	zassert_equal(at_boot.requests, 1);
@@ -367,6 +428,7 @@ ZTEST(health, test_a_stack_below_the_margin_is_flagged)
 	/* This build's margin is larger than any app's stack (testcase.yaml). */
 	report(0, 0);
 	zassert_true(health_hk().stack_low);
+	zassert_true(at_boot.stack_low_event, "an event, at the first major frame");
 }
 #endif
 
@@ -396,6 +458,7 @@ ZTEST(health, test_a_long_reset_loop_stops_every_app_that_isnt_protected)
 			     (expected & BIT64(APP_ID_NVM)) != 0,
 		     "the test apps and nvm");
 	zassert_equal(at_boot.stopped, expected, "every watched app that isn't protected");
+	zassert_equal(at_boot.stopped_for_loop, expected, "an event for each, cause 2");
 	zassert_equal(health_hk().disabled_by_health, expected);
 	zassert_equal(at_boot.requests, 1, "a stopped critical app adds no app_failure request");
 
@@ -468,6 +531,16 @@ ZTEST(health, test_stalled_app_is_stopped_at_its_threshold)
 	zassert_false(cmd.args.set_app_enabled.enabled);
 	zassert_equal(health_hk().stalls - stalls, 1);
 	zassert_true((health_hk().disabled_by_health & WATCHED) != 0);
+	{
+		struct event event;
+
+		zassert_true(find_event(HEALTH_EVENT_APP_STALLED, &event));
+		zassert_equal(event.arg0, APP_ID_WATCHED_APP);
+		zassert_equal(event.severity, SEVERITY_WARNING);
+		zassert_true(find_event(HEALTH_EVENT_APP_STOPPED, &event));
+		zassert_equal(event.arg0, APP_ID_WATCHED_APP);
+		zassert_equal(event.arg1, 1, "for a stall");
+	}
 
 	/* The frame manager stopped it: health doesn't ask again. */
 	report(WATCHED, WATCHED);
@@ -532,6 +605,7 @@ ZTEST(health, test_started_again_by_the_ground_gets_a_fresh_count)
 
 ZTEST(health, test_keeps_asking_until_the_frame_manager_acts)
 {
+	struct event event;
 	struct frame_manager_cmd cmd;
 	uint32_t failures = health_hk().action_failures;
 	uint32_t stalls = health_hk().stalls;
@@ -555,6 +629,11 @@ ZTEST(health, test_keeps_asking_until_the_frame_manager_acts)
 		zassert_true(frame_manager_next(&cmd, false));
 	}
 	zassert_false(frame_manager_next(&cmd, false));
+
+	/* Asked several times, but one stall and one stop: one event each. */
+	zassert_true(find_event(HEALTH_EVENT_APP_STALLED, &event));
+	zassert_true(find_event(HEALTH_EVENT_APP_STOPPED, &event));
+	zassert_false(find_event(HEALTH_EVENT_APP_STOPPED, &event));
 
 	/* The frame manager catches up and stops it. */
 	frame_manager_status.cmd_accepted += CMD_MAX_PENDING;
@@ -675,6 +754,7 @@ static void expect_restart_after_cooldown(void)
 ZTEST(health, test_an_auto_app_is_restarted_up_to_its_cap)
 {
 	struct frame_manager_cmd cmd;
+	struct event event;
 	uint8_t cap = app_attrs[APP_ID_AUTO_APP].auto_retry_cap;
 	uint32_t failures;
 
@@ -686,6 +766,9 @@ ZTEST(health, test_an_auto_app_is_restarted_up_to_its_cap)
 	zassert_true((health_hk().disabled_by_health & AUTO) != 0);
 	expect_restart_after_cooldown();
 	zassert_equal(health_hk().auto_reenables, 1);
+	zassert_true(find_event(HEALTH_EVENT_APP_RESTARTED, &event));
+	zassert_equal(event.arg0, APP_ID_AUTO_APP);
+	zassert_equal(event.arg1, 1, "its first restart");
 	zassert_true((health_hk().disabled_by_health & AUTO) == 0, "health undid its stop");
 
 	/*
@@ -721,9 +804,14 @@ ZTEST(health, test_an_auto_app_is_restarted_up_to_its_cap)
 	zassert_equal(health_hk().auto_reenables, 2);
 	zassert_true((health_hk().auto_exhausted & AUTO) != 0);
 	zassert_true((health_hk().disabled_by_health & AUTO) != 0);
+	zassert_true(find_event(HEALTH_EVENT_AUTO_EXHAUSTED, &event));
+	zassert_equal(event.arg0, APP_ID_AUTO_APP);
+	zassert_false(find_event(HEALTH_EVENT_AUTO_EXHAUSTED, &event), "once");
 
 	/* The ground starts it: its restarts are renewed, and it is no longer reported stopped. */
 	report(0, 0);
+	zassert_true(find_event(HEALTH_EVENT_GROUND_RESTART, &event));
+	zassert_equal(event.arg0, APP_ID_AUTO_APP);
 	zassert_equal(health_hk().auto_exhausted & AUTO, 0);
 	zassert_equal(health_hk().disabled_by_health & AUTO, 0);
 	stall_auto_app();
@@ -862,6 +950,13 @@ ZTEST(health, test_protected_stall_stops_the_watchdog)
 	zassert_equal(checkpoint_now().reset_app, APP_ID_COMMAND_INGEST,
 		      "stored with that frame's checkpoint, so the next boot's log names it");
 	zassert_false(frame_manager_next(&cmd, true), "a protected app is never stopped");
+	{
+		struct event event;
+
+		zassert_true(find_event(HEALTH_EVENT_RESET_COMING, &event));
+		zassert_equal(event.arg0, APP_ID_COMMAND_INGEST);
+		zassert_equal(event.severity, SEVERITY_CRITICAL);
+	}
 }
 
 #endif /* PROTECTED_STALL */
