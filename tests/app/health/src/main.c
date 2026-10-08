@@ -26,6 +26,8 @@
  * reset-loop tests run.
  */
 
+#include <string.h>
+
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/init.h>
@@ -42,6 +44,7 @@
 #include "msg/mode_manager.h"
 #include "nvm/health.h"
 #include "silversat/resource_map.h"
+#include "status.h"
 
 #define WAIT K_SECONDS(1)
 
@@ -862,3 +865,57 @@ ZTEST(health, test_protected_stall_stops_the_watchdog)
 }
 
 #endif /* PROTECTED_STALL */
+
+/* ---- The development status line (status.c, DS-06) ---------------------- */
+
+ZTEST(health, test_status_is_due_at_frame_2_then_every_period)
+{
+	zassert_false(status_due(1, 60), "not before the mode manager has read the test signal");
+	zassert_true(status_due(2, 60));
+	zassert_false(status_due(3, 60));
+	zassert_false(status_due(61, 60));
+	zassert_true(status_due(62, 60));
+	zassert_true(status_due(122, 60));
+	zassert_true(status_due(5, 1), "a period of 1: every major frame");
+	zassert_false(status_due(1, 1), "but still not before frame 2");
+	zassert_false(status_due(0, 1));
+}
+
+ZTEST(health, test_status_line)
+{
+	const struct health_hk hk = {
+		.boot_number = 3,
+		.stack_apps = 7,
+		.stack_min_app = APP_ID_RADIO,
+		.stack_min_unused = 412,
+		.stalls = 1,
+		.short_runs = 6,
+		.disabled_by_health = BIT64(APP_ID_NVM),
+	};
+	const struct mode_state mode = {.mode = MODE_TEST, .reason = MODE_REASON_TEST_SIGNAL};
+	char line[160];
+
+	zassert_equal(status_format(line, sizeof(line), &hk, &mode, 125999), strlen(line));
+	zassert_str_equal(line, "boot 3, MET 125 s, mode test (test_signal), least stack 412 B "
+				"(radio), stalls 1, short runs 6, stopped 0x80");
+}
+
+ZTEST(health, test_status_line_flags_and_unknowns)
+{
+	struct health_hk hk = {.stack_apps = 1, .stack_min_app = APP_ID_HEALTH,
+			       .stack_min_unused = 100, .stack_low = true};
+	const struct mode_state unknown = {.mode = UINT8_MAX, .reason = UINT8_MAX};
+	char line[160];
+
+	(void)status_format(line, sizeof(line), &hk, &unknown, -1500);
+	zassert_str_equal(line, "boot 0, MET -1 s, mode ? (?), least stack 100 B (health) LOW, "
+				"stalls 0, short runs 0, stopped 0x0");
+
+	hk.stack_apps = 0;
+	(void)status_format(line, sizeof(line), &hk, &unknown, 0);
+	zassert_not_null(strstr(line, "no app stacks found"));
+
+	/* Too small a buffer: cut short, still terminated. */
+	zassert_true(status_format(line, 10, &hk, &unknown, 0) > 9);
+	zassert_equal(strlen(line), 9);
+}

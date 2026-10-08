@@ -30,6 +30,23 @@ config SS_WATCHDOG_TIMEOUT_MS
 	  one late or missed feed and resets within a few seconds of a hang
 	  (DS-43).
 
+config SS_HEALTH_STATUS_LOG
+	bool "Log a status line on the console (development)"
+	default y if !SS_FLIGHT_BUILD
+	depends on LOG
+	help
+	  Once every SS_HEALTH_STATUS_SECONDS, health logs the boot, MET,
+	  mode and reason, the least stack any app has left, stalls and
+	  stopped apps: on the bench, with only a USB cable, the console is
+	  the one window in. Not in the flight build (DS-06); nothing depends
+	  on it.
+
+config SS_HEALTH_STATUS_SECONDS
+	int "Seconds between status lines"
+	default 60
+	range 1 3600
+	depends on SS_HEALTH_STATUS_LOG
+
 config SS_REENABLE_COOLDOWN_FRAMES
 	int "Major frames before health restarts an AUTO app"
 	default 10

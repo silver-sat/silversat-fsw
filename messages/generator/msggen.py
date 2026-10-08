@@ -27,7 +27,9 @@ Output, in <out>/:
                              channel and every data channel; app ids and
                              the counts the resource map sizes the zbus
                              pool from (APP_COUNT, APP_SEND_PAIR_COUNT, ...);
-                             each app's thread name (app_thread_name())
+                             each app's name and thread name (app_name(),
+                             app_thread_name()); each enum value's name, for
+                             logs (<enum>_name())
     include/msg/<app>.h      the app's commands, housekeeping, message union,
                              and a send_<app>_<command>() for each sends: entry
     src/msg_<app>.c          the app's channels, its senders, and build checks

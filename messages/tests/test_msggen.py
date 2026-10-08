@@ -127,6 +127,16 @@ def test_app_thread_names(tmp_path):
     assert "\tdefault:\n\t\treturn NULL;" in common
 
 
+def test_app_and_enum_names(tmp_path):
+    common = generate(write_defs(tmp_path))["include/msg/common.h"]
+    assert "static inline const char *app_name(uint8_t app)" in common
+    assert '\tcase APP_ID_SENSOR:\n\t\treturn "sensor";' in common
+    assert "static inline const char *mode_name(uint32_t value)" in common
+    assert '\tcase MODE_NOMINAL:\n\t\treturn "nominal";' in common
+    assert "static inline const char *severity_name(uint32_t value)" in common
+    assert '\tcase SEVERITY_ERROR:\n\t\treturn "error";' in common
+
+
 def test_every_flight_app_names_its_thread_for_health():
     """app_thread_name() assumes K_THREAD_DEFINE(<app>_tid, ...) in the
     app's own directory; health finds each app's thread by that name (DS-44)."""

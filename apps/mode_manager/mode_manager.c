@@ -45,6 +45,10 @@
  * keeps its reason (for example, command loss) through a reset. With
  * neither FRAM nor the mirror, both read as their defaults: deploy mode
  * again, which waits out the delay, late but never early.
+ *
+ * Each mode change, and the boot mode, is logged ("mode deploy -> test
+ * (test_signal)"), so on the bench the console shows the mode at once.
+ * Logs are for development; the ground learns the mode from housekeeping.
  */
 
 #include <errno.h>
@@ -53,6 +57,7 @@
 
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/zbus/zbus.h>
 
@@ -60,6 +65,8 @@
 #include "msg/mode_manager.h"
 #include "nvm/mode_manager.h"
 #include "silversat/resource_map.h"
+
+LOG_MODULE_REGISTER(mode_manager, LOG_LEVEL_INF);
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(mode_manager_sub);
 ZBUS_CHAN_ADD_OBS(mode_manager_wakeup_chan, mode_manager_sub, 3);
@@ -230,6 +237,7 @@ static int change_mode(uint8_t to, uint8_t reason)
 		return -EPERM;
 	}
 	(void)run_actions(ON_EXIT, state.mode);
+	LOG_INF("mode %s -> %s (%s)", mode_name(state.mode), mode_name(to), mode_reason_name(reason));
 	state.mode = to;
 	state.reason = reason;
 	state.since_met_ms = now_met_ms;
@@ -250,6 +258,8 @@ static bool replace_safe_reason(uint8_t reason)
 	if (state.mode != MODE_SAFE || state.reason == reason) {
 		return false;
 	}
+	LOG_INF("safe mode, reason %s -> %s", mode_reason_name(state.reason),
+		mode_reason_name(reason));
 	state.reason = reason;
 	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
 	store_mode();
@@ -435,6 +445,7 @@ static void mode_manager_main(void *a, void *b, void *c)
 	ARG_UNUSED(c);
 
 	boot_mode();
+	LOG_INF("boot in %s mode (%s)", mode_name(state.mode), mode_reason_name(state.reason));
 	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
 	publish_hk();
 
