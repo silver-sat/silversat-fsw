@@ -7,7 +7,8 @@ The flight path for a ground command, every piece real except the radio:
         --> frame manager, and the reply back the same way.
 
 Telemetry output also sends one app's housekeeping each second on the same
-downlink; the simulator sets those packets aside while it waits for replies.
+downlink, and any events (DS-10); the simulator sets those packets aside
+while it waits for replies.
 
 Twister starts the native_sim image; these tests play the radio with
 sim/radio_sim.py. They run in real time, so each one is short.
@@ -212,3 +213,24 @@ def test_transmit_stop_and_start(sim):
         packet, counter = signed("radio set_transmit true")
         sim.send(packet)
         assert sim.replies(timeout=1.0) == [ack(counter)]
+
+
+def test_an_event_reaches_the_ground(sim):
+    """A ground command the mode manager refuses (no mode change leads back
+    to deploy, DS-42) raises an event, which telemetry output sends down as
+    an E packet, decoded here by name (DS-10)."""
+    dictionary = telemetry.load_dictionary()
+    packet, _ = signed("mode_manager set_mode deploy")
+    sim.send(packet)
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        for received in sim.receive(timeout=0.5, count=10):
+            if received.payload[:1] != b"E":
+                continue
+            event = telemetry.decode(dictionary, received.payload)
+            if event["name"] == "change_refused":
+                assert event["app"] == "mode_manager"
+                assert event["severity"] == "warning"
+                assert event["args"] == {"mode": "deploy", "reason": "ground_command"}
+                return
+    pytest.fail("no change_refused event arrived")

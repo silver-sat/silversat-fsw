@@ -20,6 +20,7 @@ import telemetry as tm  # noqa: E402
 
 LIBS = REPO / "tests" / "unit" / "libs"
 VECTORS = yaml.safe_load((LIBS / "tlm_vectors.yaml").read_text())["vectors"]
+EVENT_VECTORS = yaml.safe_load((LIBS / "tlm_vectors.yaml").read_text())["events"]
 
 
 @pytest.fixture(scope="module")
@@ -89,3 +90,76 @@ def test_c_vectors(tmp_path):
                     str(LIBS / "tlm_vectors.yaml"), "--c-vectors", str(out)]) == 0
     text = out.read_text()
     assert "hk_vectors[]" in text and ".i64 = INT64_MIN" in text
+
+
+# ---- Events (DS-10) ----------------------------------------------------------
+
+@pytest.mark.parametrize("vector", EVENT_VECTORS, ids=[v["name"] for v in EVENT_VECTORS])
+def test_event_vectors_round_trip(dictionary, vector):
+    packet = tm.encode_event(dictionary, vector["app"], vector["event"], vector["met_ms"],
+                             vector["args"])
+    decoded = tm.decode(dictionary, packet)
+    assert decoded["kind"] == "event"
+    assert decoded["app"] == vector["app"]
+    assert decoded["name"] == vector["event"]
+    assert decoded["met_ms"] == vector["met_ms"]
+    assert decoded["args"] == vector["args"]
+
+
+def test_event_packet_layout(dictionary):
+    packet = tm.encode_event(dictionary, "typed_app", "typed", 0x0102030405060708,
+                             {"who": "health", "mode": "nominal"})
+    assert packet[0] == ord("E")
+    assert packet[1:9] == bytes([8, 7, 6, 5, 4, 3, 2, 1]), "MET, little-endian"
+    assert packet[9] == 50, "typed_app's id"
+    assert packet[10] == 2, "warning"
+    assert packet[11:13] == bytes([1, 0]), "event id 1"
+    assert packet[13:17] == bytes([6, 0, 0, 0]), "health's app id"
+    assert packet[17:21] == bytes([1, 0, 0, 0]), "nominal"
+    assert len(packet) == 21
+
+
+def test_unused_event_arguments_are_zero(dictionary):
+    """As the generated emit functions fill them (tests/unit/libs/src/event.c)."""
+    packet = tm.encode_event(dictionary, "typed_app", "bare", 0, {})
+    assert packet[13:21] == bytes(8)
+    packet = tm.encode_event(dictionary, "typed_app", "plain", 0, {"count": -1})
+    assert packet[17:21] == bytes(4)
+
+
+def test_event_severity_and_arguments_by_name(dictionary):
+    packet = tm.encode_event(dictionary, "typed_app", "plain", 5, {"count": -7})
+    decoded = tm.decode(dictionary, packet)
+    assert decoded["severity"] == "critical"
+    assert decoded["args"] == {"count": -7}
+
+
+def test_an_unknown_argument_value_is_a_number(dictionary):
+    packet = bytearray(tm.encode_event(dictionary, "typed_app", "typed", 0,
+                                       {"who": "health", "mode": "safe"}))
+    packet[13] = 63   # no app has id 63
+    packet[17] = 99   # no mode 99
+    assert tm.decode(dictionary, bytes(packet))["args"] == {"who": 63, "mode": 99}
+
+
+def test_a_malformed_event_is_refused(dictionary):
+    packet = tm.encode_event(dictionary, "typed_app", "bare", 0, {})
+    with pytest.raises(ValueError, match="not 20"):
+        tm.decode(dictionary, packet[:-1])
+    unknown = bytearray(packet)
+    unknown[11:13] = (7).to_bytes(2, "little")
+    with pytest.raises(ValueError, match="no event 7"):
+        tm.decode(dictionary, bytes(unknown))
+
+
+def test_every_flight_event_decodes():
+    dictionary = tm.load_dictionary()
+    count = 0
+    for app in dictionary["apps"]:
+        for event in app["events"]:
+            args = {a["name"]: 1 for a in event["args"]}
+            decoded = tm.decode(dictionary, tm.encode_event(dictionary, app["name"],
+                                                            event["name"], 0, args))
+            assert decoded["name"] == event["name"]
+            count += 1
+    assert count > 0

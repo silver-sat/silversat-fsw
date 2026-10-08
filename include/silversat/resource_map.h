@@ -168,8 +168,24 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 /* Uplink frames waiting for command ingest, which empties it every frame. */
 #define UPLINK_QUEUE_DEPTH 4
 
-/* Downlink frames waiting for the radio: command replies, later telemetry. */
+/* Downlink frames waiting for the radio: command replies, telemetry, dumps. */
 #define DOWNLINK_QUEUE_DEPTH 8
+
+/*
+ * Events waiting for telemetry output (DS-10): 16 of 24 bytes each. Events
+ * raised in deploy mode, when telemetry output doesn't run, wait here
+ * until it does; past 16, new ones are dropped and counted.
+ */
+#define EVENT_QUEUE_DEPTH 16
+
+/*
+ * Events telemetry output sends each major frame, as 'E' packets, besides
+ * one app's housekeeping. It sends none while fewer than
+ * TLM_DOWNLINK_RESERVE downlink places are free, so a command's reply
+ * always has room.
+ */
+#define TLM_EVENTS_PER_FRAME 4
+#define TLM_DOWNLINK_RESERVE 2
 
 /* ---- zbus buffer pool (DS-07, DS-22) ------------------------------------ */
 

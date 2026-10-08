@@ -29,6 +29,88 @@ data_channels:
       This boot's number and MET at boot, published before any app thread
       starts (DS-25). All zeros without health: MET is then uptime.
 
+# Events (DS-10): each response to a fault, as it happens (DS-43, DS-44).
+events:
+  - name: app_stalled
+    id: 1
+    severity: warning
+    description: An app has been a whole major frame behind for its stall threshold (DS-43).
+    args:
+      - name: app
+        type: app
+        description: The stalled app.
+  - name: app_stopped
+    id: 2
+    severity: warning
+    description: Health told the frame manager to stop waking an app.
+    args:
+      - name: app
+        type: app
+        description: The app stopped.
+      - name: cause
+        description: 1 for a stall, 2 for a reset loop (DS-44).
+  - name: reset_coming
+    id: 3
+    severity: critical
+    description: >
+      A protected app stalled, so health has stopped feeding the watchdog,
+      which resets the spacecraft within seconds (DS-43).
+    args:
+      - name: app
+        type: app
+        description: The protected app that stalled.
+  - name: reset_loop
+    id: 4
+    severity: error
+    description: >
+      The boot log shows enough short runs in a row to be a reset loop, so
+      health asks for safe mode (DS-44).
+    args:
+      - name: short_runs
+        description: Runs in a row that ended within the reset-loop time.
+  - name: app_restarted
+    id: 5
+    severity: info
+    description: Health started an AUTO app again after its cooldown (DS-43).
+    args:
+      - name: app
+        type: app
+        description: The app started.
+      - name: restarts
+        description: Its automatic restarts so far this boot, this one included.
+  - name: auto_exhausted
+    id: 6
+    severity: warning
+    description: >
+      An AUTO app stalled again after using all its automatic restarts; it
+      now waits for the ground (DS-43).
+    args:
+      - name: app
+        type: app
+        description: The app.
+  - name: ground_restart
+    id: 7
+    severity: info
+    description: >
+      The ground started an app health had stopped, renewing its automatic
+      restarts (DS-43).
+    args:
+      - name: app
+        type: app
+        description: The app.
+  - name: stack_low
+    id: 8
+    severity: warning
+    description: >
+      An app's thread has had less than CONFIG_SS_STACK_MARGIN_BYTES of its
+      stack unused; its stack size in the resource map should grow (DS-44).
+    args:
+      - name: app
+        type: app
+        description: The app with the least stack left.
+      - name: unused
+        description: Its stack bytes never used, at the time.
+
 housekeeping:
   description: Health state, published every major frame.
   # Largest fields first (64-bit, then 32-bit, then bytes and flags), so the

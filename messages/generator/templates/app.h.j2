@@ -9,6 +9,10 @@
 #include <stdint.h>
 
 #include <zephyr/zbus/zbus.h>
+{% if app.events %}
+
+#include "silversat/event.h"
+{% endif %}
 
 #include "msg/common.h"
 {% if app.commands %}
@@ -85,6 +89,48 @@ ZBUS_CHAN_DECLARE({{ app.hk_chan }});
 
 {{ (send.target.name ~ " " ~ send.command.name ~ ": " ~ send.command.description) | comment }}
 int {{ send.function }}({{ send.params }});
+{% endfor %}
+{% endif %}
+
+{% if app.events %}
+
+/** Event numbers, unique within {{ app.name }}. Never reuse one (DS-62). */
+enum {{ app.event_id_enum }} {
+{% for e in app.events %}
+	{{ e.constant }} = {{ e.id }},
+{% endfor %}
+};
+
+/*
+ * Events {{ app.name }} raises (DS-10), declared under events: in
+ * {{ app.source }}. Each queues the event for the downlink without waiting;
+ * a full queue drops it, and the drop is counted (silversat/event.h).
+ * met_ms is the MET of the current tick (DS-25).
+ */
+{% macro arg_value(a) %}{% if a.type == "app" %}app_name((uint8_t){{ a.name }}){% elif a.type == "int32" %}NULL{% else %}{{ a.type }}_name((uint32_t){{ a.name }}){% endif %}{% endmacro %}
+{% for e in app.events %}
+
+{{ (e.name ~ " (" ~ e.severity ~ "): " ~ e.description) | comment }}
+static inline void {{ e.function }}({{ e.params }})
+{
+	const struct event event = {
+		.met_ms = met_ms,
+		.app = {{ app.id_constant }},
+		.severity = {{ defs.severity_constants[e.severity] }},
+		.id = {{ e.constant }},
+		.arg0 = {{ e.args[0].name if e.args | length > 0 else 0 }},
+		.arg1 = {{ e.args[1].name if e.args | length > 1 else 0 }},
+	};
+	const struct event_text text = {
+		.name = "{{ e.name }}",
+{% for a in e.args %}
+		.arg_names[{{ loop.index0 }}] = "{{ a.name }}",
+		.arg_values[{{ loop.index0 }}] = {{ arg_value(a) }},
+{% endfor %}
+	};
+
+	event_emit(&event, &text);
+}
 {% endfor %}
 {% endif %}
 

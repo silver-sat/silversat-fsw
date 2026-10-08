@@ -420,6 +420,16 @@ bool nvm_available(void)
 	return is_available(FRAM);
 }
 
+bool nvm_fram_fitted(void)
+{
+	return devices[FRAM] != NULL;
+}
+
+bool nvm_mirror_fitted(void)
+{
+	return devices[MIRROR] != NULL;
+}
+
 bool nvm_mirror_available(void)
 {
 	return is_available(MIRROR);

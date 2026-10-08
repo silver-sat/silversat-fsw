@@ -12,12 +12,14 @@ in the build directory and is never committed.
 
 Input, in <defs>/:
     common.yaml       shared types: enums (mode, severity, ...), the frame
-                      tick, app status, and the types of data channels
+                      tick, app status, struct event, and the types of data
+                      channels
     apps/<app>.yaml   one app: its id, whether the frame manager wakes it,
                       its commands (with the modes each is allowed in, or
                       internal: true for one only other apps may send),
                       housekeeping, data channels (with initial values),
-                      and the internal commands it sends (sends:)
+                      the internal commands it sends (sends:), and the
+                      events it raises (events:)
     nvm_map.yaml      FRAM records, each owned by one app; rings of records
                       written once each, like the boot log; and which of
                       them are also kept in the mirror (backup SRAM) (optional)
@@ -31,14 +33,17 @@ Output, in <out>/:
                              app_thread_name()); each enum value's name, for
                              logs (<enum>_name())
     include/msg/<app>.h      the app's commands, housekeeping, message union,
-                             and a send_<app>_<command>() for each sends: entry
+                             a send_<app>_<command>() for each sends: entry,
+                             and its event numbers and an
+                             emit_<app>_<event>() for each event (DS-10)
     src/msg_<app>.c          the app's channels, its senders, and build checks
                              that every message fits a zbus buffer
     src/cmd_routes.c         decoding and routing of ground command text
                              (command ingest, DS-50); internal commands
                              are left out, so the ground can't send them
-    src/tlm_encode.c         each app's housekeeping, encoded little-endian for
-                             the downlink (telemetry output, DS-61, DS-64)
+    src/tlm_encode.c         each app's housekeeping, and an event, encoded
+                             little-endian for the downlink (telemetry
+                             output, DS-10, DS-61, DS-64)
     include/nvm/<app>.h      the app's FRAM records: struct, encoding, default,
                              region handle, typed read and write (DS-74);
                              one per app, empty if it has none
@@ -47,7 +52,8 @@ Output, in <out>/:
 
 --json FILE also writes the dictionary (DS-61): every ground command with
 its arguments, ranges and modes, and the internal commands apart; each app's
-housekeeping layout; who sends which internal command; and the FRAM map. The ground formats command text
+housekeeping layout and events, and the E packet's layout; every enum's
+values; who sends which internal command; and the FRAM map. The ground formats command text
 (tools/command_text.py) and decodes telemetry (tools/telemetry.py) from it.
 
 Leave out --out to check the definitions without writing anything.
@@ -127,6 +133,19 @@ RESERVED_APP_NAMES = {"common"}
 
 # common.yaml must define these; every app's channels use them.
 REQUIRED_STRUCTS = ("frame_tick", "app_status")
+
+# Events (DS-10): each carries two int32 arguments (struct event in
+# common.yaml), and its id is unique within its app.
+EVENT_ARGS_MAX = 2
+EVENT_ID_MAX = 0xFFFF
+# An event argument's type: a plain number, an app id, or an enum from
+# common.yaml. The value is always an int32 in C; the type tells the ground
+# how to print it.
+EVENT_ARG_INT = "int32"
+EVENT_ARG_APP = "app"
+# The fields of struct event that the generated emit functions fill in.
+EVENT_FIELDS = {"met_ms": "int64", "app": "uint8", "severity": "severity", "id": "uint16",
+                "arg0": "int32", "arg1": "int32"}
 
 # common.yaml must define enum mode; every command lists the modes it is
 # allowed in (DS-50).
@@ -266,6 +285,29 @@ class Command:
 
 
 @dataclass
+class EventArg:
+    name: str
+    description: str
+    type: str                 # EVENT_ARG_INT, EVENT_ARG_APP, or an enum's name
+
+
+@dataclass
+class Event:
+    """One event an app raises (DS-10, DS-60)."""
+    name: str
+    id: int
+    severity: str             # a value of enum severity
+    description: str
+    args: list[EventArg]
+    constant: str             # C name of the id, for example HEALTH_EVENT_APP_STALLED
+    function: str             # emit_<app>_<event>
+
+    @property
+    def params(self):
+        return ", ".join(["int64_t met_ms"] + [f"int32_t {a.name}" for a in self.args])
+
+
+@dataclass
 class DataChannel:
     """A last-value channel an app owns besides the four every app has."""
     name: str
@@ -317,6 +359,11 @@ class App:
     # into sends once every app is known.
     send_names: list[str] = field(default_factory=list)
     sends: list[Send] = field(default_factory=list)
+    events: list[Event] = field(default_factory=list)
+
+    @property
+    def event_id_enum(self):
+        return f"{self.name}_event_id"
 
     @property
     def id_constant(self):
@@ -402,6 +449,10 @@ class App:
             if c.fields:
                 names.append(c.struct)
         names += [f"send_{n.replace('.', '_')}" for n in self.send_names]
+        if self.events:
+            names.append(self.event_id_enum)
+        for e in self.events:
+            names += [e.constant, e.function]
         return names
 
 
@@ -503,6 +554,17 @@ class Definitions:
     @property
     def enums_by_name(self):
         return {e.name: e for e in self.enums}
+
+    @property
+    def event_struct(self):
+        """struct event from common.yaml, the E packet's layout (DS-10, DS-66), or None."""
+        return next((s for s in self.structs if s.name == "event"), None)
+
+    @property
+    def severity_constants(self):
+        """Each severity's C constant, by name."""
+        severity = self.enums_by_name.get("severity")
+        return {v.name: v.constant for v in severity.values} if severity else {}
 
     @property
     def hk_wire_kinds(self):
@@ -804,11 +866,48 @@ def _source_label(path, root):
         return str(path)
 
 
+def _parse_event(node, where, app_name, enums):
+    """One entry under events: (DS-10, DS-60)."""
+    _check_keys(node, where, ("name", "id", "severity", "description"), ("args",))
+    name = _name(node["name"], f"{where}.name")
+    if "severity" not in enums:
+        raise DefinitionError(f"{where}: events need enum severity in common.yaml")
+    severities = [v.name for v in enums["severity"].values]
+    if node["severity"] not in severities:
+        raise DefinitionError(
+            f"{where}.severity: {node['severity']!r} is not a severity; use one of "
+            f"{', '.join(severities)}")
+    args = []
+    for i, arg in enumerate(_sequence(node, "args", where)):
+        awhere = f"{where}.args[{i}]"
+        _check_keys(arg, awhere, ("name", "description"), ("type",))
+        aname = _name(arg["name"], f"{awhere}.name")
+        if aname == "met_ms":
+            raise DefinitionError(f"{awhere}.name: met_ms is the emit function's own parameter")
+        atype = arg.get("type", EVENT_ARG_INT)
+        if atype not in (EVENT_ARG_INT, EVENT_ARG_APP) and atype not in enums:
+            raise DefinitionError(
+                f"{awhere}.type: {atype!r} is not int32, app, or an enum in common.yaml")
+        args.append(EventArg(aname, _text(arg["description"], f"{awhere}.description"), atype))
+    if len(args) > EVENT_ARGS_MAX:
+        raise DefinitionError(f"{where}.args: an event has at most {EVENT_ARGS_MAX} arguments")
+    _check_unique(args, "name", "argument name", f"{where}.args")
+    return Event(
+        name=name,
+        id=_integer(node["id"], f"{where}.id", 1, EVENT_ID_MAX),
+        severity=node["severity"],
+        description=_text(node["description"], f"{where}.description"),
+        args=args,
+        constant=f"{app_name}_event_{name}".upper(),
+        function=f"emit_{app_name}_{name}",
+    )
+
+
 def _parse_app(path, enums, structs, root):
     data = _load_yaml(path)
     where = str(path)
     _check_keys(data, where, ("app", "id", "description", "wakeup", "housekeeping"),
-                ("commands", "data_channels", "sends"))
+                ("commands", "data_channels", "sends", "events"))
 
     name = _name(data["app"], f"{where}: app")
     if name != path.stem:
@@ -839,6 +938,20 @@ def _parse_app(path, enums, structs, root):
                      for i, n in enumerate(_sequence(data, "data_channels", where))]
     _check_unique(data_channels, "name", "data channel", f"{where}: data_channels")
 
+    events = [_parse_event(n, f"{where}: events[{i}]", name, enums)
+              for i, n in enumerate(_sequence(data, "events", where))]
+    _check_unique(events, "name", "event name", f"{where}: events")
+    _check_unique(events, "id", "event id", f"{where}: events")
+    if events and "event" not in structs:
+        raise DefinitionError(f"{where}: events need struct event in common.yaml")
+    if events:
+        fields = {f.name: f.type for f in structs["event"].fields}
+        if fields != EVENT_FIELDS:
+            want = ", ".join(f"{n} ({t})" for n, t in EVENT_FIELDS.items())
+            raise DefinitionError(
+                f"{where}: events need struct event in common.yaml to have exactly the "
+                f"fields {want}")
+
     send_names = []
     for i, entry in enumerate(_sequence(data, "sends", where)):
         swhere = f"{where}: sends[{i}]"
@@ -866,6 +979,7 @@ def _parse_app(path, enums, structs, root):
         data_channels=data_channels,
         source=_source_label(path, root),
         send_names=send_names,
+        events=events,
     )
 
 
@@ -1049,7 +1163,7 @@ def render(defs):
     }
     for app in defs.apps:
         outputs[Path(f"include/msg/{app.name}.h")] = \
-            env.get_template("app.h.j2").render(app=app)
+            env.get_template("app.h.j2").render(app=app, defs=defs)
         outputs[Path(f"src/msg_{app.name}.c")] = \
             env.get_template("app_channels.c.j2").render(app=app)
     outputs[Path("src/cmd_routes.c")] = \
@@ -1092,12 +1206,15 @@ def _hk_entry(field, offset, defs):
 
 
 def command_dictionary(defs):
-    """Every command, housekeeping layout, internal command, and FRAM record,
-    resolved, as plain data (DS-61, DS-74).
+    """Every command, housekeeping layout, internal command, event, and FRAM
+    record, resolved, as plain data (DS-10, DS-61, DS-74).
     The ground formats command text and decodes telemetry from this; --json
     writes it for other languages."""
     return {
         "modes": [v.name for v in defs.enums_by_name["mode"].values],
+        # Every enum's values, for event arguments typed by an enum (DS-10).
+        "enums": {e.name: [{"name": v.name, "value": v.value} for v in e.values]
+                  for e in defs.enums},
         "apps": [{
             "name": app.name,
             "id": app.id,
@@ -1116,12 +1233,27 @@ def command_dictionary(defs):
                 "args": [_field_entry(f, defs) for f in c.fields],
             } for c in app.commands if c.internal],
             "sends": app.send_names,
+            # The events it raises (DS-10), for decoding E packets.
+            "events": [{
+                "name": e.name,
+                "id": e.id,
+                "severity": e.severity,
+                "description": e.description,
+                "args": [{"name": a.name, "type": a.type, "description": a.description}
+                         for a in e.args],
+            } for e in app.events],
             "housekeeping": {
                 "size": app.housekeeping.wire_size,
                 "fields": [_hk_entry(f, offset, defs)
                            for f, offset in app.housekeeping.wire_layout],
             },
         } for app in defs.apps],
+        # The E packet after its kind byte: struct event, packed (DS-10, DS-66).
+        "event": {
+            "size": defs.event_struct.wire_size,
+            "fields": [_hk_entry(f, offset, defs)
+                       for f, offset in defs.event_struct.wire_layout],
+        } if defs.event_struct else None,
         # The FRAM map, for the ground's dump decoder (DS-74).
         "nvm": {
             "fram_size": defs.nvm.fram_size,

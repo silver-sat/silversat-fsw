@@ -61,6 +61,35 @@ data_channels:
       mode: deploy
       reason: boot
 
+# Events (DS-10): every change of mode or reason, and every request refused.
+events:
+  - name: mode_changed
+    id: 1
+    severity: info
+    description: >
+      The mode, or in safe mode the reason, changed (DS-40, DS-41). Also
+      logged on the console in development builds.
+    args:
+      - name: mode
+        type: mode
+        description: The new mode.
+      - name: reason
+        type: mode_reason
+        description: Why.
+  - name: change_refused
+    id: 2
+    severity: warning
+    description: >
+      A mode change was refused: the transitions table doesn't allow it, or
+      a request gave a reason no app may give (DS-40).
+    args:
+      - name: mode
+        type: mode
+        description: The mode asked for.
+      - name: reason
+        type: mode_reason
+        description: The reason given.
+
 housekeeping:
   description: Mode manager state, published at the start of every major frame and when it changes.
   fields:

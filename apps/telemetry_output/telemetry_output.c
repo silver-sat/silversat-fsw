@@ -14,8 +14,14 @@
  * latest value is never more than a second old (DS-14). Nothing here waits:
  * a full downlink queue drops the packet and counts it.
  *
- * Still to come: the beacon (DS-69), events, and RTC time (until there is
- * an RTC, packets carry MET from the tick, DS-25).
+ * Events (DS-10): then it takes up to TLM_EVENTS_PER_FRAME events from the
+ * event queue (silversat/event.h), oldest first, and sends each as an 'E'
+ * packet, leaving TLM_DOWNLINK_RESERVE places in the downlink queue free
+ * for command replies. Events wait in their own queue meanwhile, including
+ * through deploy mode, when this app doesn't run.
+ *
+ * Still to come: the beacon (DS-69), and RTC time (until there is an RTC,
+ * packets carry MET from the tick, DS-25).
  */
 
 #include <stdint.h>
@@ -25,6 +31,7 @@
 
 #include "msg/common.h"
 #include "msg/telemetry_output.h"
+#include "silversat/event.h"
 #include "silversat/link.h"
 #include "silversat/resource_map.h"
 #include "silversat/tlm_encode.h"
@@ -39,9 +46,40 @@ static struct telemetry_output_hk hk;
 /* Index into tlm_hk_apps of the app whose turn is next. */
 static size_t next_app;
 
+/*
+ * The packet being built. One buffer, not one on the stack per packet: a
+ * link frame is 256 bytes, and k_msgq_put() copies it into the downlink
+ * queue, so this app's single thread can reuse it for every packet.
+ */
+static struct link_frame frame;
+
+/* Send queued events, oldest first, while the downlink has room (DS-10). */
+static void send_events(void)
+{
+	for (int i = 0; i < TLM_EVENTS_PER_FRAME; i++) {
+		struct event event;
+		int len;
+
+		if (k_msgq_num_free_get(&downlink_msgq) <= TLM_DOWNLINK_RESERVE ||
+		    event_take(&event) != 0) {
+			return;
+		}
+		len = tlm_encode_event(&event, (uint8_t *)frame.data, sizeof(frame.data));
+		if (len < 0) {
+			hk.encode_errors++;
+			continue;
+		}
+		frame.len = (uint8_t)len;
+		if (k_msgq_put(&downlink_msgq, &frame, K_NO_WAIT) == 0) {
+			hk.events_sent++;
+		} else {
+			hk.events_lost++; /* the downlink filled since the check */
+		}
+	}
+}
+
 static void step(const struct frame_tick *tick)
 {
-	struct link_frame frame;
 	uint8_t app = tlm_hk_apps[next_app];
 	int len;
 
@@ -58,6 +96,8 @@ static void step(const struct frame_tick *tick)
 			hk.dropped++;
 		}
 	}
+	send_events();
+	hk.events_dropped = event_stats().dropped;
 	zbus_chan_pub(&telemetry_output_hk_chan, &hk, K_NO_WAIT);
 }
 

@@ -111,6 +111,15 @@ def test_replies_set_housekeeping_aside(link):
     assert sim.housekeeping == [hk]
 
 
+def test_replies_set_events_aside(link):
+    sim, avionics = link
+    event = b"E" + bytes(20)
+    os.write(avionics, link_codec.encode(link_codec.Packet(0x00, 5, event)) +
+             link_codec.encode(link_codec.Packet(0x00, 6, b"ACK 01 ok")))
+    assert sim.replies(timeout=1.0) == ["ACK 01 ok"]
+    assert sim.other == [event]
+
+
 def test_receive_records_bad_frames(link):
     sim, avionics = link
     os.write(avionics, bytes([0xC0, 0x00, 0x01, 0xC0]))
@@ -195,6 +204,12 @@ def test_describe_reply_and_dump(dictionary):
         "ACK 0000000000000001 ok"
     dump = b"D\x01\x34\x12\x03\xaa\xbb\xcc"
     assert radio_sim.describe(dictionary, dump) == "dump mirror 0x1234, 3 bytes: aa bb cc"
+
+
+def test_describe_an_event(dictionary):
+    packet = telemetry.encode_event(dictionary, "health", "app_stalled", 1500, {"app": "nvm"})
+    assert radio_sim.describe(dictionary, packet) == \
+        "MET 1.500 s  EVENT health app_stalled (warning) app=nvm"
 
 
 def test_describe_what_it_cannot_decode(dictionary):

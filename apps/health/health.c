@@ -53,7 +53,9 @@
  * Health runs at the lowest app priority, so an app that hogs the CPU also
  * starves health and causes a reset.
  *
- * Still to come: events for each response (DS-10).
+ * Each response is also an event (DS-10), the first step of the graded
+ * response (DS-43): app_stalled, app_stopped, reset_coming, reset_loop,
+ * app_restarted, auto_exhausted, ground_restart, and stack_low.
  */
 
 #include <stdbool.h>
@@ -116,6 +118,9 @@ static uint8_t auto_reenables[APP_ID_MAX + 1];
 /* Major frames health has handled, for the cooldown. */
 static uint32_t major_frames;
 
+/* MET from the latest tick, for events (DS-25); MET at boot before the first. */
+static int64_t now_met_ms;
+
 /*
  * To tell a ground restart from health's own: the apps the last report
  * showed stopped, and the apps health has started again itself.
@@ -163,12 +168,19 @@ static void schedule_reenable(uint8_t app)
 		return;
 	}
 	if (auto_reenables[app] >= app_attrs[app].auto_retry_cap) {
+		if ((hk.auto_exhausted & BIT64(app)) == 0) {
+			emit_health_auto_exhausted(now_met_ms, app);
+		}
 		hk.auto_exhausted |= BIT64(app);
 		return;
 	}
 	reenable_waiting |= BIT64(app);
 	reenable_due[app] = major_frames + CONFIG_SS_REENABLE_COOLDOWN_FRAMES;
 }
+
+/* app_stopped's cause (health.yaml). */
+#define STOPPED_FOR_STALL      1
+#define STOPPED_FOR_RESET_LOOP 2
 
 /* An app reached its threshold and hasn't been stopped. */
 static void respond(uint8_t app)
@@ -177,6 +189,7 @@ static void respond(uint8_t app)
 		/* Nothing is fed after this; the watchdog resets the spacecraft. */
 		if (!reset_coming) {
 			reset_coming = true;
+			emit_health_reset_coming(now_met_ms, app);
 			hk.reset_app = app;
 			boot_record_reset_app(app); /* stored with this frame's checkpoint */
 		}
@@ -184,6 +197,10 @@ static void respond(uint8_t app)
 	}
 	/* If it can't be sent now, the next report tries again. */
 	if (send_frame_manager_set_app_enabled(app, false) == 0) {
+		/* Asked again each report until the frame manager acts: one event. */
+		if ((hk.disabled_by_health & BIT64(app)) == 0) {
+			emit_health_app_stopped(now_met_ms, app, STOPPED_FOR_STALL);
+		}
 		hk.disabled_by_health |= BIT64(app);
 		if (app_attrs[app].critical) {
 			safe_requests |= BIT(MODE_REASON_APP_FAILURE);
@@ -199,6 +216,7 @@ static void check_reset_loop(void)
 {
 	hk.short_runs = boot_short_runs();
 	if (hk.short_runs >= CONFIG_SS_RESET_LOOP_SAFE_RUNS) {
+		emit_health_reset_loop(now_met_ms, hk.short_runs);
 		safe_requests |= BIT(MODE_REASON_RESET_LOOP);
 	}
 	if (hk.short_runs < CONFIG_SS_RESET_LOOP_STOP_RUNS) {
@@ -240,6 +258,7 @@ static void send_waiting(void)
 		}
 		loop_stops &= ~BIT64(app);
 		hk.disabled_by_health |= BIT64(app);
+		emit_health_app_stopped(now_met_ms, app, STOPPED_FOR_RESET_LOOP);
 	}
 }
 
@@ -259,6 +278,7 @@ static void reenable_due_apps(void)
 		auto_reenables[app]++;
 		hk.auto_reenables++;
 		hk.disabled_by_health &= ~BIT64(app);
+		emit_health_app_restarted(now_met_ms, app, auto_reenables[app]);
 	}
 }
 
@@ -301,9 +321,10 @@ static void check_stacks(void)
 	hk.stack_min_unused = 0;
 	k_thread_foreach_unlocked(scan_stack, &apps);
 	hk.stack_apps = apps;
-	/* Once low, it stays low: the high-water mark never goes down. */
-	if (apps > 0 && hk.stack_min_unused < CONFIG_SS_STACK_MARGIN_BYTES) {
+	/* Once low, it stays low: the high-water mark never goes down. One event. */
+	if (apps > 0 && hk.stack_min_unused < CONFIG_SS_STACK_MARGIN_BYTES && !hk.stack_low) {
 		hk.stack_low = true;
+		emit_health_stack_low(now_met_ms, hk.stack_min_app, hk.stack_min_unused);
 	}
 }
 
@@ -331,6 +352,7 @@ static void notice_restarts(const struct frame_report *report)
 		reenable_waiting &= ~BIT64(app);
 		hk.auto_exhausted &= ~BIT64(app);
 		hk.disabled_by_health &= ~BIT64(app);
+		emit_health_ground_restart(now_met_ms, app);
 	}
 }
 
@@ -355,6 +377,7 @@ static void check(const struct frame_report *report)
 		}
 		if (behind[app] == threshold) {
 			hk.stalls++;
+			emit_health_app_stalled(now_met_ms, app);
 		}
 		if (behind[app] >= threshold) {
 			respond(app);
@@ -391,6 +414,7 @@ static void step(const struct frame_tick *tick)
 	struct frame_report report;
 
 	major_frames++;
+	now_met_ms = tick->met_ms;
 	if (zbus_chan_read(&frame_report_chan, &report, K_NO_WAIT) == 0 &&
 	    (!have_report || report.major_frame != last_major_frame)) {
 		have_report = true;
@@ -421,6 +445,7 @@ static void health_main(void *a, void *b, void *c)
 	hk.boot_number = boot_number();
 	hk.reset_cause = boot_reset_cause();
 	hk.store_failures = boot_store_failures();
+	now_met_ms = boot_met_ms(); /* no tick yet: the reset-loop event is timed at boot */
 	check_reset_loop();
 	zbus_chan_pub(&health_hk_chan, &hk, K_NO_WAIT);
 

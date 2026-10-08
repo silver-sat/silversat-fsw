@@ -27,6 +27,7 @@
 #include "msg/common.h"
 #include "msg/nvm.h"
 #include "nvm/map.h"
+#include "silversat/event.h"
 #include "silversat/link.h"
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
@@ -431,4 +432,114 @@ ZTEST(nvm_app, test_an_unknown_command_is_rejected)
 	status = send(&cmd);
 	zassert_equal(status.cmd_rejected, before_status.cmd_rejected + 1);
 	zassert_equal(status.cmd_accepted, before_status.cmd_accepted);
+}
+
+/* ---- Events (DS-10) --------------------------------------------------------- */
+
+/*
+ * Wake the app once and throw away the events that reports: the setup
+ * before each test resets the stores, and the app reports any change it
+ * sees at its next wakeup.
+ */
+static void settle(void)
+{
+	struct event event;
+
+	wake();
+	while (event_take(&event) == 0) {
+	}
+}
+
+/* The next event should be the nvm app's event id. Returns it. */
+static struct event expect_event(uint16_t id)
+{
+	struct event event;
+
+	zassert_ok(event_take(&event), "event %u", id);
+	zassert_equal(event.app, APP_ID_NVM);
+	zassert_equal(event.id, id, "event %u, not %u", id, event.id);
+	return event;
+}
+
+ZTEST(nvm_app, test_fram_failing_and_coming_back_are_events)
+{
+	const struct nvm_cmd retry = {.id = NVM_CMD_RETRY};
+	struct event event;
+
+	settle();
+	fake_fram_fail(fram, true);
+	send_dump(NVM_STORE_FRAM, 0, 16);
+	event = expect_event(NVM_EVENT_FRAM_FAILED);
+	zassert_equal(event.severity, SEVERITY_ERROR);
+	zassert_true(event.met_ms > 0 && event.met_ms <= k_uptime_get(),
+		     "the latest tick's MET (DS-25), not %lld", (long long)event.met_ms);
+	wake();
+	zassert_equal(event_take(&event), -ENOMSG, "reported once");
+
+	fake_fram_fail(fram, false);
+	send(&retry);
+	event = expect_event(NVM_EVENT_FRAM_RESTORED);
+	zassert_equal(event.severity, SEVERITY_INFO);
+}
+
+ZTEST(nvm_app, test_the_mirror_failing_and_coming_back_are_events)
+{
+	const struct nvm_cmd retry = {.id = NVM_CMD_RETRY};
+
+	settle();
+	fake_retained_mem_fail(mirror, true);
+	send_dump(NVM_STORE_MIRROR, 0, 16);
+	expect_event(NVM_EVENT_MIRROR_FAILED);
+	fake_retained_mem_fail(mirror, false);
+	send(&retry);
+	expect_event(NVM_EVENT_MIRROR_RESTORED);
+}
+
+ZTEST(nvm_app, test_bad_slots_are_an_event_once_until_clean)
+{
+	const struct nvm_region *r = &nvm_map[1];
+	uint8_t payload[NVM_PAYLOAD_MAX];
+	struct event event;
+	bool found = false;
+
+	settle();
+	fill(payload, r->size, 0x50);
+	zassert_ok(nvm_write(r, payload));
+	fake_fram_memory(fram)[r->address + NVM_HEADER_LEN] ^= 0x01;
+	for (int i = 0; i < NVM_REGION_COUNT; i++) {
+		wake();
+	}
+	while (event_take(&event) == 0) {
+		if (event.id == NVM_EVENT_BAD_SLOTS) {
+			zassert_false(found, "once a pass");
+			found = true;
+			zassert_equal(event.arg0, 1, "region 1");
+			zassert_equal(event.arg1, 1, "one bad slot");
+			zassert_equal(event.severity, SEVERITY_WARNING);
+		}
+	}
+	zassert_true(found);
+
+	/* Still bad next pass: no new event. */
+	for (int i = 0; i < NVM_REGION_COUNT; i++) {
+		wake();
+	}
+	zassert_equal(event_take(&event), -ENOMSG);
+
+	/* Its owner writes it (the write goes over the bad slot): clean, then bad again. */
+	zassert_ok(nvm_write(r, payload));
+	for (int i = 0; i < NVM_REGION_COUNT; i++) {
+		wake();
+	}
+	zassert_equal(event_take(&event), -ENOMSG, "clean");
+	for (int slot = 0; slot < 2; slot++) {
+		/* Whichever slot now holds the record; an empty one stays empty. */
+		fake_fram_memory(fram)[r->address + slot * NVM_SLOT_SIZE(r->size) + NVM_HEADER_LEN] ^=
+			0x01;
+	}
+	for (int i = 0; i < NVM_REGION_COUNT; i++) {
+		wake();
+	}
+	event = expect_event(NVM_EVENT_BAD_SLOTS);
+	zassert_equal(event.arg0, 1, "reported again, once it had been clean");
 }

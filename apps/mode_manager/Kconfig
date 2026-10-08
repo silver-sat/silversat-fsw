@@ -3,6 +3,7 @@
 config SS_MODE_MANAGER
 	bool "Mode manager"
 	depends on SS_MESSAGES
+	select SS_EVENT
 	select SS_NVM
 	select GPIO if $(dt_alias_enabled,test-mode-signal)
 	help

@@ -24,6 +24,11 @@
  *           tools/nvm_dump.py puts the chunks together and decodes every
  *           record by name.
  *
+ * Events (DS-10): FRAM or the mirror failing or coming back (fram_failed,
+ * mirror_failed, fram_restored, mirror_restored; a store the board doesn't
+ * have is never reported), and the scrub finding bad slots in a region
+ * that was clean (bad_slots).
+ *
  * It isn't on the ground command path, so it isn't protected: if it
  * stalls, health stops it (DS-43), and the apps' own records carry on.
  */
@@ -60,6 +65,19 @@ static struct nvm_hk hk;
 /* The region the scrub checks next. */
 static uint8_t next_region;
 
+/* Regions whose last check found bad slots: bit n is region n. */
+static uint64_t bad_regions;
+
+BUILD_ASSERT(NVM_REGION_COUNT <= 64, "bad_regions has a bit for each region");
+
+/* MET from the latest tick, for events (DS-25). */
+static int64_t now_met_ms;
+
+/* Whether each store was available when last checked, after the first tick. */
+static bool stores_checked;
+static bool fram_was_available;
+static bool mirror_was_available;
+
 static void scrub(void)
 {
 #if NVM_REGION_COUNT > 0
@@ -67,6 +85,13 @@ static void scrub(void)
 
 	if (bad > 0) {
 		hk.scrub_bad += (uint32_t)bad;
+		/* Once, until the region is clean again: its owner's next write fixes it. */
+		if ((bad_regions & BIT64(next_region)) == 0) {
+			emit_nvm_bad_slots(now_met_ms, next_region, bad);
+		}
+		bad_regions |= BIT64(next_region);
+	} else if (bad == 0) {
+		bad_regions &= ~BIT64(next_region);
 	}
 	next_region++;
 	if (next_region == NVM_REGION_COUNT) {
@@ -130,6 +155,39 @@ static void publish_hk(void)
 	zbus_chan_pub(&nvm_hk_chan, &hk, K_NO_WAIT);
 }
 
+/*
+ * A store that has failed or come back since the last check is an event.
+ * At the first check, after the first tick, a store the board has that is
+ * already unavailable is reported as failed.
+ */
+static void check_stores(void)
+{
+	bool fram = nvm_available();
+	bool mirror = nvm_mirror_available();
+
+	if (!stores_checked) {
+		/*
+		 * A store the board has counts as having been available, so one
+		 * already down is reported; one it doesn't have never is.
+		 */
+		stores_checked = true;
+		fram_was_available = nvm_fram_fitted();
+		mirror_was_available = nvm_mirror_fitted();
+	}
+	if (fram_was_available && !fram) {
+		emit_nvm_fram_failed(now_met_ms);
+	} else if (!fram_was_available && fram) {
+		emit_nvm_fram_restored(now_met_ms);
+	}
+	if (mirror_was_available && !mirror) {
+		emit_nvm_mirror_failed(now_met_ms);
+	} else if (!mirror_was_available && mirror) {
+		emit_nvm_mirror_restored(now_met_ms);
+	}
+	fram_was_available = fram;
+	mirror_was_available = mirror;
+}
+
 static void nvm_main(void *a, void *b, void *c)
 {
 	const struct zbus_channel *chan;
@@ -142,6 +200,7 @@ static void nvm_main(void *a, void *b, void *c)
 	publish_hk();
 	while (zbus_sub_wait_msg(&nvm_sub, &chan, &msg, K_FOREVER) == 0) {
 		if (chan == &nvm_wakeup_chan) {
+			now_met_ms = msg.tick.met_ms;
 			scrub();
 			status.steps++;
 		} else if (chan == &nvm_cmd_chan) {
@@ -150,6 +209,9 @@ static void nvm_main(void *a, void *b, void *c)
 			} else {
 				status.cmd_rejected++;
 			}
+		}
+		if (status.steps > 0) {
+			check_stores(); /* after the first tick, so events carry MET */
 		}
 		publish_hk();
 		zbus_chan_pub(&nvm_status_chan, &status, K_NO_WAIT);

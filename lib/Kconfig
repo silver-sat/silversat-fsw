@@ -44,6 +44,32 @@ config SS_CMD_TEXT
 	  Splits ground command text into words and reads typed arguments.
 	  Used by the generated command routing (DS-50).
 
+config SS_EVENT
+	bool "Events"
+	depends on SS_MESSAGES
+	help
+	  The queue that carries events from every app to telemetry output,
+	  which downlinks them (DS-10). Emitting never waits: a full queue
+	  drops the new event and counts it.
+
+config SS_EVENT_QUEUE_DEBUG
+	bool "Send debug events to the ground"
+	default y if !SS_FLIGHT_BUILD
+	depends on SS_EVENT
+	help
+	  Queue events of severity debug for the downlink, like any other.
+	  Off in the flight build, where debug events would spend the radio
+	  link on development detail (common.yaml's severity); they are still
+	  logged when SS_EVENT_LOG is on.
+
+config SS_EVENT_LOG
+	bool "Log each event on the console (development)"
+	default y if !SS_FLIGHT_BUILD
+	depends on SS_EVENT && LOG
+	help
+	  Each event is also logged as it is raised, so the bench sees it at
+	  once. Not in the flight build (DS-06).
+
 config SS_NVM
 	bool "FRAM service"
 	depends on SS_MESSAGES

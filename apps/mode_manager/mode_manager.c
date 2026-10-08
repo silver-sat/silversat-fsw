@@ -46,9 +46,10 @@
  * neither FRAM nor the mirror, both read as their defaults: deploy mode
  * again, which waits out the delay, late but never early.
  *
- * Each mode change, and the boot mode, is logged ("mode deploy -> test
- * (test_signal)"), so on the bench the console shows the mode at once.
- * Logs are for development; the ground learns the mode from housekeeping.
+ * Each change of mode, or of the reason in safe mode, is an event
+ * (mode_changed), and each refused change too (change_refused), so the
+ * ground learns of it at once; development builds also log events on the
+ * console (DS-10). The boot mode is logged too.
  */
 
 #include <errno.h>
@@ -234,10 +235,11 @@ static int change_mode(uint8_t to, uint8_t reason)
 	 */
 	if (reason > MODE_REASON_MAX || !allowed(state.mode, to, reason)) {
 		hk.refused++;
+		emit_mode_manager_change_refused(now_met_ms, to, reason);
 		return -EPERM;
 	}
 	(void)run_actions(ON_EXIT, state.mode);
-	LOG_INF("mode %s -> %s (%s)", mode_name(state.mode), mode_name(to), mode_reason_name(reason));
+	emit_mode_manager_mode_changed(now_met_ms, to, reason);
 	state.mode = to;
 	state.reason = reason;
 	state.since_met_ms = now_met_ms;
@@ -258,8 +260,7 @@ static bool replace_safe_reason(uint8_t reason)
 	if (state.mode != MODE_SAFE || state.reason == reason) {
 		return false;
 	}
-	LOG_INF("safe mode, reason %s -> %s", mode_reason_name(state.reason),
-		mode_reason_name(reason));
+	emit_mode_manager_mode_changed(now_met_ms, MODE_SAFE, reason);
 	state.reason = reason;
 	zbus_chan_pub(&mode_chan, &state, K_NO_WAIT);
 	store_mode();
@@ -284,6 +285,7 @@ static int request_mode(const struct mode_manager_request_mode *req)
 	/* Check the range first: BIT() of a value of 32 or more is undefined. */
 	if (req->reason > MODE_REASON_MAX || (REQUEST_REASONS & BIT(req->reason)) == 0) {
 		hk.refused++;
+		emit_mode_manager_change_refused(now_met_ms, req->mode, req->reason);
 		return -EPERM;
 	}
 	if (req->mode == state.mode) {

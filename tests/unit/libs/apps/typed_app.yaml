@@ -40,6 +40,31 @@ commands:
     fields:
       - {name: level, type: uint8}
 
+# Events, one with each kind of argument and one with none (DS-10).
+events:
+  - name: typed
+    id: 1
+    severity: warning
+    description: An event with an app argument and an enum argument.
+    args:
+      - name: who
+        type: app
+        description: An app.
+      - name: mode
+        type: mode
+        description: A mode.
+  - name: plain
+    id: 513
+    severity: critical
+    description: An event with a plain number and nothing else.
+    args:
+      - name: count
+        description: A number.
+  - name: bare
+    id: 65535
+    severity: debug
+    description: An event with no arguments, and the largest id.
+
 # Housekeeping with every field type, for the telemetry encoder tests.
 housekeeping:
   description: Typed app state.

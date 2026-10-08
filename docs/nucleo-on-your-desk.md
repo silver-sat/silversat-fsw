@@ -104,7 +104,17 @@ logs a status line about a second after boot and then every minute:
 | `short runs 0` | Runs in a row, up to this boot, that ended within 10 minutes: a reset loop (DS-44). See below |
 | `stopped 0x0` | Apps health has stopped; bit n is app n (the app ids are in `messages/apps/`) |
 
-These lines are for development only. The flight build leaves them out.
+The console also shows every **event** as it happens: something an app
+tells the ground about, such as a mode change, a stalled app, or FRAM
+failing:
+
+```
+<inf> event: mode_manager mode_changed (info) mode=test reason=test_signal
+<inf> event: health app_stalled (warning) app=nvm
+```
+
+These lines are for development only. The flight build leaves them out;
+the events themselves still go to the ground (section 6).
 
 ## 5. Choose the boot mode
 
@@ -163,7 +173,13 @@ MET 305.513 s  mode_manager: mode=test, reason=test_signal, transitions=1, ...
 ```
 
 Each line is one app's housekeeping, decoded by name from the message
-definitions. Ctrl-C stops it.
+definitions, or an event:
+
+```
+MET 0.910 s  EVENT mode_manager mode_changed (info) mode=test reason=test_signal
+```
+
+Ctrl-C stops it.
 
 **Send a command** the same way. It is signed with the published test key,
 which the development build accepts, and the reply is printed:

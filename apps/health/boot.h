@@ -13,6 +13,9 @@
 uint32_t boot_number(void);
 uint32_t boot_reset_cause(void);
 
+/* Mission elapsed time when this boot began (DS-25). */
+int64_t boot_met_ms(void);
+
 /*
  * Short runs in a row up to this boot (a reset loop, DS-44), at most
  * CONFIG_SS_RESET_LOOP_STOP_RUNS. 0 if the last run was long.

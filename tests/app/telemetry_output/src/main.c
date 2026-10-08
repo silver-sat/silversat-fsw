@@ -5,8 +5,8 @@
  *
  * Telemetry output runs as it does in flight. The tests stand in for the
  * frame manager, waking it with ticks, and for the radio, reading the
- * downlink queue. The encoding itself is tested against the ground decoder
- * in tests/unit/libs.
+ * downlink queue, and raise events as any app would (DS-10). The encoding
+ * itself is tested against the ground decoder in tests/unit/libs.
  */
 
 #include <zephyr/kernel.h>
@@ -17,7 +17,9 @@
 #include "app_test.h"
 #include "msg/common.h"
 #include "msg/frame_manager.h"
+#include "msg/health.h"
 #include "msg/telemetry_output.h"
+#include "silversat/event.h"
 #include "silversat/link.h"
 #include "silversat/resource_map.h"
 #include "silversat/tlm_encode.h"
@@ -52,12 +54,16 @@ static struct telemetry_output_hk to_hk(void)
 	return hk;
 }
 
+/* Each test starts with the downlink and the event queue empty. */
 static void drain(void *fixture)
 {
 	struct link_frame frame;
+	struct event event;
 
 	ARG_UNUSED(fixture);
 	while (take_packet(&frame)) {
+	}
+	while (event_take(&event) == 0) {
 	}
 }
 
@@ -140,3 +146,124 @@ ZTEST(telemetry_output, test_own_command_channel_rejects)
 					&after));
 	zassert_equal(after.cmd_rejected - before.cmd_rejected, 1);
 }
+
+/* ---- Events (DS-10) --------------------------------------------------------- */
+
+/* The next packet should be an 'E' packet for health's app_stalled, with this app. */
+static void expect_event(int32_t app)
+{
+	struct link_frame frame;
+	const uint8_t *data = (const uint8_t *)frame.data;
+
+	zassert_true(take_packet(&frame), "an event packet");
+	zassert_equal(data[0], TLM_KIND_EVENT);
+	zassert_equal(frame.len, 21);
+	zassert_equal(data[9], APP_ID_HEALTH);
+	zassert_equal(sys_get_le16(&data[11]), HEALTH_EVENT_APP_STALLED);
+	zassert_equal((int32_t)sys_get_le32(&data[13]), app);
+}
+
+ZTEST(telemetry_output, test_events_follow_the_housekeeping_oldest_first)
+{
+	struct link_frame frame;
+	uint32_t sent = to_hk().events_sent;
+
+	emit_health_app_stalled(1000, 1);
+	emit_health_app_stalled(1000, 2);
+	wake();
+	zassert_true(take_packet(&frame));
+	zassert_equal(frame.data[0], TLM_KIND_HK, "housekeeping first");
+	expect_event(1);
+	expect_event(2);
+	zassert_false(take_packet(&frame));
+	zassert_equal(to_hk().events_sent - sent, 2);
+}
+
+ZTEST(telemetry_output, test_at_most_a_few_events_a_major_frame)
+{
+	struct link_frame frame;
+
+	for (int32_t i = 0; i < TLM_EVENTS_PER_FRAME + 2; i++) {
+		emit_health_app_stalled(1000, i);
+	}
+	wake();
+	zassert_true(take_packet(&frame));
+	for (int32_t i = 0; i < TLM_EVENTS_PER_FRAME; i++) {
+		expect_event(i);
+	}
+	zassert_false(take_packet(&frame), "the rest wait for the next major frame");
+
+	wake();
+	zassert_true(take_packet(&frame));
+	expect_event(TLM_EVENTS_PER_FRAME);
+	expect_event(TLM_EVENTS_PER_FRAME + 1);
+}
+
+ZTEST(telemetry_output, test_events_leave_room_for_command_replies)
+{
+	struct link_frame frame = {.len = 1, .data = "A"};
+	struct event event;
+
+	/* After the housekeeping packet, only the reserved places are left. */
+	for (int i = 0; i < DOWNLINK_QUEUE_DEPTH - 1 - TLM_DOWNLINK_RESERVE; i++) {
+		zassert_ok(k_msgq_put(&downlink_msgq, &frame, K_NO_WAIT));
+	}
+	emit_health_app_stalled(1000, 9);
+	wake();
+	zassert_equal(k_msgq_num_free_get(&downlink_msgq), TLM_DOWNLINK_RESERVE);
+	zassert_ok(event_take(&event), "the event still waits in its own queue");
+	zassert_equal(event.arg0, 9);
+}
+
+ZTEST(telemetry_output, test_dropped_events_are_reported)
+{
+	for (int i = 0; i < EVENT_QUEUE_DEPTH + 2; i++) {
+		emit_health_app_stalled(1000, i);
+	}
+	wake();
+	zassert_equal(to_hk().events_dropped, event_stats().dropped);
+	zassert_true(to_hk().events_dropped >= 2);
+}
+
+/* A debug event, from no app's YAML: the queue treats every severity alike. */
+static void emit_debug(void)
+{
+	const struct event event = {.met_ms = 1000, .app = APP_ID_HEALTH,
+				    .severity = SEVERITY_DEBUG, .id = 999};
+	const struct event_text text = {.name = "debug_detail"};
+
+	event_emit(&event, &text);
+}
+
+#if defined(CONFIG_SS_EVENT_QUEUE_DEBUG)
+ZTEST(telemetry_output, test_debug_events_go_down_in_development)
+{
+	struct link_frame frame;
+
+	emit_debug();
+	wake();
+	zassert_true(take_packet(&frame));
+	zassert_true(take_packet(&frame), "the debug event");
+	zassert_equal(frame.data[0], TLM_KIND_EVENT);
+	zassert_equal(frame.data[10], SEVERITY_DEBUG);
+}
+#else
+ZTEST(telemetry_output, test_the_flight_build_keeps_debug_events_off_the_link)
+{
+	struct link_frame frame;
+	struct event_stats start = event_stats();
+
+	emit_debug();
+	wake();
+	zassert_true(take_packet(&frame), "housekeeping");
+	zassert_false(take_packet(&frame), "no debug event");
+	zassert_equal(event_stats().queued, start.queued);
+	zassert_equal(event_stats().dropped, start.dropped, "left out, not dropped");
+
+	/* Other severities still go. */
+	emit_health_app_stalled(1000, 1);
+	wake();
+	zassert_true(take_packet(&frame));
+	expect_event(1);
+}
+#endif
