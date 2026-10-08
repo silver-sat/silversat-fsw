@@ -29,7 +29,9 @@
  *   4. reads every app thread's stack high-water mark: the least stack
  *      left unused, and which app (DS-44). Each app's thread is named
  *      <app>_tid (app_thread_name()), so health finds it by name;
- *   5. feeds the hardware watchdog, unless a reset is coming.
+ *   5. feeds the hardware watchdog, unless a reset is coming;
+ *   6. in a development build, logs a status line every
+ *      CONFIG_SS_HEALTH_STATUS_SECONDS (status.c).
  *
  * A reset loop (DS-44): at boot, boot.c counts the short runs in a row in
  * the boot log. At CONFIG_SS_RESET_LOOP_SAFE_RUNS, health asks the mode
@@ -61,6 +63,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/zbus/zbus.h>
 
@@ -68,6 +71,9 @@
 #include "boot.h"
 #include "msg/health.h"
 #include "silversat/resource_map.h"
+#include "status.h"
+
+LOG_MODULE_REGISTER(health, LOG_LEVEL_INF);
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(health_sub);
 ZBUS_CHAN_ADD_OBS(health_wakeup_chan, health_sub, 3);
@@ -356,6 +362,30 @@ static void check(const struct frame_report *report)
 	}
 }
 
+/*
+ * The development status line (status.c); nothing in the flight build. Kept
+ * out of line, so its buffer is on the stack only while a line is written,
+ * not through every major frame's FRAM write.
+ */
+static __noinline void log_status(int64_t met_ms)
+{
+#if defined(CONFIG_SS_HEALTH_STATUS_LOG)
+	struct mode_state mode;
+	char line[160];
+
+	if (!status_due(major_frames, CONFIG_SS_HEALTH_STATUS_SECONDS)) {
+		return;
+	}
+	if (zbus_chan_read(&mode_chan, &mode, K_NO_WAIT) != 0) {
+		mode = (struct mode_state){.mode = UINT8_MAX, .reason = UINT8_MAX}; /* logged as "?" */
+	}
+	(void)status_format(line, sizeof(line), &hk, &mode, met_ms);
+	LOG_INF("%s", line);
+#else
+	ARG_UNUSED(met_ms);
+#endif
+}
+
 static void step(const struct frame_tick *tick)
 {
 	struct frame_report report;
@@ -375,6 +405,7 @@ static void step(const struct frame_tick *tick)
 	watchdog_feed();
 	hk.store_failures = boot_store_failures();
 	zbus_chan_pub(&health_hk_chan, &hk, K_NO_WAIT);
+	log_status(tick->met_ms);
 }
 
 static void health_main(void *a, void *b, void *c)

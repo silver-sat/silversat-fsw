@@ -80,12 +80,21 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
+/*
+ * A FRAM write (nvm_write and the driver under it) takes about 800 bytes of
+ * stack on the Nucleo, and a log line, formatted on the caller's stack in
+ * immediate mode, several hundred more. An app doing either needs room for
+ * it on top of its own frames. native_sim's stacks don't show this: check
+ * health's status line (least stack left) on the board after any change
+ * that makes an app's calls deeper (DS-44).
+ */
+
 #define FRAME_MANAGER_STACK_SIZE 1024
 #define COMMAND_INGEST_STACK_SIZE 2048 /* BLAKE2s state, one link frame */
 #define RADIO_STACK_SIZE          2048 /* one decoded and one encoded link frame */
 #define TELEMETRY_OUTPUT_STACK_SIZE 1024 /* one link frame */
-#define MODE_MANAGER_STACK_SIZE     1024
-#define HEALTH_STACK_SIZE           1024
+#define MODE_MANAGER_STACK_SIZE     1536 /* a FRAM write, a log line */
+#define HEALTH_STACK_SIZE           2048 /* a FRAM write every major frame, the status line */
 #define NVM_STACK_SIZE              1536 /* one link frame, one FRAM slot */
 
 /* ---- UART assignments --------------------------------------------------- */

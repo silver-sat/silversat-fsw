@@ -19,4 +19,6 @@ zephyr_include_directories(src)
 
 target_sources(app PRIVATE src/main.c src/fake_watchdog.c ../common/app_test.c
   ${FAKES}/fake_fram.c ${FAKES}/fake_retained_mem.c)
-target_include_directories(app PRIVATE ../common src ${FAKES})
+# apps/health, for the status line's own tests (status.h). A test may reach
+# into an app; an app may not (DS-12).
+target_include_directories(app PRIVATE ../common src ${FAKES} ../../../apps/health)

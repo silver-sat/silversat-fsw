@@ -26,6 +26,19 @@ enum app_id {
 #define APP_WAKEUP_COUNT {{ defs.wakeup_apps | length }}
 #define APP_ID_MAX {{ defs.apps | map(attribute="id") | max }}
 
+/* An app's name, as in its YAML and in command text, or NULL for an id with no app. */
+static inline const char *app_name(uint8_t app)
+{
+	switch (app) {
+{% for app in defs.apps %}
+	case {{ app.id_constant }}:
+		return "{{ app.name }}";
+{% endfor %}
+	default:
+		return NULL;
+	}
+}
+
 /*
  * The name of an app's thread, or NULL for an id with no app. Every app
  * defines its thread as K_THREAD_DEFINE(<app>_tid, ...), and Zephyr names
@@ -64,6 +77,19 @@ enum {{ e.name }} {
 
 /** The largest enum {{ e.name }} value, for sizing arrays indexed by it. */
 #define {{ e.max_constant }} {{ e.max_value }}
+
+/** A {{ e.name }} value's name, as in the YAML, for logs; NULL if it has none. */
+static inline const char *{{ e.name }}_name(uint32_t value)
+{
+	switch (value) {
+{% for v in e.values %}
+	case {{ v.constant }}:
+		return "{{ v.name }}";
+{% endfor %}
+	default:
+		return NULL;
+	}
+}
 {% endfor %}
 {% for s in defs.structs %}
 

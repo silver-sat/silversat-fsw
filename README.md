@@ -31,6 +31,9 @@ make flash
 
 Type `make` on its own to see everything available.
 
+Have a Nucleo-F446RE on your desk? [docs/nucleo-on-your-desk.md](docs/nucleo-on-your-desk.md)
+shows how to load the firmware from your own computer and watch its console.
+
 When your code is working, commit it to your branch, push it to GitHub, and create a pull request. Ask for an auto merge: if your code passes the integration tests, it will be automatically added to the main branch.
 
 Then switch to main and pull the latest version.
