@@ -16,6 +16,8 @@ the board, loads the firmware, and carries the console.
   - Linux: `sudo apt install tio`
   - Windows: PuTTY works; use the COM port Device Manager shows for the
     board.
+- To read telemetry and send commands (section 6): a 3.3 V USB-serial
+  converter, three jumper wires, and Python 3 on your computer.
 
 The Nucleo has a debugger built in, the ST-LINK. To your computer it looks
 like a USB drive (for loading firmware) and a serial port (for the
@@ -66,11 +68,14 @@ st-flash --reset write ~/Downloads/zephyr.bin 0x08000000
 
 ## 4. Watch the console
 
-Find the board's serial port, then open it at 115200 baud:
+Find the board's serial port, then open it at 115200 baud. On a Mac, use
+the port's `/dev/cu.` name. Each port also has a `/dev/tty.` name, which
+waits for a modem's carrier-detect signal before it opens, and with these
+boards that means forever.
 
 ```sh
-ls /dev/tty.usbmodem*          # macOS; on Linux, ls /dev/ttyACM*
-tio -b 115200 /dev/tty.usbmodem1234
+ls /dev/cu.usbmodem*           # macOS; on Linux, ls /dev/ttyACM*
+tio -b 115200 /dev/cu.usbmodem1234
 ```
 
 To quit `tio`, press Ctrl-T, then Q.
@@ -118,6 +123,60 @@ These lines are for development only. The flight build leaves them out.
 
   (After the first deployment it says `safe -> test`.)
 
+## 6. Read telemetry and send commands
+
+Housekeeping and command replies go out on the radio UART, not the console:
+USART1, at 19200 baud, in KISS frames. In test, safe and nominal mode,
+telemetry output sends one app's housekeeping every second; deploy mode
+sends nothing. To read it as the ground will, you need a 3.3 V USB-serial
+converter (never 5 V). These steps use Adafruit's FT232H breakout.
+
+**Wire it.** On the Nucleo the radio UART's pins are labelled with their
+Arduino names, **D8** (PA9, the F446 transmits) and **D2** (PA10, the F446
+receives); not D0 and D1, which belong to the console.
+
+| FT232H | Nucleo |
+|---|---|
+| D0 (it transmits) | D2 (PA10) |
+| D1 (it receives) | D8 (PA9) |
+| GND | GND |
+
+Don't connect any power pins: each board has its own USB cable. If the
+FT232H has an I2C mode switch, set it off. It appears on a Mac as
+`/dev/cu.usbserial-XXXXXXXX`.
+
+**Check bytes arrive.** `tio -b 19200 /dev/cu.usbserial-XXXXXXXX` shows a
+burst of binary every second. In hex (Ctrl-T then `?` lists tio's keys)
+each frame starts and ends with `c0`, and housekeeping starts `48` (`H`).
+Quit tio before the next step: only one program can have the port open.
+
+**Decode it**, on your own computer, in your clone of this repository (it
+needs Python 3 and `python3 -m pip install pyyaml jinja2`):
+
+```sh
+python3 sim/radio_sim.py --port /dev/cu.usbserial-XXXXXXXX --baud 19200 --listen
+```
+
+```
+MET 311.513 s  health: disabled_by_health=0, auto_exhausted=0, feeds=312, stalls=0, ...
+MET 305.513 s  mode_manager: mode=test, reason=test_signal, transitions=1, ...
+```
+
+Each line is one app's housekeeping, decoded by name from the message
+definitions. Ctrl-C stops it.
+
+**Send a command** the same way. It is signed with the published test key,
+which the development build accepts, and the reply is printed:
+
+```sh
+python3 sim/radio_sim.py --port /dev/cu.usbserial-XXXXXXXX --baud 19200 \
+    --listen nvm retry
+```
+
+For example, `frame_manager set_app_enabled nvm true` starts the nvm app
+again after a reset loop stopped it. Commands are accepted in test, safe
+and nominal mode, never in deploy mode.
+
 ## What to know
 
 - **Repeated boot banners a few seconds apart** mean the watchdog is
@@ -141,11 +200,7 @@ These lines are for development only. The flight build leaves them out.
   them, so the next boot is boot 1 again, in deploy mode.
 - **The watchdog is live** (3 seconds). It pauses while a debugger halts
   the chip, so stepping through code won't reset the board.
-- **Telemetry goes out on the radio UART**, not the console: USART1 on PA9
-  (F446 transmits) and PA10 (F446 receives), at 19200 baud, in KISS frames.
-  To read it as the ground will, connect a 3.3 V USB-serial converter to
-  those pins (its RX to PA9, its TX to PA10, and ground to ground), and
-  decode with `tools/telemetry.py`. Never use a 5 V converter.
+- **Telemetry goes out on the radio UART**, not the console. See below.
 
 ## Going further
 

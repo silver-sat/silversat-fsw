@@ -397,6 +397,7 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 - Written in Python as external processes, connected over native_sim PTY UARTs in the Codespace.
 - On the flatsat, the same simulators run on the Mac Mini through USB-serial adapters.
 - The flight code is unchanged across stages; only the far end of the wire changes.
+- Built 2026-10-08 for a Nucleo on the bench: `sim/radio_sim.py --port <adapter> --baud 19200` speaks to the radio UART through a USB-serial adapter, and `--listen` prints every downlink packet decoded by name. It decoded real housekeeping from a Nucleo-F446RE through an FT232H, every frame's CRC good (`docs/nucleo-on-your-desk.md`).
 - Each simulator has a fault menu.
 - The first is `sim/radio_sim.py`. Its fault menu drops, corrupts, repeats, splits, or renumbers a frame, sends noise first, or uses an unhandled type byte. `tests/app/radio` runs the flight apps against it in real time (DS-92).
 
@@ -482,3 +483,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-07 | Health's mode requests. DS-40: requests are the internal command `request_mode`, not `mode_req_chan`, limited to the reasons other apps detect; a safe-mode request in safe mode, or the command-loss timer firing there, replaces the reason. DS-68: `internal: true` commands, which the ground can't send. DS-41, DS-43: critical apps (a `critical` attribute-row flag, DS-07) request safe mode when stopped. DS-44: graded reset-loop detection from the boot log (3 short runs: safe mode; 6: also stop the apps that aren't protected). Open items: DS-25 row removed (built 2026-10-06) |
 | 2026-10-07 | Health, second part. DS-43: `AUTO` re-enable (10-major-frame cooldown, the row's cap, then the ground; a ground restart renews the cap). DS-44: app stack high-water marks in health's housekeeping (the least unused, which app, and a low flag), finding each app's thread by its generated name. DS-07: health's housekeeping ordered largest field first to fit the 64-byte buffer |
 | 2026-10-07 | DS-06: development logging for the bench (mode changes; health's status line every minute, not in the flight build), and `docs/nucleo-on-your-desk.md` |
+| 2026-10-08 | DS-90: the radio simulator reaches a Nucleo through a USB-serial adapter (`--port`, `--baud`) and decodes the downlink as it arrives (`--listen`) |
