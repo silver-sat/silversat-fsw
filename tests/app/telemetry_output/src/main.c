@@ -9,6 +9,8 @@
  * itself is tested against the ground decoder in tests/unit/libs.
  */
 
+#include <errno.h>
+
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/zbus/zbus.h>
@@ -18,6 +20,7 @@
 #include "msg/common.h"
 #include "msg/frame_manager.h"
 #include "msg/health.h"
+#include "msg/nvm.h"
 #include "msg/telemetry_output.h"
 #include "silversat/event.h"
 #include "silversat/link.h"
@@ -58,13 +61,11 @@ static struct telemetry_output_hk to_hk(void)
 static void drain(void *fixture)
 {
 	struct link_frame frame;
-	struct event event;
 
 	ARG_UNUSED(fixture);
 	while (take_packet(&frame)) {
 	}
-	while (event_take(&event) == 0) {
-	}
+	app_test_drain_events();
 }
 
 ZTEST_SUITE(telemetry_output, NULL, NULL, drain, NULL, NULL);
@@ -223,6 +224,33 @@ ZTEST(telemetry_output, test_dropped_events_are_reported)
 	wake();
 	zassert_equal(to_hk().events_dropped, event_stats().dropped);
 	zassert_true(to_hk().events_dropped >= 2);
+}
+
+/* ---- The tests' own event helpers (app_test.h) ----------------------------- */
+
+ZTEST(telemetry_output, test_find_event_matches_the_app_and_the_number)
+{
+	struct event event;
+
+	/* Two apps' events with the same number: event numbers are per app. */
+	BUILD_ASSERT((int)NVM_EVENT_FRAM_FAILED == (int)HEALTH_EVENT_APP_STALLED);
+	emit_nvm_fram_failed(1000);
+	emit_health_app_stalled(2000, 7);
+	zassert_true(app_test_find_event(APP_ID_HEALTH, HEALTH_EVENT_APP_STALLED, &event));
+	zassert_equal(event.app, APP_ID_HEALTH);
+	zassert_equal(event.arg0, 7);
+	zassert_false(app_test_find_event(APP_ID_HEALTH, HEALTH_EVENT_APP_STALLED, &event),
+		      "and the queue is empty after it");
+}
+
+ZTEST(telemetry_output, test_drain_events_empties_the_queue)
+{
+	struct event event;
+
+	emit_health_app_stalled(1000, 1);
+	emit_nvm_fram_failed(1000);
+	app_test_drain_events();
+	zassert_equal(event_take(&event), -ENOMSG);
 }
 
 /* A debug event, from no app's YAML: the queue treats every severity alike. */
