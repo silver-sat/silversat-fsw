@@ -3,16 +3,25 @@
 """Radio simulator: plays the radio board on the far end of the radio UART.
 
 On native_sim the radio UART is a pseudo-terminal, and native_sim prints its
-path at startup ("uart_1 connected to pseudotty: /dev/pts/N"). This opens
-it and speaks the link codec (DS-65): ground commands go to avionics as
-KISS data frames (type 0x00), and avionics' replies come back the same way
-(DS-66). On the flatsat, the same simulator talks to a USB-serial adapter
-instead (DS-90).
+path at startup ("uart_1 connected to pseudotty: /dev/pts/N"). On a Nucleo
+on the bench it is a USB-serial adapter wired to the radio UART's pins
+(docs/nucleo-on-your-desk.md), at 19200 baud. This opens either and speaks
+the link codec (DS-65): ground commands go to avionics as KISS data frames
+(type 0x00), and avionics' replies and telemetry come back the same way
+(DS-66, DS-90).
 
-    python3 sim/radio_sim.py --pty /dev/pts/2 frame_manager set_entry_enabled nominal 0 true
+    python3 sim/radio_sim.py --port /dev/pts/2 frame_manager set_entry_enabled nominal 0 true
 
 signs the command with the published test key, sends it, and prints the
 replies. --fault picks a fault from the menu (FAULTS) to test the link.
+
+    python3 sim/radio_sim.py --port /dev/tty.usbserial-1234 --baud 19200 --listen
+
+prints every packet avionics sends, decoded by name (tools/telemetry.py):
+housekeeping, command replies and memory dumps, until Ctrl-C or
+--duration seconds. With a command as well, it sends the command first.
+Decoding names needs the message dictionary, generated from messages/ on
+the fly: Python 3 with PyYAML and Jinja2.
 """
 
 import argparse
@@ -28,6 +37,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools"))
 
 import link_codec  # noqa: E402
+import telemetry  # noqa: E402
 
 # Ground traffic, both ways: the standard KISS data frame (DS-66).
 TYPE_DATA = 0x00
@@ -44,12 +54,39 @@ FAULTS = {
 }
 
 
+def set_baud(fd, baud):
+    """Set a serial port's speed, both ways. A pseudo-terminal accepts any."""
+    speed = getattr(termios, f"B{baud}", None)
+    if speed is None:
+        raise ValueError(f"unsupported baud rate {baud}")
+    attrs = termios.tcgetattr(fd)
+    attrs[4] = attrs[5] = speed   # input and output speed
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+
+
+def describe(dictionary, payload):
+    """One downlink packet as a line of text, decoded by name (DS-66)."""
+    try:
+        packet = telemetry.decode(dictionary, payload)
+    except ValueError as e:
+        return f"undecodable ({e}): {payload.hex(' ')}"
+    if packet["kind"] == "reply":
+        return packet["text"]
+    if packet["kind"] == "dump":
+        return (f"dump {packet['store']} 0x{packet['address']:04x}, "
+                f"{len(packet['data'])} bytes: {packet['data'].hex(' ')}")
+    fields = ", ".join(f"{name}={value}" for name, value in packet["fields"].items())
+    return f"MET {packet['met_ms'] / 1000:.3f} s  {packet['app']}: {fields}"
+
+
 class RadioSim:
     """The radio board's side of the radio UART."""
 
-    def __init__(self, path):
+    def __init__(self, path, baud=None):
         self.fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
         tty.setraw(self.fd)
+        if baud is not None:
+            set_baud(self.fd, baud)
         termios.tcflush(self.fd, termios.TCIOFLUSH)
         self.seq = link_codec.Sequence()
         self.decoder = link_codec.Decoder()
@@ -137,27 +174,57 @@ class RadioSim:
                     texts.append(packet.payload.decode("ascii"))
         return texts
 
+    def listen(self, dictionary, out=print, duration=None):
+        """Print each packet avionics sends, decoded by name, and each bad
+        frame, until duration seconds pass (or forever, if None)."""
+        deadline = None if duration is None else time.monotonic() + duration
+        while deadline is None or time.monotonic() < deadline:
+            wait = 0.5 if deadline is None else max(0.0, min(0.5, deadline - time.monotonic()))
+            for packet in self.receive(wait, count=1):
+                if packet.type != TYPE_DATA:
+                    out(f"(frame of type {packet.type:#04x}, not ground data)")
+                else:
+                    out(describe(dictionary, packet.payload))
+            for error in self.errors:
+                out(f"(bad frame from avionics: {error})")
+            self.errors.clear()
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--pty", required=True, help="the radio UART's pseudo-terminal")
+    parser.add_argument("--port", "--pty", dest="port", required=True,
+                        help="the radio UART: native_sim's pseudo-terminal, or a USB-serial adapter")
+    parser.add_argument("--baud", type=int,
+                        help="set the port's speed: 19200 for the Nucleo's radio UART")
     parser.add_argument("--fault", choices=list(FAULTS), help="a fault from the menu")
     parser.add_argument("--wait", type=float, default=1.0, help="seconds to wait for replies")
-    parser.add_argument("command", nargs="+", help="command text, for example: "
+    parser.add_argument("--listen", action="store_true",
+                        help="print every packet avionics sends, decoded, until Ctrl-C")
+    parser.add_argument("--duration", type=float, help="with --listen: stop after this many seconds")
+    parser.add_argument("command", nargs="*", help="command text, for example: "
                         "frame_manager set_entry_enabled nominal 0 true")
     args = parser.parse_args(argv)
+    if not args.command and not args.listen:
+        parser.error("give a command, --listen, or both")
 
-    import sign_command
-
-    key = sign_command.load_key(sign_command.TEST_KEY_FILE)
-    packet = sign_command.sign(" ".join(args.command), key, sign_command.default_counter())
-    sim = RadioSim(args.pty)
+    sim = RadioSim(args.port, args.baud)
     try:
-        sim.send(packet.encode("ascii"), args.fault)
-        for reply in sim.replies(args.wait, count=10):
-            print(reply)
-        for error in sim.errors:
-            print(f"(bad frame from avionics: {error})")
+        if args.command:
+            import sign_command
+
+            key = sign_command.load_key(sign_command.TEST_KEY_FILE)
+            packet = sign_command.sign(" ".join(args.command), key,
+                                       sign_command.default_counter())
+            sim.send(packet.encode("ascii"), args.fault)
+            if not args.listen:
+                for reply in sim.replies(args.wait, count=10):
+                    print(reply)
+                for error in sim.errors:
+                    print(f"(bad frame from avionics: {error})")
+        if args.listen:
+            sim.listen(telemetry.load_dictionary(), duration=args.duration)
+    except KeyboardInterrupt:
+        pass
     finally:
         sim.close()
     return 0
