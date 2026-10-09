@@ -150,8 +150,8 @@ def decode(data, decoder=None):
 class Sequence:
     """Sequence numbers for one link, the same as struct link_seq."""
 
-    def __init__(self):
-        self.next_tx = 0
+    def __init__(self, first=0):
+        self.next_tx = first % 256
         self.last_rx = None
 
     def next(self):

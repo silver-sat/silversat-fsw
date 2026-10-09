@@ -30,7 +30,7 @@ def link():
     """(simulator, avionics end of the line)."""
     avionics, radio = os.openpty()
     tty.setraw(avionics)
-    sim = radio_sim.RadioSim(os.ttyname(radio))
+    sim = radio_sim.RadioSim(os.ttyname(radio), first_seq=0)
     os.close(radio)
     yield sim, avionics
     sim.close()
@@ -273,3 +273,26 @@ def test_cli_sends_a_command_and_listens(capsys):
 def test_cli_needs_a_command_or_listen():
     with pytest.raises(SystemExit):
         radio_sim.main(["--port", "/dev/null"])
+
+
+def test_each_run_starts_its_sequence_somewhere_new():
+    """The radio drops a frame repeating the last sequence number it got
+    (DS-65), so two runs must not both start at 0."""
+    starts = set()
+    for _ in range(20):
+        avionics, radio = os.openpty()
+        try:
+            sim = radio_sim.RadioSim(os.ttyname(radio))
+            starts.add(sim.seq.next_tx)
+            sim.close()
+        finally:
+            os.close(radio)
+            os.close(avionics)
+    assert len(starts) > 1, "random, not always the same"
+
+
+def test_a_given_first_sequence_number(link):
+    sim, avionics = link
+    sim.seq = link_codec.Sequence(250)
+    sim.send(b"x")
+    assert link_codec.decode(read_all(avionics))[0][1].seq == 250

@@ -27,6 +27,7 @@ the fly: Python 3 with PyYAML and Jinja2.
 import argparse
 import fcntl
 import os
+import random
 import select
 import sys
 import termios
@@ -103,13 +104,17 @@ def describe(dictionary, payload):
 class RadioSim:
     """The radio board's side of the radio UART."""
 
-    def __init__(self, path, baud=None):
+    def __init__(self, path, baud=None, first_seq=None):
         self.fd = open_port(path)
         tty.setraw(self.fd)
         if baud is not None:
             set_baud(self.fd, baud)
         termios.tcflush(self.fd, termios.TCIOFLUSH)
-        self.seq = link_codec.Sequence()
+        # The radio drops a frame whose sequence number repeats the last one
+        # it received (DS-65), so a run that started at 0 like the run before
+        # would have its first command dropped. Start somewhere random: a
+        # clash is 1 in 256, and costs only that command.
+        self.seq = link_codec.Sequence(random.randrange(256) if first_seq is None else first_seq)
         self.decoder = link_codec.Decoder()
         # Anything other than a good frame that arrives from avionics.
         self.errors = []
