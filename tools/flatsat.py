@@ -93,6 +93,10 @@ def socket_lines(sock, seconds):
     """Lines of text from a socket, until it closes or seconds pass."""
     deadline = None if seconds is None else time.monotonic() + seconds
     pending = b""
+    if deadline is None:
+        # Wait as long as it takes. The socket still has its connect
+        # timeout, which would end the console after a quiet spell.
+        sock.settimeout(None)
     while True:
         if deadline is not None:
             left = deadline - time.monotonic()

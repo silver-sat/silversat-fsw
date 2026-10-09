@@ -9,6 +9,7 @@ import socket
 import stat
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,24 @@ def test_socket_lines_stops_after_its_time():
     assert list(flatsat.socket_lines(client, 0.3)) == ["partial line"]
     for s in (client, conn, server):
         s.close()
+
+
+def test_socket_lines_without_a_time_waits_through_quiet_spells():
+    # The board can be quiet for longer than the connect timeout, for example
+    # in deploy mode. Without --seconds, the console waits for it.
+    server = socket.create_server(("127.0.0.1", 0))
+    client = socket.create_connection(server.getsockname(), timeout=0.1)
+    conn, _ = server.accept()
+
+    def send_late():
+        time.sleep(0.4)
+        conn.sendall(b"after a quiet spell\n")
+        conn.close()
+
+    threading.Thread(target=send_late, daemon=True).start()
+    assert list(flatsat.socket_lines(client, None)) == ["after a quiet spell"]
+    client.close()
+    server.close()
 
 
 # ---- The console command ----------------------------------------------------------
