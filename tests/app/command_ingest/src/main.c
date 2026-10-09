@@ -30,6 +30,8 @@
 #include "nvm/command_ingest.h"
 #include "packets.h"
 #include "silversat/cmd_counter.h"
+#include "silversat/cmd_route.h"
+#include "silversat/event.h"
 #include "silversat/link.h"
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
@@ -197,6 +199,17 @@ static void reset(void *fixture)
 	/* Let command ingest see the mode, and expire the arm. */
 	run_one_frame();
 	zassert_false(ci_hk().rotation_armed);
+
+	/*
+	 * Close every rejection limit an earlier test opened: one quiet period
+	 * reports any count still owed, a second finds nothing more and closes
+	 * it. Then each test sees only its own events.
+	 */
+	for (int i = 0; i < 2; i++) {
+		k_sleep(K_SECONDS(CONFIG_SS_CMD_REJECT_EVENT_SECONDS + 1));
+		run_one_frame();
+	}
+	app_test_drain_events();
 }
 
 ZTEST_SUITE(command_ingest, NULL, NULL, reset, NULL, NULL);
@@ -677,4 +690,252 @@ ZTEST(command_ingest, test_a_command_still_runs_if_it_cannot_be_stored)
 	uplink(PKT_SET_LEVEL_7);
 	run_one_frame();
 	zassert_str_equal(next_reply(), expected("NAK", PKT_SET_LEVEL_7_COUNTER, "replay"));
+}
+
+/* ---- Events (DS-10, DS-50) -------------------------------------------------- */
+
+/* Command ingest should have raised this event. Returns it. */
+static struct event expect_event(uint16_t id)
+{
+	struct event event;
+
+	zassert_true(app_test_find_event(APP_ID_COMMAND_INGEST, id, &event), "event %u", id);
+	return event;
+}
+
+/* Let a whole rejection period pass, and run one frame at its end. */
+static void after_a_period(void)
+{
+	k_sleep(K_SECONDS(CONFIG_SS_CMD_REJECT_EVENT_SECONDS + 1));
+	run_one_frame();
+}
+
+ZTEST(command_ingest, test_a_rejection_is_an_event_at_once)
+{
+	struct event event;
+
+	uplink("hello");
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE);
+	zassert_equal(event.arg0, 1, "count");
+	zassert_equal(event.severity, SEVERITY_INFO);
+	zassert_true(event.met_ms > 0 && event.met_ms <= k_uptime_get(), "the tick's MET (DS-25)");
+}
+
+ZTEST(command_ingest, test_more_of_a_kind_are_counted_into_one_event)
+{
+	struct event event;
+
+	uplink("one");
+	run_one_frame();
+	expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE);
+
+	/* Three more within the period: no event yet. */
+	for (int i = 0; i < 3; i++) {
+		uplink("more");
+		run_one_frame();
+	}
+	zassert_equal(event_take(&event), -ENOMSG, "counted, not raised");
+
+	/* The period ends: one event carries how many. */
+	after_a_period();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE);
+	zassert_equal(event.arg0, 3);
+
+	/* A quiet period: nothing to report, and the limit closes... */
+	after_a_period();
+	zassert_equal(event_take(&event), -ENOMSG);
+
+	/* ...so the next is an event at once again. */
+	uplink("again");
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE);
+	zassert_equal(event.arg0, 1);
+}
+
+ZTEST(command_ingest, test_a_flood_raises_at_most_two_events_a_period)
+{
+	struct event event;
+	int events = 0;
+	uint32_t total = 0;
+
+	/* As much as the uplink queue holds, every minor frame of a period. */
+	for (int frame = 0; frame < 40; frame++) {
+		for (int i = 0; i < UPLINK_QUEUE_DEPTH; i++) {
+			uplink("noise");
+		}
+		run_one_frame();
+	}
+	after_a_period();
+	while (event_take(&event) == 0) {
+		zassert_equal(event.id, COMMAND_INGEST_EVENT_REJECTED_SHAPE);
+		events++;
+		total += event.arg0;
+	}
+	zassert_equal(events, 2, "the first, then one carrying the rest");
+	zassert_equal(total, 40 * UPLINK_QUEUE_DEPTH, "every rejection counted");
+}
+
+ZTEST(command_ingest, test_each_kind_has_its_own_limit)
+{
+	const uint16_t kinds[] = {COMMAND_INGEST_EVENT_REJECTED_SHAPE,
+				  COMMAND_INGEST_EVENT_REJECTED_SIGNATURE,
+				  COMMAND_INGEST_EVENT_REJECTED_OTHER_KEY};
+	struct event event;
+
+	/* One of each in the same minor frame: each is the first of its kind. */
+	uplink("hello");
+	uplink(PKT_FORGED);
+	uplink(PKT_OTHER_KEY);
+	run_one_frame();
+	for (size_t i = 0; i < ARRAY_SIZE(kinds); i++) {
+		zassert_ok(event_take(&event));
+		zassert_equal(event.id, kinds[i], "event %zu", i);
+		zassert_equal(event.arg0, 1);
+	}
+}
+
+ZTEST(command_ingest, test_signature_and_key_rejections_are_events)
+{
+	struct event event;
+
+	uplink(PKT_FORGED);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_SIGNATURE);
+	zassert_equal(event.severity, SEVERITY_WARNING);
+
+	uplink(PKT_OTHER_KEY);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_OTHER_KEY);
+	zassert_equal(event.arg0, 1);
+}
+
+ZTEST(command_ingest, test_counter_rejections_are_events_with_the_slot)
+{
+	struct event event;
+
+	/* The jump first, while the floor is at the epoch and it is too far above. */
+	uplink(PKT_JUMP);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_JUMP);
+	zassert_equal(event.arg0, 1);
+	zassert_equal(event.arg1, 0, "signed by slot 0");
+
+	uplink(PKT_SET_LEVEL_7);
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_REPLAY);
+	zassert_equal(event.arg0, 1);
+	zassert_equal(event.arg1, 0);
+}
+
+ZTEST(command_ingest, test_a_routing_rejection_is_an_event_every_time)
+{
+	struct event event;
+
+	/* In counter order, so neither is a replay. */
+	uplink(PKT_UNKNOWN_COMMAND);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_ROUTE);
+	zassert_equal(event.arg0, APP_ID_TARGET_APP);
+	zassert_equal(event.arg1, CMD_ROUTE_UNKNOWN_COMMAND);
+
+	/* Only the ground can cause these, so they aren't limited. */
+	uplink(PKT_NOMINAL_THING);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_REJECTED_ROUTE);
+	zassert_equal(event.arg1, CMD_ROUTE_MODE);
+}
+
+ZTEST(command_ingest, test_rotation_is_an_event)
+{
+	struct event event;
+
+	uplink(PKT_ARM_1);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_ROTATION_ARMED);
+	zassert_equal(event.arg0, 1);
+
+	uplink(PKT_ROTATE_1);
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_KEY_ROTATED);
+	zassert_equal(event.arg0, 1, "slot 1 now in use");
+	zassert_equal(event.severity, SEVERITY_WARNING);
+}
+
+ZTEST(command_ingest, test_a_lapsed_arm_is_an_event)
+{
+	struct event event;
+
+	uplink(PKT_ARM_1);
+	run_one_frame();
+	app_test_drain_events();
+	k_sleep(K_MINUTES(11));
+	run_one_frame();
+	event = expect_event(COMMAND_INGEST_EVENT_ROTATION_EXPIRED);
+	zassert_equal(event.arg0, 1);
+}
+
+ZTEST(command_ingest, test_a_summary_comes_when_the_period_ends)
+{
+	struct event event;
+
+	uplink("one");
+	run_one_frame();
+	expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE);
+	uplink("two");
+	run_one_frame();
+
+	/* Half a second before the period ends: nothing yet. */
+	k_sleep(K_MSEC(CONFIG_SS_CMD_REJECT_EVENT_SECONDS * 1000 - 500));
+	run_one_frame();
+	zassert_equal(event_take(&event), -ENOMSG, "too early");
+
+	/* Half a second after it: the summary. */
+	k_sleep(K_SECONDS(1));
+	run_one_frame();
+	zassert_equal(expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE).arg0, 1);
+}
+
+ZTEST(command_ingest, test_a_flood_that_goes_on_is_summarised_once_a_period)
+{
+	struct event event;
+
+	uplink("one");
+	run_one_frame();
+	uplink("two");
+	run_one_frame();
+	after_a_period();
+	app_test_drain_events(); /* the first event, and the summary of "two" */
+
+	/* More, just after the summary: held until the next period ends. */
+	uplink("three");
+	run_one_frame();
+	zassert_equal(event_take(&event), -ENOMSG, "a new period has started");
+	after_a_period();
+	zassert_equal(expect_event(COMMAND_INGEST_EVENT_REJECTED_SHAPE).arg0, 1);
+}
+
+ZTEST(command_ingest, test_a_summary_names_the_slot_of_the_last)
+{
+	struct event event;
+
+	/* A replay signed by slot 0: the first, an event at once. */
+	uplink(PKT_SET_LEVEL_7);
+	uplink(PKT_SET_LEVEL_7);
+	run_one_frame();
+	zassert_equal(expect_event(COMMAND_INGEST_EVENT_REJECTED_REPLAY).arg1, 0);
+
+	/*
+	 * Then one signed by slot 1: a rotation command (the only kind slot 1's
+	 * key may sign while slot 0 is active), sent twice.
+	 */
+	uplink(PKT_ARM_1);
+	uplink(PKT_ARM_1);
+	run_one_frame();
+	after_a_period();
+	zassert_true(app_test_find_event(APP_ID_COMMAND_INGEST,
+					 COMMAND_INGEST_EVENT_REJECTED_REPLAY, &event));
+	zassert_equal(event.arg0, 1);
+	zassert_equal(event.arg1, 1, "the slot of the last replay");
 }

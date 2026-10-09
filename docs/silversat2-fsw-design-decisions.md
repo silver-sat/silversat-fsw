@@ -64,7 +64,7 @@ zbus channels replace the software bus. Each app is one thread with one pending 
   - **Downlink.** Telemetry output sends up to four events a major frame as `E` packets (DS-66), after its housekeeping packet, leaving two downlink places for command replies. Events raised in deploy mode wait in the queue until it runs.
   - **The bench.** In a development build each event is also logged on the console as it is raised.
   - **Debug events.** The flight build doesn't queue events of severity `debug` (`CONFIG_SS_EVENT_QUEUE_DEBUG` off), so development detail never spends the radio link.
-  - **The first events:** health's responses (DS-43, DS-44), FRAM and the mirror failing and coming back, and bad slots (DS-70, DS-75), and every mode change or refused change (DS-40). Command ingest's rejection events (DS-50) come next.
+  - **The first events:** health's responses (DS-43, DS-44), FRAM and the mirror failing and coming back, and bad slots (DS-70, DS-75), and every mode change or refused change (DS-40). Command ingest's events followed (2026-10-09): every rejection stage, rate limited where anyone can cause them (DS-50), and key rotation (DS-54).
 
 **DS-11 Channel semantics: Specified.** zbus channels are last-value, not queues.
 - Commands use message subscribers, because commands must not be lost.
@@ -196,7 +196,7 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 6. Decode (the parser only sees authenticated input)
 7. Route through the table
 
-Mode gating lives in the routing table. Parameter validation is done by the target channel's validator. Every rejection stage has its own counter and event (the counters are built; the events come with command ingest's events, DS-10). Internal commands bypass command ingest.
+Mode gating lives in the routing table. Parameter validation is done by the target channel's validator. Every rejection stage has its own counter and event. Built 2026-10-09 (DS-10): `rejected_shape`, `rejected_signature`, `rejected_other_key`, `rejected_replay` and `rejected_jump`, which anyone with a transmitter can cause, are limited: the first of a kind is an event at once; while more keep coming, one event each `CONFIG_SS_CMD_REJECT_EVENT_SECONDS` (60) carries how many; after a quiet period the next is an event at once again. However much is transmitted, that is at most two events per kind per period, so a flood can't crowd other apps' events out of the queue. `rejected_route` (the app, and the routing result), which only the ground can cause, is an event every time. Internal commands bypass command ingest.
 
 Command text, decided 2026-10-02:
 - The text is `<app> <command> <arguments>`, using the YAML names, for example `frame_manager set_entry_enabled nominal 3 false`.
@@ -242,7 +242,7 @@ Replies and scheduling, decided 2026-10-02:
 - *Proposed:* rotation switches between the two compiled-in keys; it cannot load a new one. Commands are signed, not encrypted (DS-52), so a key sent in a command could be read by anyone listening. Installing new keys takes a new flight image (DS-51). Two slots therefore give one spare key, for a key that has left with someone or for a maxed-out floor.
 - *Proposed:* rotation, decided 2026-10-02. Two commands, `command_ingest arm_key_rotation <slot>` then `command_ingest rotate_key <slot>`, both signed with the key of the slot being switched to and checked against that slot's floor, so rotation works even when the active slot's floor is maxed out. The slot named must be the slot that signed. An arm lasts 10 minutes of MET. Command ingest handles both commands itself, since only it knows which key signed a command.
 - *Proposed:* the spare slot's key is accepted only for those two commands. Anything else it signs is refused with `NAK <counter> wrong_key` before its counter is used. A rotation command signed with the active key gets `ACK <counter> wrong_key`, and a fire with no live arm gets `ACK <counter> not_armed`.
-- *Proposed:* the active slot is stored in FRAM and its mirror (`command_state`, 2026-10-06), so a rotation survives a reset; with neither, a reboot returns to slot 0 (DS-75). An arm is held in RAM: a reset clears it, and the ground arms again.
+- *Proposed:* the active slot is stored in FRAM and its mirror (`command_state`, 2026-10-06), so a rotation survives a reset; with neither, a reboot returns to slot 0 (DS-75). An arm is held in RAM: a reset clears it, and the ground arms again. Arming, rotating, and an arm lapsing unused are each an event (`rotation_armed`, `key_rotated`, `rotation_expired`, 2026-10-09, DS-10), so the ground has a record of every change to the keys in use.
 - *Proposed:* tags are compared in constant time, mainly as a lesson.
 
 ## 7. Messages and links
@@ -491,3 +491,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-07 | DS-06: development logging for the bench (mode changes; health's status line every minute, not in the flight build), and `docs/nucleo-on-your-desk.md` |
 | 2026-10-08 | DS-90: the radio simulator reaches a Nucleo through a USB-serial adapter (`--port`, `--baud`) and decodes the downlink as it arrives (`--listen`) |
 | 2026-10-08 | Events. DS-10: events defined per app in YAML, emitted through generated functions into a static queue of 16 that keeps the oldest and counts drops, sent by telemetry output as `E` packets, up to 4 a major frame; logged on the console in development builds; `debug` events left out of the flight build. DS-11: events use a static `k_msgq`, like link frames, not zbus. DS-43, DS-44, DS-75, DS-40: the first events, from health, the nvm app and the mode manager. DS-66: the `E` packet. Open items: DS-10 row removed |
+| 2026-10-09 | DS-50: command ingest raises an event for every rejection stage; those anyone with a transmitter can cause are limited to the first at once, then one summary with a count per period (60 s). DS-54: key rotation armed, rotated and lapsed are events |

@@ -6,6 +6,7 @@ config SS_COMMAND_INGEST
 	select SS_CMD_AUTH
 	select SS_CMD_COUNTER
 	select SS_CMD_ROUTES
+	select SS_EVENT
 	select SS_LINK
 	select SS_NVM
 	help
@@ -28,5 +29,18 @@ config SS_CMD_KEY_FILE_SLOT1
 	default "tools/test_key_slot1.txt"
 	help
 	  The second key slot (DS-54). See SS_CMD_KEY_FILE_SLOT0.
+
+config SS_CMD_REJECT_EVENT_SECONDS
+	int "Seconds between events for a kind of rejection anyone can cause"
+	default 60
+	range 1 3600
+	help
+	  Rejections at the shape, signature, key and counter checks can be
+	  caused by anyone with a transmitter, so their events are limited
+	  (DS-10, DS-50): the first of a kind is an event at once, and while
+	  more keep coming, one event each period carries how many there
+	  were. At most two events per kind per period, however much is
+	  transmitted, so a flood can't crowd other apps' events out of the
+	  queue.
 
 endif # SS_COMMAND_INGEST
