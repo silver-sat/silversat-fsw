@@ -262,6 +262,10 @@ In the repository's settings (or the organization's, for every repository):
   running one joins after a restart, or when you run the script. (The
   Tailscale feature can't join by itself: it looks for the key before
   Codespaces has added its secrets.)
+The three Actions variables below go under **Repository variables**
+(Settings → Secrets and variables → Actions → Variables), not Environment
+variables: the CI job names no environment, so it can't see those.
+
 - **Actions variables** `TS_CLIENT_ID` and `TS_AUDIENCE`: the federated
   identity's Client ID and Audience from step 1, for CI. They are variables,
   not secrets: they prove nothing on their own, because only this
