@@ -178,6 +178,7 @@ After=network-online.target
 [Service]
 User=flatsat
 ExecStart=/usr/bin/openocd -f board/st_nucleo_f4.cfg \
+    -c "reset_config srst_only srst_nogate connect_assert_srst" \
     -c "bindto 0.0.0.0" -c "gdb_port 3333" \
     -c "telnet_port disabled" -c "tcl_port disabled"
 Restart=always
@@ -187,9 +188,15 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+The `reset_config` line holds the board in reset while OpenOCD connects.
+OpenOCD checks the chip only once, as it starts, and refuses GDB from then
+on if that check failed; firmware that is asleep or stuck can make it fail.
+It also means starting the service restarts the board.
+
 ```sh
 sudo systemctl enable --now openocd-flatsat
 systemctl status openocd-flatsat      # "Listening on port 3333 for gdb connections"
+journalctl -u openocd-flatsat -n 20   # no "examination failed"
 ```
 
 **ser2net**, for the two serial ports. Find their stable names:
@@ -283,6 +290,13 @@ until it has run cleanly for a while (DS-05).
 - **`flatsat:3333 doesn't answer`:** OpenOCD isn't running on the box:
   `systemctl status openocd-flatsat`. It stops retrying if the Nucleo is
   unplugged for long; replug it, or restart the service.
+- **`Remote connection closed` or `Connection reset by peer`** from
+  `make debug` or `make flash`: the box answers, but OpenOCD refused GDB.
+  On the box, `journalctl -u openocd-flatsat -n 40`. `examination failed`
+  or `Target not examined yet` means OpenOCD couldn't reach the chip when it
+  started: check the service has the `reset_config` line above, then
+  `sudo systemctl restart openocd-flatsat`. `no more connections allowed`
+  means someone else's GDB is attached; OpenOCD takes one at a time.
 - **The console shows nothing:** the board may be in deploy mode, which
   prints little after boot; `make flash` again to watch a boot. Check
   `systemctl status ser2net`.
