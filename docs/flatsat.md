@@ -223,10 +223,15 @@ sudo systemctl restart ser2net
 network, so a firewall keeps those ports off the box's local network:
 
 ```sh
-sudo ufw allow OpenSSH                                   # keep local logins
-sudo ufw allow in on tailscale0 to any port 3333,4000,4001 proto tcp
+sudo ufw allow 41641/udp      # Tailscale's direct connections (else it relays, slowly)
+sudo ufw allow in on tailscale0 to any port 22,3333,4000,4001 proto tcp
 sudo ufw enable
+sudo ufw status verbose
 ```
+
+Port 22 on the tailnet is for mentors' Tailscale SSH. If the box also has
+an SSH server for logins on the local network (`openssh-server`), add
+`sudo ufw allow OpenSSH` before enabling the firewall, or those logins stop.
 
 **Check it** from another device on the tailnet:
 
