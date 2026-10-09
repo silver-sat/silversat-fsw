@@ -4,6 +4,11 @@
       "version": "1.1.2",
       "resolved": "ghcr.io/devcontainers/features/github-cli@sha256:7c409bf6316ffd85f04fd92fba85a744282639e603417dd4796409866bdb6805",
       "integrity": "sha256:7c409bf6316ffd85f04fd92fba85a744282639e603417dd4796409866bdb6805"
+    },
+    "ghcr.io/tailscale/codespace/tailscale": {
+      "version": "1.0.8",
+      "resolved": "ghcr.io/tailscale/codespace/tailscale@sha256:fa5ce7ca298e7ab95842fef99e107a01b090b8ca8a687789220f3f3c887ccdb2",
+      "integrity": "sha256:fa5ce7ca298e7ab95842fef99e107a01b090b8ca8a687789220f3f3c887ccdb2"
     }
   }
 }

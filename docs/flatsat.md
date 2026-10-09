@@ -32,11 +32,18 @@ make console        # watch its console (Ctrl-C to stop)
 
 ### From a Codespace
 
-A Codespace joins the tailnet on its own when it starts, if the
-`TS_AUTH_KEY` Codespaces secret is set (see "Setting it up"). Check:
+A Codespace joins the tailnet on its own each time it starts, if the
+`TS_AUTH_KEY` Codespaces secret is set (see "Setting it up"):
+`.devcontainer/tailscale-up.sh` runs after every start. Check:
 
 ```sh
 tailscale status            # flatsat should be listed
+```
+
+If it says `Logged out`, join by hand (or run the script again):
+
+```sh
+bash .devcontainer/tailscale-up.sh
 ```
 
 Then:
@@ -243,9 +250,11 @@ make console FLATSAT=flatsat     # from a Codespace: the board's log lines
 
 In the repository's settings (or the organization's, for every repository):
 
-- **Codespaces secret** `TS_AUTH_KEY`: the auth key from step 1. New
-  Codespaces join the tailnet as they start; a running one joins after a
-  rebuild or restart.
+- **Codespaces secret** `TS_AUTH_KEY`: the auth key from step 1. Each
+  Codespace joins the tailnet as it starts, through `tailscale-up.sh`; a
+  running one joins after a restart, or when you run the script. (The
+  Tailscale feature can't join by itself: it looks for the key before
+  Codespaces has added its secrets.)
 - **Actions variables** `TS_CLIENT_ID` and `TS_AUDIENCE`: the federated
   identity's Client ID and Audience from step 1, for CI. They are variables,
   not secrets: they prove nothing on their own, because only this
@@ -265,8 +274,12 @@ until it has run cleanly for a while (DS-05).
 ## When something's wrong
 
 - **`can't find 'flatsat'`:** the Codespace isn't on the tailnet. Check
-  `tailscale status`; if `TS_AUTH_KEY` was added after the Codespace was
-  created, rebuild it.
+  `tailscale status`. If it says `Logged out`, run
+  `bash .devcontainer/tailscale-up.sh`. If that says there's no
+  `TS_AUTH_KEY`, the secret was added after the Codespace was created, or
+  the Codespace's repository isn't allowed to use it; fix the secret, then
+  restart the Codespace. If `tailscale up` fails, the key may have expired:
+  make a new one (step 1) and update the secret.
 - **`flatsat:3333 doesn't answer`:** OpenOCD isn't running on the box:
   `systemctl status openocd-flatsat`. It stops retrying if the Nucleo is
   unplugged for long; replug it, or restart the service.
