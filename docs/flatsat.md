@@ -70,8 +70,10 @@ show, the boot modes, and reset loops.
 
 There is one flatsat. `make flash` replaces whatever is running, and a new
 console connection takes over from an older one. Agree who has the board,
-for example in the team chat, before you flash it. CI flashes it too, when
-it runs its hardware check (below).
+for example in the team chat, before you flash it. CI flashes it too, on
+each merge to main, nightly, and when someone runs it on demand (below).
+Close your `make debug` when you finish: while it's attached, OpenOCD
+refuses everyone else, CI included.
 
 ### Things that still need hands
 
@@ -126,8 +128,7 @@ small team). In its admin console:
    the Trust credentials page, choose Credential → OpenID Connect:
    - Issuer: **GitHub Actions**.
    - Subject: `repo:silver-sat@46551018/silversat-fsw@1376033827:*`, which
-     matches this repository's own workflow runs, for pull requests and on
-     main. GitHub puts the owner's and repository's numeric IDs in the
+     matches this repository's own workflow runs. GitHub puts the owner's and repository's numeric IDs in the
      subject, so a deleted and re-created repository of the same name
      doesn't match. To check the start of it (for a fork, say), run
      `gh api repos/OWNER/REPO/actions/oidc/customization/sub` and use its
@@ -282,12 +283,25 @@ variables: the CI job names no environment, so it can't see those.
 
 ## CI's hardware check
 
-The `flatsat (HIL)` job loads the firmware built for the pull request onto
-the flatsat and watches the console for 45 seconds. It passes if the board
-starts (`SilverSat FSW starting`) and health's status line appears, with no
-fault and no stack warning. It runs only from this repository's own
-branches, never from forks, one run at a time, and it doesn't block merging
-until it has run cleanly for a while (DS-05).
+The `flatsat` workflow (`.github/workflows/flatsat.yml`) builds the
+firmware, loads it onto the flatsat, and watches the console for 45
+seconds. It passes if the board starts (`SilverSat FSW starting`) and
+health's status line appears, with no fault and no stack warning (DS-05).
+
+- **When it runs:** on every merge to main, nightly, and on demand. Pull
+  requests don't run it, so it never blocks one.
+- **On demand:** Actions → flatsat → Run workflow, and pick your branch, or
+  `gh workflow run flatsat --ref <branch>`. The run's `flatsat-logs`
+  artifact holds the console.
+- **One at a time:** runs wait for the board rather than cancel each other.
+  GitHub keeps only one run waiting, though: a third cancels the one
+  already waiting.
+- **When main fails:** the run fails, so GitHub emails whoever started it
+  (for the nightly run, whoever last changed its schedule). The `report`
+  job also opens an issue labelled `flatsat` with the last console lines,
+  comments on it while main keeps failing, and closes it when main passes
+  again. To hear about it, watch the repository's issues (Watch → Custom →
+  Issues).
 
 ## When something's wrong
 
