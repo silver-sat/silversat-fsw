@@ -25,14 +25,18 @@ make test
 # Build the flight software for the flatsat board
 make build
 
-# Load the firmware onto the flatsat (NOT YET CONNECTED)
+# Load it onto the flatsat and watch it run (docs/flatsat.md)
 make flash
+make console
 ```
 
 Type `make` on its own to see everything available.
 
-Have a Nucleo-F446RE on your desk? [docs/nucleo-on-your-desk.md](docs/nucleo-on-your-desk.md)
-shows how to load the firmware from your own computer and watch its console.
+The flatsat is a Nucleo-F446RE that every Codespace can reach:
+[docs/flatsat.md](docs/flatsat.md) shows how to use it, and how it is set
+up. Have a Nucleo on your desk instead?
+[docs/nucleo-on-your-desk.md](docs/nucleo-on-your-desk.md) shows how to load
+the firmware from your own computer and watch its console.
 
 When your code is working, commit it to your branch, push it to GitHub, and create a pull request. Ask for an auto merge: if your code passes the integration tests, it will be automatically added to the main branch.
 

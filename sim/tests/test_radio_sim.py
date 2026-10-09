@@ -8,6 +8,7 @@ way the radio app does.
 
 import os
 import select
+import socket
 import sys
 import termios
 import threading
@@ -296,3 +297,48 @@ def test_a_given_first_sequence_number(link):
     sim.seq = link_codec.Sequence(250)
     sim.send(b"x")
     assert link_codec.decode(read_all(avionics))[0][1].seq == 250
+
+
+# ---- A TCP port: the flatsat's radio UART through ser2net (DS-93) ----------
+
+@pytest.fixture
+def tcp_link():
+    """(simulator connected over TCP, the far end's socket)."""
+    server = socket.create_server(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    sim = radio_sim.RadioSim(f"tcp://127.0.0.1:{port}", first_seq=0)
+    far, _ = server.accept()
+    server.close()
+    yield sim, far
+    sim.close()
+    far.close()
+
+
+def test_send_over_tcp(tcp_link):
+    sim, far = tcp_link
+    sim.send(b"hello")
+    far.settimeout(1.0)
+    assert link_codec.decode(far.recv(4096)) == [
+        ("packet", link_codec.Packet(radio_sim.TYPE_DATA, 0, b"hello"))]
+
+
+def test_receive_over_tcp(tcp_link):
+    sim, far = tcp_link
+    far.sendall(link_codec.encode(link_codec.Packet(0x00, 5, b"ACK 01 ok")))
+    assert sim.replies(timeout=1.0) == ["ACK 01 ok"]
+
+
+def test_closing_a_tcp_port_closes_the_socket():
+    server = socket.create_server(("127.0.0.1", 0))
+    sim = radio_sim.RadioSim(f"tcp://127.0.0.1:{server.getsockname()[1]}")
+    sim.close()
+    assert sim.sock.fileno() == -1, "closed through the socket, not behind its back"
+    server.close()
+
+
+def test_a_tcp_port_that_is_not_there():
+    server = socket.create_server(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.close()
+    with pytest.raises(OSError):
+        radio_sim.RadioSim(f"tcp://127.0.0.1:{port}")

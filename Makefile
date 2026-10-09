@@ -22,12 +22,22 @@ SANITIZERS ?= --enable-asan --enable-ubsan
 PLATFORMS  ?= $(SIM) $(SIM)/native/64
 SUBSET     ?=
 
-# Where the flatsat lives. Overridable:  make flash FLATSAT=other-host
-FLATSAT    ?= flatsat
-GDB_PORT   ?= 2331
+# The flatsat: a Nucleo on an Ubuntu box on the tailnet (docs/flatsat.md).
+# Its GDB server is OpenOCD's; ser2net puts the console and the radio UART
+# on TCP ports. Overridable:  make flash FLATSAT=other-host
+FLATSAT      ?= flatsat
+GDB_PORT     ?= 3333
+CONSOLE_PORT ?= 4000
+# The Zephyr SDK's GDB for the board, which isn't on the PATH.
+GDB          ?= $(firstword $(wildcard /opt/toolchains/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb) arm-zephyr-eabi-gdb)
+ELF          := $(BUILD_DIR)/zephyr/zephyr.elf
+# `make run` builds native_sim into the same directory, so check the build is
+# the flatsat's before loading it.
+CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config || \
+	{ echo 'No $(BOARD) firmware in $(BUILD_DIR): run `make build` first.'; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help test twister test-quick test-python coverage run run-fresh build flash clean
+.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console debug clean
 
 help:  ## Show this list
 	@echo ''
@@ -72,22 +82,16 @@ build:  ## Cross-compile the application for the flatsat board
 	@arm-zephyr-eabi-size $(BUILD_DIR)/zephyr/zephyr.elf 2>/dev/null \
 	  || size $(BUILD_DIR)/zephyr/zephyr.elf
 
-flash: build  ## Load the firmware onto the flatsat (NOT YET WIRED UP)
-	@echo ''
-	@echo '  make flash is not connected to hardware yet.'
-	@echo ''
-	@echo '  When the flatsat is running, this target will load'
-	@echo '  $(BUILD_DIR)/zephyr/zephyr.elf onto the board over the'
-	@echo '  network, roughly like this:'
-	@echo ''
-	@echo '    arm-zephyr-eabi-gdb -batch \'
-	@echo '      -ex "target extended-remote $(FLATSAT):$(GDB_PORT)" \'
-	@echo '      -ex "monitor reset" -ex "load" -ex "monitor go" \'
-	@echo '      $(BUILD_DIR)/zephyr/zephyr.elf'
-	@echo ''
-	@echo '  Your firmware built fine, so the code is ready.'
-	@echo '  Ask Lee when the rig is up.'
-	@echo ''
+flash:  ## Load the last `make build` onto the flatsat, and start it
+	@$(CHECK_FIRMWARE)
+	python3 tools/flatsat.py --host $(FLATSAT) flash --gdb $(GDB) --port $(GDB_PORT) --elf $(ELF)
+
+console:  ## Show the flatsat's console (Ctrl-C to stop)
+	python3 tools/flatsat.py --host $(FLATSAT) console --port $(CONSOLE_PORT)
+
+debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
+	@$(CHECK_FIRMWARE)
+	$(GDB) -ex "target extended-remote $(FLATSAT):$(GDB_PORT)" $(ELF)
 
 clean:  ## Delete build output
 	rm -rf $(BUILD_DIR) twister-out twister-out.*

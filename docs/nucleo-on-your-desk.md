@@ -1,7 +1,8 @@
 # A Nucleo on your desk
 
 How to run the flight software on a Nucleo-F446RE board plugged into your
-own computer, until the remote flatsat (`make flash`) is set up.
+own computer. The flatsat, a Nucleo every Codespace can reach, is in
+docs/flatsat.md.
 
 You build in the Codespace, as always. The Codespace runs in the cloud and
 can't see your computer's USB ports, so you copy the firmware to your

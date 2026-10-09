@@ -28,11 +28,11 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 **DS-04 Test tiers: Specified.**
 - native_sim plus Zephyr's emulator framework is the primary development and CI environment.
 - Renode is an optional middle tier for advanced student work.
-- A permanent networked flatsat (Mac Mini host, remotely managed USB switch for per-port power, relay on NRST, Tailscale) is for hardware tests.
+- A permanent networked flatsat (Mac Mini host, remotely managed USB switch for per-port power, relay on NRST, Tailscale) is for hardware tests. Changed and built 2026-10-09 (`docs/flatsat.md`): the host is an Ubuntu box instead of a Mac Mini. It runs OpenOCD's GDB server for the Nucleo's on-board ST-LINK (port 3333) and ser2net for the console and the radio UART (ports 4000 and 4001), on a SilverSat tailnet. Codespaces join it at start through the Tailscale devcontainer feature and a `TS_AUTH_KEY` secret, and reach only those ports; mentors log in with Tailscale SSH. `make flash`, `make console` and `make debug` use it; builds stay in the Codespace. The USB power switch and the NRST relay are still to come, so for now a person resets the board, or holds B1 for test mode.
 
 **DS-05 CI: Proposed.**
 - Every push: twister on `native_sim` and `native_sim/native/64` with ASan, UBSan, and coverage; a build-only check for `nucleo_f446re`; Zephyr compliance checks.
-- Flatsat: runs on merge to main, nightly, and on demand.
+- Flatsat: runs on merge to main, nightly, and on demand. Built 2026-10-09: the `flatsat (HIL)` job joins the tailnet as `tag:ci` through workload identity federation (GitHub's token for the workflow; no stored secret), loads the firmware built for the run, and watches the console for 45 s, passing if the board starts and health's status line appears with no fault or stack warning (`tools/flatsat.py`). It stays off until `FLATSAT_ENABLED` is set, and informational until it has earned trust.
 - Keep the native_sim run under about three minutes. Since 2026-10-06 the tests run as four CI jobs in parallel, each platform in two halves (twister `--subset`), each with its own compiler cache: most of a build is CMake configuration, which no cache speeds up, so fewer builds per job is what shortens the run. A job named `native_sim tests`, which the branch rules require, passes when all four do. Tests that need no boot of their own share a build (`tests/unit/libs`).
 - No `#ifdef CONFIG_BOARD_NATIVE_SIM` in driver or application code.
 
@@ -415,7 +415,7 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 **DS-93 Ground station: Specified.**
 - Extend the existing ground solution known to mentors and returning students.
 - Student exercises: generate Doppler corrections without gpredict (for example, with Skyfield) and incorporate additional telemetry.
-- *Proposed:* make the radio connection pluggable, serial for the real radio and TCP for simulated paths. The Codespace uses local connections, a laptop uses `gh codespace ports forward` or VS Code forwarding, and the flatsat is reached over Tailscale.
+- *Proposed:* make the radio connection pluggable, serial for the real radio and TCP for simulated paths. The Codespace uses local connections, a laptop uses `gh codespace ports forward` or VS Code forwarding, and the flatsat is reached over Tailscale. Built 2026-10-09: `sim/radio_sim.py --port` takes a serial device or `tcp://host:port`, which reaches the flatsat's radio UART through ser2net.
 
 **DS-94 Frameworks: Monitor.** F Prime (including fprime-zephyr and the PROVES Kit), YAMCS, and the cFS Zephyr OSAL port are not adopted. Watch them for progress and ideas.
 
@@ -492,3 +492,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-08 | DS-90: the radio simulator reaches a Nucleo through a USB-serial adapter (`--port`, `--baud`) and decodes the downlink as it arrives (`--listen`) |
 | 2026-10-08 | Events. DS-10: events defined per app in YAML, emitted through generated functions into a static queue of 16 that keeps the oldest and counts drops, sent by telemetry output as `E` packets, up to 4 a major frame; logged on the console in development builds; `debug` events left out of the flight build. DS-11: events use a static `k_msgq`, like link frames, not zbus. DS-43, DS-44, DS-75, DS-40: the first events, from health, the nvm app and the mode manager. DS-66: the `E` packet. Open items: DS-10 row removed |
 | 2026-10-09 | DS-50: command ingest raises an event for every rejection stage; those anyone with a transmitter can cause are limited to the first at once, then one summary with a count per period (60 s). DS-54: key rotation armed, rotated and lapsed are events |
+| 2026-10-09 | DS-04: the flatsat host is an Ubuntu box, not a Mac Mini: OpenOCD for the on-board ST-LINK, ser2net for the console and radio UART, on a SilverSat tailnet that Codespaces join through the devcontainer (`docs/flatsat.md`); `make flash`, `console`, `debug`. DS-05: the flatsat CI job flashes over the tailnet and checks the boot. DS-93: the radio simulator reaches TCP ports |

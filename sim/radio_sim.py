@@ -17,6 +17,11 @@ replies. --fault picks a fault from the menu (FAULTS) to test the link.
 
     python3 sim/radio_sim.py --port /dev/cu.usbserial-1234 --baud 19200 --listen
 
+On the flatsat (docs/flatsat.md), the radio UART is a TCP port on the
+flatsat box, through ser2net:
+
+    python3 sim/radio_sim.py --port tcp://flatsat:4001 --listen
+
 prints every packet avionics sends, decoded by name (tools/telemetry.py):
 housekeeping, events, command replies and memory dumps, until Ctrl-C or
 --duration seconds. With a command as well, it sends the command first.
@@ -28,6 +33,7 @@ import argparse
 import fcntl
 import os
 import random
+import socket
 import select
 import sys
 import termios
@@ -105,11 +111,20 @@ class RadioSim:
     """The radio board's side of the radio UART."""
 
     def __init__(self, path, baud=None, first_seq=None):
-        self.fd = open_port(path)
-        tty.setraw(self.fd)
-        if baud is not None:
-            set_baud(self.fd, baud)
-        termios.tcflush(self.fd, termios.TCIOFLUSH)
+        self.sock = None
+        if path.startswith("tcp://"):
+            # The flatsat's radio UART, through ser2net: the box sets the
+            # baud rate, so --baud doesn't apply.
+            host, _, port = path[len("tcp://"):].rpartition(":")
+            self.sock = socket.create_connection((host, int(port)), timeout=10)
+            self.sock.settimeout(None)
+            self.fd = self.sock.fileno()
+        else:
+            self.fd = open_port(path)
+            tty.setraw(self.fd)
+            if baud is not None:
+                set_baud(self.fd, baud)
+            termios.tcflush(self.fd, termios.TCIOFLUSH)
         # The radio drops a frame whose sequence number repeats the last one
         # it received (DS-65), so a run that started at 0 like the run before
         # would have its first command dropped. Start somewhere random: a
@@ -124,7 +139,10 @@ class RadioSim:
         self.other = []
 
     def close(self):
-        os.close(self.fd)
+        if self.sock is not None:
+            self.sock.close()
+        else:
+            os.close(self.fd)
 
     def _write(self, data):
         while data:
@@ -224,7 +242,8 @@ class RadioSim:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", "--pty", dest="port", required=True,
-                        help="the radio UART: native_sim's pseudo-terminal, or a USB-serial adapter")
+                        help="the radio UART: native_sim's pseudo-terminal, a USB-serial "
+                             "adapter, or tcp://host:port on the flatsat")
     parser.add_argument("--baud", type=int,
                         help="set the port's speed: 19200 for the Nucleo's radio UART")
     parser.add_argument("--fault", choices=list(FAULTS), help="a fault from the menu")
