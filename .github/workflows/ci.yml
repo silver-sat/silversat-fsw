@@ -285,7 +285,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gdb-multiarch
-          pip install pygdbmi
 
       - name: Download firmware
         uses: actions/download-artifact@v7
@@ -293,6 +292,8 @@ jobs:
           name: zephyr-nucleo_f446re
           path: fw
 
+      # The flatsat is an Ubuntu box on the tailnet (docs/flatsat.md).
+      # tag:ci may reach only its GDB and serial ports.
       - name: Join tailnet
         uses: tailscale/github-action@v3
         with:
@@ -300,37 +301,20 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Configure SSH to the flatsat
-        env:
-          FLATSAT_SSH_KEY: ${{ secrets.FLATSAT_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$FLATSAT_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          cat >> ~/.ssh/config <<'EOF'
-          Host flatsat
-            HostName flatsat.${{ secrets.TS_TAILNET }}.ts.net
-            User flatsat
-            StrictHostKeyChecking accept-new
-            ConnectTimeout 15
-          EOF
-
-      - name: Power-cycle the target
-        run: |
-          ssh flatsat 'ykushcmd ykush3 -d 1' || true
-          sleep 3
-          ssh flatsat 'ykushcmd ykush3 -u 1'
-          sleep 5
-
-      - name: Flash and run
+      # Watch the console from before the board resets, so the boot is
+      # seen; then load the firmware, which starts it.
+      - name: Flash and watch the boot
         working-directory: silversat-fsw
         run: |
-          python tools/hil.py \
-            --elf      ../fw/zephyr.elf \
-            --gdb-host flatsat --gdb-port 2331 \
-            --rtt-host flatsat --rtt-port 19021 \
-            --timeout  120 \
-            --log      ../hil.log
+          python tools/flatsat.py --host flatsat console --seconds 45 \
+            --expect 'SilverSat FSW starting' \
+            --expect '<inf> health: boot' \
+            --forbid 'FATAL ERROR' --forbid 'FAULT' --forbid ' LOW,' \
+            > ../console.log 2>&1 &
+          watcher=$!
+          sleep 2
+          python tools/flatsat.py --host flatsat flash --gdb gdb-multiarch --elf ../fw/zephyr.elf
+          wait "$watcher"
 
       - name: Upload hardware logs
         if: always()
@@ -338,10 +322,6 @@ jobs:
         with:
           name: flatsat-logs
           path: |
-            hil.log
+            console.log
             fw/zephyr.elf
           retention-days: 14
-
-      - name: Leave the target powered down
-        if: always()
-        run: ssh flatsat 'ykushcmd ykush3 -d 1' || true

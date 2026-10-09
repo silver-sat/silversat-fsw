@@ -8,7 +8,13 @@
 	"runArgs": ["--platform=linux/amd64"],
 	
 	"features": {
-		"ghcr.io/devcontainers/features/github-cli:1": {}
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		// Joins the tailnet at start when the TS_AUTH_KEY Codespaces secret
+		// is set, so `make flash` and `make console` reach the flatsat
+		// (docs/flatsat.md, DS-04). Without the secret, nothing changes.
+		"ghcr.io/tailscale/codespace/tailscale": {
+			"version": "latest"
+		}
 	},
 
 	// Assembles the west workspace. Runs during prebuild, so a Codespace
