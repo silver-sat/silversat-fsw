@@ -32,7 +32,7 @@ Specifications are numbered (DS-nn) so commits, issues, and reviews can referenc
 
 **DS-05 CI: Proposed.**
 - Every push: twister on `native_sim` and `native_sim/native/64` with ASan, UBSan, and coverage; a build-only check for `nucleo_f446re`; Zephyr compliance checks.
-- Flatsat: runs on merge to main, nightly, and on demand. Built 2026-10-09: the `flatsat (HIL)` job joins the tailnet as `tag:ci`, loads the firmware built for the run, and watches the console for 45 s, passing if the board starts and health's status line appears with no fault or stack warning (`tools/flatsat.py`). It stays off until `FLATSAT_ENABLED` is set, and informational until it has earned trust.
+- Flatsat: runs on merge to main, nightly, and on demand. Built 2026-10-09: the `flatsat (HIL)` job joins the tailnet as `tag:ci` through workload identity federation (GitHub's token for the workflow; no stored secret), loads the firmware built for the run, and watches the console for 45 s, passing if the board starts and health's status line appears with no fault or stack warning (`tools/flatsat.py`). It stays off until `FLATSAT_ENABLED` is set, and informational until it has earned trust.
 - Keep the native_sim run under about three minutes. Since 2026-10-06 the tests run as four CI jobs in parallel, each platform in two halves (twister `--subset`), each with its own compiler cache: most of a build is CMake configuration, which no cache speeds up, so fewer builds per job is what shortens the run. A job named `native_sim tests`, which the branch rules require, passes when all four do. Tests that need no boot of their own share a build (`tests/unit/libs`).
 - No `#ifdef CONFIG_BOARD_NATIVE_SIM` in driver or application code.
 

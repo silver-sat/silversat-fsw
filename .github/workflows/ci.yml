@@ -248,7 +248,7 @@ jobs:
     # FLATSAT_ENABLED to "true" in Settings -> Secrets and variables ->
     # Actions -> Variables when the rig is up. The second condition keeps
     # fork pull requests off the hardware: a fork PR can run arbitrary
-    # code, and this job holds a tailnet key.
+    # code, and this job joins the tailnet.
     if: >-
       vars.FLATSAT_ENABLED == 'true' &&
       (github.event_name != 'pull_request' ||
@@ -266,6 +266,14 @@ jobs:
     # line -- and add the job to the ruleset -- after a couple of weeks of
     # clean nightly runs.
     continue-on-error: true
+
+    # id-token lets the Tailscale action ask GitHub for a token proving
+    # this is this repository's workflow (workload identity federation),
+    # so there is no tailnet secret to store or rotate. Setting permissions
+    # here turns the rest off for this job.
+    permissions:
+      contents: read
+      id-token: write
 
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -293,12 +301,14 @@ jobs:
           path: fw
 
       # The flatsat is an Ubuntu box on the tailnet (docs/flatsat.md).
-      # tag:ci may reach only its GDB and serial ports.
+      # tag:ci may reach only its GDB and serial ports. The client ID and
+      # audience come from the tailnet's federated identity; neither is a
+      # secret, so they are repository variables.
       - name: Join tailnet
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@v4
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          oauth-client-id: ${{ vars.TS_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:ci
 
       # Watch the console from before the board resets, so the boot is

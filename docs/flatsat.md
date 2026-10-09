@@ -114,8 +114,17 @@ small team). In its admin console:
 3. **An auth key for Codespaces** (Settings → Keys → Generate auth key):
    reusable, ephemeral (a Codespace's device disappears when it stops),
    pre-approved, tagged `tag:codespace`. Copy it for step 3 below.
-4. **An OAuth client for CI** (Settings → OAuth clients), able to write
-   auth keys, with tag `tag:ci`. Copy its client ID and secret.
+4. **A federated identity for CI** (workload identity federation: GitHub
+   vouches for the workflow, so there is no secret to store or rotate). On
+   the Trust credentials page, choose Credential → OpenID Connect:
+   - Issuer: **GitHub Actions**.
+   - Subject: `repo:silver-sat/silversat-fsw:*`, which matches this
+     repository's own workflow runs, for pull requests and on main.
+   - Scope: `auth_keys` (write), with tag `tag:ci`. The policy above must
+     already define `tag:ci`, or the page won't offer it.
+
+   Generate it, and copy its **Client ID** and **Audience**. Neither is a
+   secret.
 
 ### 2. The box
 
@@ -232,8 +241,10 @@ In the repository's settings (or the organization's, for every repository):
 - **Codespaces secret** `TS_AUTH_KEY`: the auth key from step 1. New
   Codespaces join the tailnet as they start; a running one joins after a
   rebuild or restart.
-- **Actions secrets** `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET`: the OAuth
-  client from step 1, for CI.
+- **Actions variables** `TS_CLIENT_ID` and `TS_AUDIENCE`: the federated
+  identity's Client ID and Audience from step 1, for CI. They are variables,
+  not secrets: they prove nothing on their own, because only this
+  repository's workflows can get the GitHub token they are checked against.
 - **Actions variable** `FLATSAT_ENABLED` set to `true`, once the box is
   working, to turn on CI's hardware check.
 
