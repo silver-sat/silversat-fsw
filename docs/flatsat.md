@@ -125,8 +125,15 @@ small team). In its admin console:
    vouches for the workflow, so there is no secret to store or rotate). On
    the Trust credentials page, choose Credential → OpenID Connect:
    - Issuer: **GitHub Actions**.
-   - Subject: `repo:silver-sat/silversat-fsw:*`, which matches this
-     repository's own workflow runs, for pull requests and on main.
+   - Subject: `repo:silver-sat@46551018/silversat-fsw@1376033827:*`, which
+     matches this repository's own workflow runs, for pull requests and on
+     main. GitHub puts the owner's and repository's numeric IDs in the
+     subject, so a deleted and re-created repository of the same name
+     doesn't match. To check the start of it (for a fork, say), run
+     `gh api repos/OWNER/REPO/actions/oidc/customization/sub` and use its
+     `sub_claim_prefix`, then `:*`. The plain `repo:OWNER/REPO:*` form
+     doesn't match, and the job fails with `token exchange failed with
+     status 403`.
    - Scope: `auth_keys` (write), with tag `tag:ci`. The policy above must
      already define `tag:ci`, or the page won't offer it.
 
