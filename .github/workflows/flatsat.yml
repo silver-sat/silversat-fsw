@@ -1,0 +1,217 @@
+name: flatsat
+
+# The hardware check on the flatsat (DS-04, DS-05; docs/flatsat.md). Its own
+# workflow, apart from ci, so a failure fails this run: GitHub then sends its
+# failure notice, and on main the report job below opens an issue. Pull
+# requests don't run it; ci's nucleo_f446re build covers them.
+#
+# workflow_dispatch is "on demand": Actions -> flatsat -> Run workflow, and
+# pick a branch. Only people with write access can start it, and forks
+# can't, so no fork's code reaches the board.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '47 6 * * *'        # 02:47 ET, after ci's nightly run; GitHub often starts it hours late
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: nucleo_f446re build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          path: silversat-fsw
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: silversat-fsw
+          toolchains: arm-zephyr-eabi
+          ccache-cache-key: nucleo-build
+          ccache-max-size: 256MB
+
+      - name: Install message generator requirements
+        run: pip install -r silversat-fsw/messages/requirements.txt
+
+      - name: Build application
+        working-directory: silversat-fsw
+        run: make build
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyr-nucleo_f446re
+          path: silversat-fsw/build/zephyr/zephyr.elf
+          retention-days: 7
+
+  hil:
+    name: flatsat (HIL)
+    needs: [build]
+
+    # The master switch: set FLATSAT_ENABLED to "true" under Settings ->
+    # Secrets and variables -> Actions -> Variables -> Repository variables
+    # when the rig is up.
+    if: vars.FLATSAT_ENABLED == 'true'
+
+    # One board, so runs QUEUE rather than cancel each other. The group is
+    # keyed on the hardware, not the branch, so every trigger shares one
+    # lane. GitHub keeps only one waiting run per group: a third arrival
+    # cancels the one already waiting.
+    concurrency:
+      group: flatsat-nucleo-f446re
+      cancel-in-progress: false
+
+    # id-token lets the Tailscale action ask GitHub for a token proving
+    # this is this repository's workflow (workload identity federation),
+    # so there is no tailnet secret to store or rotate.
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          path: silversat-fsw
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install host-side tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdb-multiarch
+
+      - name: Download firmware
+        uses: actions/download-artifact@v7
+        with:
+          name: zephyr-nucleo_f446re
+          path: fw
+
+      # The flatsat is an Ubuntu box on the tailnet (docs/flatsat.md).
+      # tag:ci may reach only its GDB and serial ports. The client ID and
+      # audience come from the tailnet's federated identity; neither is a
+      # secret, so they are repository variables.
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ vars.TS_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:ci
+
+      # Watch the console from before the board resets, so the boot is
+      # seen; then load the firmware, which starts it.
+      - name: Flash and watch the boot
+        working-directory: silversat-fsw
+        run: |
+          python tools/flatsat.py --host flatsat console --seconds 45 \
+            --expect 'SilverSat FSW starting' \
+            --expect '<inf> health: boot' \
+            --forbid 'FATAL ERROR' --forbid 'FAULT' --forbid ' LOW,' \
+            > ../console.log 2>&1 &
+          watcher=$!
+          sleep 2
+          python tools/flatsat.py --host flatsat flash --gdb gdb-multiarch --elf ../fw/zephyr.elf
+          wait "$watcher"
+
+      - name: Upload hardware logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flatsat-logs
+          path: |
+            console.log
+            fw/zephyr.elf
+          retention-days: 14
+
+  # Tells people when main's check on the board fails, through one issue
+  # labelled flatsat: opened on the first failure, commented on while it
+  # keeps failing, closed when it passes again. Anyone watching the
+  # repository's issues hears. Branches run on demand don't report; whoever
+  # started the run sees it.
+  report:
+    name: report
+    needs: [build, hil]
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      vars.FLATSAT_ENABLED == 'true'
+    permissions:
+      issues: write
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Download hardware logs
+        if: needs.hil.result != 'success'
+        continue-on-error: true    # absent when the build failed
+        uses: actions/download-artifact@v7
+        with:
+          name: flatsat-logs
+
+      - name: Open, update or close the flatsat issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD: ${{ needs.build.result }}
+          HIL: ${{ needs.hil.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          open_issue=$(gh issue list --label flatsat --state open \
+                         --json number --jq '.[0].number // empty')
+
+          if [ "$HIL" = success ]; then
+            if [ -n "$open_issue" ]; then
+              gh issue close "$open_issue" \
+                --comment "The flatsat check passes again ($EVENT run): $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          # A run cancelled while it waited for the board isn't a failure.
+          if [ "$HIL" != failure ] && [ "$BUILD" != failure ]; then
+            exit 0
+          fi
+
+          # The last console lines say most about what went wrong.
+          {
+            echo "The flatsat check on main failed ($EVENT run): $RUN_URL"
+            echo
+            echo "Build: $BUILD. Hardware check: $HIL."
+            if [ -s console.log ]; then
+              echo
+              echo "Last console lines:"
+              echo
+              echo '```'
+              tail -n 40 console.log
+              echo '```'
+            fi
+          } > report.md
+
+          if [ -n "$open_issue" ]; then
+            gh issue comment "$open_issue" --body-file report.md
+          else
+            gh label create flatsat --color B60205 \
+              --description "The flatsat hardware check" 2>/dev/null || true
+            gh issue create --title "The flatsat check is failing" \
+              --label flatsat --body-file report.md
+          fi
