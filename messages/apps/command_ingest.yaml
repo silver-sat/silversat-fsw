@@ -43,6 +43,97 @@ data_channels:
       When a command was last accepted, for the mode manager's command-loss
       timer (DS-46). Published each time a command is accepted.
 
+# Events (DS-10, DS-50): each rejection stage, routing rejections, and key
+# rotation (DS-54). Anyone with a transmitter can cause the first five, so
+# they are limited (command_ingest.c): the first is an event at once, and
+# while more keep coming, one event each CONFIG_SS_CMD_REJECT_EVENT_SECONDS
+# carries how many there were.
+events:
+  - name: rejected_shape
+    id: 1
+    severity: info
+    description: >
+      Uplink frames that aren't a signed command at all (stage 1): radio
+      noise, or someone else's traffic.
+    args:
+      - name: count
+        description: Frames rejected since this event was last raised, this one included.
+  - name: rejected_signature
+    id: 2
+    severity: warning
+    description: >
+      Commands whose signature verifies with neither key (stage 2): a forgery,
+      or a ground station using the wrong key.
+    args:
+      - name: count
+        description: Commands rejected since this event was last raised, this one included.
+  - name: rejected_other_key
+    id: 3
+    severity: warning
+    description: >
+      Commands signed with the spare key that weren't key rotation commands,
+      which is all that key may sign (DS-54).
+    args:
+      - name: count
+        description: Commands rejected since this event was last raised, this one included.
+  - name: rejected_replay
+    id: 4
+    severity: warning
+    description: >
+      Commands whose counter wasn't above the floor (stage 3): a replay of a
+      recorded command, or a ground retry of one already accepted (DS-53).
+    args:
+      - name: count
+        description: Commands rejected since this event was last raised, this one included.
+      - name: slot
+        description: The key slot that signed the last of them.
+  - name: rejected_jump
+    id: 5
+    severity: warning
+    description: >
+      Commands whose counter jumped too far above the floor (stage 3, DS-53).
+    args:
+      - name: count
+        description: Commands rejected since this event was last raised, this one included.
+      - name: slot
+        description: The key slot that signed the last of them.
+  - name: rejected_route
+    id: 6
+    severity: info
+    description: >
+      An authenticated command that couldn't be routed (stages 5 to 7). Its
+      reply says why too.
+    args:
+      - name: app
+        type: app
+        description: The app the command named, or 0 if there is no such app.
+      - name: result
+        description: >
+          Why (enum cmd_route_result, silversat/cmd_route.h): 1 bad_syntax,
+          2 unknown_app, 3 unknown_command, 4 bad_arg_count, 5 mode,
+          6 bad_arg, 7 busy, 8 publish_failed.
+  - name: rotation_armed
+    id: 7
+    severity: info
+    description: A key rotation to the spare slot was armed (DS-54).
+    args:
+      - name: slot
+        description: The slot it will switch to.
+  - name: key_rotated
+    id: 8
+    severity: warning
+    description: The active key slot changed (DS-54).
+    args:
+      - name: slot
+        description: The key slot now in use.
+  - name: rotation_expired
+    id: 9
+    severity: info
+    description: An armed key rotation lapsed without being fired (DS-54).
+    args:
+      - name: slot
+        description: The slot it would have switched to.
+
 housekeeping:
   description: Command ingest state, published after every minor frame that handled a frame.
   fields:

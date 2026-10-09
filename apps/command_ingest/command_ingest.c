@@ -33,6 +33,15 @@
  * routed, because only command ingest knows which key signed a command.
  * No floor is ever reset (DS-53, decided 2026-10-02), so switching back to
  * a slot later cannot make its recorded commands valid again.
+ *
+ * Events (DS-10, DS-50): every rejection stage raises one, and so do the
+ * rotations (armed, rotated, and an arm that lapsed). Rejections at stages
+ * 1 to 3 can be caused by anyone with a transmitter, so their events are
+ * limited: the first of a kind is an event at once; while more keep coming,
+ * one event each CONFIG_SS_CMD_REJECT_EVENT_SECONDS carries how many there
+ * were; after a quiet period the next is an event at once again. However
+ * much is transmitted, that is at most two events per kind per period, so
+ * a flood can't crowd other apps' events out of the queue.
  */
 
 #include <stdint.h>
@@ -58,6 +67,8 @@ BUILD_ASSERT(ARRAY_SIZE(cmd_keys) == CMD_COUNTER_SLOTS, "one key per counter slo
 /* An armed rotation must be fired within this much mission time (DS-54). */
 #define ROTATION_ARM_WINDOW_MS (10 * 60 * 1000)
 
+#define REJECT_PERIOD_MS ((int64_t)CONFIG_SS_CMD_REJECT_EVENT_SECONDS * 1000)
+
 ZBUS_MSG_SUBSCRIBER_DEFINE(command_ingest_sub);
 ZBUS_CHAN_ADD_OBS(command_ingest_wakeup_chan, command_ingest_sub, 3);
 ZBUS_CHAN_ADD_OBS(command_ingest_cmd_chan, command_ingest_sub, 3);
@@ -79,6 +90,86 @@ static uint8_t active_slot;
 static bool armed;
 static uint8_t armed_slot;
 static int64_t armed_at_met_ms;
+
+/* ---- Events for rejections anyone can cause (DS-10, DS-50) ------------- */
+
+enum reject_kind {
+	REJECT_SHAPE,
+	REJECT_SIGNATURE,
+	REJECT_OTHER_KEY,
+	REJECT_REPLAY,
+	REJECT_JUMP,
+	REJECT_KINDS,
+};
+
+/* One kind's limit: open from its first event until a quiet period ends. */
+struct reject_limit {
+	bool open;
+	int64_t period_end_ms;
+	uint32_t unreported; /* rejections since its last event */
+	uint8_t slot;        /* the key slot of the last, for replay and jump */
+};
+
+static struct reject_limit limits[REJECT_KINDS];
+
+static void emit_rejection(enum reject_kind kind, int32_t count, uint8_t slot, int64_t met_ms)
+{
+	switch (kind) {
+	case REJECT_SHAPE:
+		emit_command_ingest_rejected_shape(met_ms, count);
+		break;
+	case REJECT_SIGNATURE:
+		emit_command_ingest_rejected_signature(met_ms, count);
+		break;
+	case REJECT_OTHER_KEY:
+		emit_command_ingest_rejected_other_key(met_ms, count);
+		break;
+	case REJECT_REPLAY:
+		emit_command_ingest_rejected_replay(met_ms, count, slot);
+		break;
+	default:
+		emit_command_ingest_rejected_jump(met_ms, count, slot);
+		break;
+	}
+}
+
+/* A rejection anyone can cause: an event now, or counted for the next one. */
+static void rejected(enum reject_kind kind, uint8_t slot, int64_t met_ms)
+{
+	struct reject_limit *limit = &limits[kind];
+
+	limit->slot = slot;
+	if (!limit->open) {
+		emit_rejection(kind, 1, slot, met_ms);
+		limit->open = true;
+		limit->period_end_ms = met_ms + REJECT_PERIOD_MS;
+		return;
+	}
+	limit->unreported++;
+}
+
+/*
+ * Once a period has passed since a kind's last event: if more came, one
+ * event carries how many, and another period starts; if none did, the
+ * next rejection of that kind is an event at once.
+ */
+static void report_rejections(int64_t met_ms)
+{
+	for (int kind = 0; kind < REJECT_KINDS; kind++) {
+		struct reject_limit *limit = &limits[kind];
+
+		if (!limit->open || met_ms < limit->period_end_ms) {
+			continue;
+		}
+		if (limit->unreported == 0) {
+			limit->open = false;
+			continue;
+		}
+		emit_rejection(kind, (int32_t)limit->unreported, limit->slot, met_ms);
+		limit->unreported = 0;
+		limit->period_end_ms = met_ms + REJECT_PERIOD_MS;
+	}
+}
 
 /* The words for each routing result. tools/command_text.py RESULTS matches. */
 static const char *const route_words[] = {
@@ -148,6 +239,7 @@ static void expire_arm(int64_t met_ms)
 {
 	if (armed && met_ms - armed_at_met_ms > ROTATION_ARM_WINDOW_MS) {
 		armed = false;
+		emit_command_ingest_rotation_expired(met_ms, armed_slot);
 	}
 	hk.rotation_armed = armed;
 }
@@ -178,6 +270,7 @@ static const char *rotate(uint16_t command, const struct cmd_text *words, uint8_
 		armed_slot = (uint8_t)slot;
 		armed_at_met_ms = met_ms;
 		hk.rotation_armed = true;
+		emit_command_ingest_rotation_armed(met_ms, armed_slot);
 		return "ok";
 	}
 	expire_arm(met_ms);
@@ -190,6 +283,7 @@ static const char *rotate(uint16_t command, const struct cmd_text *words, uint8_
 	hk.rotation_armed = false;
 	hk.active_slot = active_slot;
 	hk.rotations++;
+	emit_command_ingest_key_rotated(met_ms, active_slot);
 	return "ok";
 }
 
@@ -228,6 +322,7 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 	/* Stages 1 and 2: nothing is trusted until the tag verifies. */
 	if (cmd_auth_parse(frame->data, frame->len, &packet) != 0) {
 		hk.rejected_shape++;
+		rejected(REJECT_SHAPE, 0, met_ms);
 		return;
 	}
 	if (cmd_auth_verify(frame->data, frame->len, &packet, cmd_keys[active_slot])) {
@@ -236,6 +331,7 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 		signed_by = spare_slot();
 	} else {
 		hk.rejected_signature++;
+		rejected(REJECT_SIGNATURE, 0, met_ms);
 		return;
 	}
 
@@ -247,6 +343,7 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 	rotation = rotation_command(&packet, &words);
 	if (signed_by != active_slot && rotation == 0) {
 		hk.rejected_other_key++;
+		rejected(REJECT_OTHER_KEY, signed_by, met_ms);
 		reply("NAK", packet.counter, "wrong_key", -1);
 		return;
 	}
@@ -257,10 +354,12 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 		break;
 	case CMD_COUNTER_REPLAY:
 		hk.rejected_replay++;
+		rejected(REJECT_REPLAY, signed_by, met_ms);
 		reply("NAK", packet.counter, "replay", -1);
 		return;
 	case CMD_COUNTER_JUMP_TOO_LARGE:
 		hk.rejected_jump++;
+		rejected(REJECT_JUMP, signed_by, met_ms);
 		reply("NAK", packet.counter, "jump", -1);
 		return;
 	default:
@@ -292,6 +391,7 @@ static void ingest(const struct link_frame *frame, int64_t met_ms)
 		hk.routed++;
 	} else {
 		hk.rejected_route++;
+		emit_command_ingest_rejected_route(met_ms, info.app, routed);
 	}
 	reply("ACK", packet.counter, route_words[routed],
 	      routed == CMD_ROUTE_BAD_ARG ? info.bad_arg : -1);
@@ -309,6 +409,7 @@ static void step(const struct frame_tick *tick)
 		mode = state.mode;
 	}
 	expire_arm(tick->met_ms);
+	report_rejections(tick->met_ms);
 	while (k_msgq_get(&uplink_msgq, &frame, K_NO_WAIT) == 0) {
 		ingest(&frame, tick->met_ms);
 		handled = true;
