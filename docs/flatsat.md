@@ -178,9 +178,13 @@ and the FT232H by USB, wired to the Nucleo as in docs/nucleo-on-your-desk.md
 sudo hostnamectl set-hostname flatsat
 ```
 
-**Join the tailnet**, as the flatsat, with Tailscale SSH:
+**Join the tailnet**, as the flatsat, with Tailscale SSH. Use Ubuntu's
+`curl`, not a snap: snaps can't write outside their sandbox (`curl: (23)`),
+and the curl snap isn't published by curl or Canonical.
 
 ```sh
+snap list curl 2>/dev/null && sudo snap remove curl
+sudo apt install curl
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --ssh --advertise-tags=tag:flatsat
 sudo tailscale set --auto-update     # Tailscale updates itself; no reboot
