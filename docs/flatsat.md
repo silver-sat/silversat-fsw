@@ -556,7 +556,10 @@ health's status line appears, with no fault and no stack warning (DS-05).
   or `Target not examined yet` means OpenOCD couldn't reach the chip when it
   started: check the service has the `reset_config` line above, then
   `sudo systemctl restart openocd-flatsat`. `no more connections allowed`
-  means someone else's GDB is attached; OpenOCD takes one at a time. An
+  means someone else's GDB is attached; OpenOCD takes one at a time.
+  If it comes in the middle of a session, at the first command after a
+  break, the box closed the session because GDB had sent nothing for an
+  hour; the board is running, so `quit` and `make debug` again. An
   unused session closes by itself within an hour and five minutes. To end
   it now, a mentor on the box finds it with
   `sudo ss -tn '( sport = :3333 )'` (`tailscale status` names the address),
