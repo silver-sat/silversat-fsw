@@ -127,7 +127,9 @@ small team). In its admin console:
    ```
 
    Each mentor needs an account on the box (`sudo adduser <name>`, and
-   `sudo usermod -aG sudo <name>`). `adduser` also asks for a full name and
+   `sudo usermod -aG sudo,adm <name>`: `sudo` to run commands as root,
+   `adm` to read the services' logs with `journalctl` without it; it takes
+   effect at the next login). `adduser` also asks for a full name and
    phone numbers; they're optional (press Enter), and anyone with an account
    on the box can read them. Mentors log in from a computer on the tailnet
    with plain `ssh <name>@flatsat`. Tailscale, not the box, checks who they
