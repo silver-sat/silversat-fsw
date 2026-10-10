@@ -73,7 +73,9 @@ console connection takes over from an older one. Agree who has the board,
 for example in the team chat, before you flash it. CI flashes it too, on
 each merge to main, nightly, and when someone runs it on demand (below).
 Close your `make debug` when you finish: while it's attached, OpenOCD
-refuses everyone else, CI included.
+refuses everyone else, CI included. If you forget, the box closes a GDB
+session that has sent nothing for an hour, and the board carries on
+running.
 
 ### Things that still need hands
 
@@ -125,9 +127,15 @@ small team). In its admin console:
    ```
 
    Each mentor needs an account on the box (`sudo adduser <name>`, and
-   `sudo usermod -aG sudo <name>`). They log in from a computer on the
-   tailnet with plain `ssh <name>@flatsat`, and open the link it prints to
-   sign in again.
+   `sudo usermod -aG sudo <name>`). `adduser` also asks for a full name and
+   phone numbers; they're optional (press Enter), and anyone with an account
+   on the box can read them. Mentors log in from a computer on the tailnet
+   with plain `ssh <name>@flatsat`. Tailscale, not the box, checks who they
+   are: it prints a link to sign in again when 12 hours have passed, and
+   otherwise lets them straight in. The box never asks for the account's
+   password at login; that's for `sudo`, and for the box's own keyboard.
+   To edit a system file, `sudoedit <file>` is safer than `sudo nano`: the
+   editor runs as you, on a copy that's put back when you save.
 
 3. **An auth key for Codespaces** (Settings → Keys → Generate auth key):
    reusable, ephemeral (a Codespace's device disappears when it stops),
@@ -419,6 +427,68 @@ deploy mode, with its 45-minute wait (DS-42). In
 someone can hold B1. In the BIOS, set the box to power on again after a
 power cut.
 
+**Close GDB sessions nobody is using.** OpenOCD takes one GDB connection
+at a time and never times one out. A student who walks away, or whose
+Codespace stops, keeps everyone else, CI included, off the board; if the
+board was halted, OpenOCD doesn't even notice the other end has gone.
+`tools/flatsat_gdb_reaper.py` closes each GDB connection that has sent
+nothing for an hour, using `ss -K`; OpenOCD's `gdb-detach` event then
+starts the board again. `ss -K` needs a kernel built with it:
+`grep INET_DIAG_DESTROY /boot/config-$(uname -r)` should say `=y` (Ubuntu's
+does). Install it from this repository:
+
+```sh
+sudo curl -fsSL -o /usr/local/sbin/flatsat-gdb-reaper \
+    https://raw.githubusercontent.com/silver-sat/silversat-fsw/main/tools/flatsat_gdb_reaper.py
+sudo chmod 755 /usr/local/sbin/flatsat-gdb-reaper
+```
+
+`/etc/systemd/system/flatsat-gdb-reaper.service`:
+
+```ini
+[Unit]
+Description=Close flatsat GDB sessions idle for an hour
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/flatsat-gdb-reaper --idle-minutes 60
+# Root, but only able to close connections (ss -K, over netlink).
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+```
+
+`/etc/systemd/system/flatsat-gdb-reaper.timer`:
+
+```ini
+[Unit]
+Description=Check for idle flatsat GDB sessions every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now flatsat-gdb-reaper.timer
+systemctl list-timers flatsat-gdb-reaper     # next run within 5 minutes
+```
+
+To check it, attach `make debug` from a Codespace, then on the box:
+
+```sh
+sudo flatsat-gdb-reaper --idle-minutes 0 --dry-run   # "would close ... from <Codespace>"
+sudo systemctl start flatsat-gdb-reaper              # a real run: nothing yet, not idle
+journalctl -u flatsat-gdb-reaper -n 5                # closed sessions are listed here
+```
+
 ### 4. GitHub
 
 In the repository's settings (or the organization's, for every repository):
@@ -480,7 +550,13 @@ health's status line appears, with no fault and no stack warning (DS-05).
   or `Target not examined yet` means OpenOCD couldn't reach the chip when it
   started: check the service has the `reset_config` line above, then
   `sudo systemctl restart openocd-flatsat`. `no more connections allowed`
-  means someone else's GDB is attached; OpenOCD takes one at a time.
+  means someone else's GDB is attached; OpenOCD takes one at a time. An
+  unused session closes by itself within an hour and five minutes. To end
+  it now, a mentor on the box finds it with
+  `sudo ss -tn '( sport = :3333 )'` (`tailscale status` names the address),
+  then closes it with `sudo flatsat-gdb-reaper --idle-minutes 0`, which
+  closes every GDB session, or with
+  `sudo ss -K '( sport = :3333 and dst <address>:<port> )'` for just one.
 - **Console and telemetry both silent:** the board isn't running. In
   `make debug`, `monitor targets` shows its state:
   - `halted`: usually a GDB session that ended while it was stopped. Check
