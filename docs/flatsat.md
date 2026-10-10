@@ -186,6 +186,14 @@ sudo apt install openocd ser2net
 
 The openocd package installs the USB permissions for the ST-LINK.
 
+**Update the ST-LINK's firmware** before anything else, from a computer
+with STM32CubeProgrammer (ST's free tool; its ST-LINK panel has a
+"Firmware upgrade" button), choosing "STM32 Debug + VCP". Old firmware
+(V2J33 on ours) left the console port stuck after the box rebooted. The
+update changes the
+ST-LINK's name under `/dev/serial/by-id/`, so do it before setting up
+ser2net below, or update `/etc/ser2net.yaml` after.
+
 **A user to run OpenOCD**, with access to the ST-LINK:
 
 ```sh
@@ -473,11 +481,17 @@ health's status line appears, with no fault and no stack warning (DS-05).
   started: check the service has the `reset_config` line above, then
   `sudo systemctl restart openocd-flatsat`. `no more connections allowed`
   means someone else's GDB is attached; OpenOCD takes one at a time.
-- **Console and telemetry both silent:** the board is probably halted,
-  usually by a GDB session that ended while it was stopped. (Deploy mode
-  isn't silent: the console still shows `alive` every 10 s.) Check the
-  OpenOCD service has the `gdb-detach` line above. To start the board now,
-  `make debug`, then `monitor resume` and `quit`; or `make flash`.
+- **Console and telemetry both silent:** the board isn't running. In
+  `make debug`, `monitor targets` shows its state:
+  - `halted`: usually a GDB session that ended while it was stopped. Check
+    the OpenOCD service has the `gdb-detach` line above.
+  - `reset`: OpenOCD is holding it in reset, which can happen after
+    `openocd-flatsat` restarts.
+
+  Either way, `monitor reset run` then `quit` starts it (or `make flash`).
+  A reset keeps the backup SRAM, so the board doesn't go back to deploy
+  mode. (Deploy mode isn't silent: the console still shows `alive` every
+  10 s.)
 - **`Device open failure: Permission denied`** on the console: ser2net
   can't open the serial port. Check the device's group
   (`ls -lL /dev/serial/by-id/`) is in the drop-in's `SupplementaryGroups`,
@@ -486,9 +500,33 @@ health's status line appears, with no fault and no stack warning (DS-05).
   of memory`** when ser2net starts: harmless. ser2net tries Avahi once at
   start, finds it missing (or blocked by the sandbox), and carries on;
   `mdns: false` means it wouldn't announce anything anyway.
-- **The console shows nothing, telemetry fine:** check
-  `systemctl status ser2net`, and that no one else's `make console` has
-  taken the port.
+- **The console shows nothing, but the board runs** (telemetry works, or
+  `make debug` shows it running): first check `systemctl status ser2net`,
+  and that no one else's `make console` has taken the port. Then read the
+  port directly on the box, with ser2net out of the way:
+
+  ```sh
+  sudo systemctl stop ser2net
+  P=$(ls /dev/serial/by-id/*STLink*)
+  sudo stty -F "$P" 115200 raw -echo
+  sudo timeout 15 cat "$P"          # expect "alive" lines
+  sudo systemctl start ser2net
+  ```
+
+  If nothing comes, the ST-LINK's serial port has stuck. That happened
+  with the old ST-LINK firmware (V2J33) after the box rebooted while the
+  Nucleo kept power. `usbreset` doesn't clear it; unplugging the Nucleo
+  does (hold B1 as you plug it back in, to skip deploy mode's wait). Then
+  update the ST-LINK firmware (part 2).
+- **No telemetry, console fine:** look for the mode in health's status
+  line. `mode deploy` sends no telemetry by design (DS-42) until MET
+  reaches the separation delay (45 minutes, `MET 2700 s`); then the board
+  enters safe mode, stores that, and sends telemetry every second. After a
+  power cycle the board starts again from deploy mode, and a test-mode
+  boot (B1) lasts only until the next reset, a CI run or `make flash`
+  included. So after a power cycle, leave the board running until MET
+  passes 2700 s; MET carries on across resets, so the wait isn't
+  restarted.
 - **`dkms autoinstall ... failed for evdi`** during an upgrade: the
   DisplayLink driver doesn't build for the new kernel, and leaves the
   upgrade half-done. If no DisplayLink dock or screen is plugged in
