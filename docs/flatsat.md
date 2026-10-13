@@ -118,10 +118,11 @@ small team). In its admin console:
      "ssh": [
        // Mentors log in to the box with Tailscale SSH: no keys to manage.
        // "check" makes them sign in to Tailscale again (at most every 12
-       // hours), so an unattended laptop isn't enough. No root: each mentor
-       // logs in as themselves and uses sudo, which records who did what.
+       // hours, the default; changing it needs a paid plan), so an
+       // unattended laptop isn't enough. No root: each mentor logs in as
+       // themselves and uses sudo, which records who did what.
        {"action": "check", "src": ["autogroup:admin"], "dst": ["tag:flatsat"],
-        "users": ["autogroup:nonroot"], "checkPeriod": "12h"},
+        "users": ["autogroup:nonroot"]},
      ],
    }
    ```
