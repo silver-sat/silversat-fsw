@@ -585,6 +585,19 @@ health's status line appears, with no fault and no stack warning (DS-05).
 
 ## When something's wrong
 
+At the box, the Nucleo's LD1 (the red and green LED by the ST-LINK's USB
+connector) gives a quick first look:
+
+| LD1 | Meaning |
+|---|---|
+| Flashing red and green | OpenOCD is talking to the chip (it polls all the time): normal |
+| Steady red | The ST-LINK is plugged in, but OpenOCD isn't talking to the chip: it isn't running, or has lost the ST-LINK (see `SRST error` below). Normal only for a few seconds after plugging in. |
+| Blinking red | The ST-LINK is starting up over USB |
+| Orange | The ST-LINK's last exchange with the chip failed |
+
+The red power LED (LD3) is always on; the green user LED (LD2) stays off,
+because the firmware doesn't use it.
+
 - **`can't find 'flatsat'`:** the Codespace isn't on the tailnet. Check
   `tailscale status`. If it says `Logged out`, run
   `bash .devcontainer/tailscale-up.sh`. If that says there's no
