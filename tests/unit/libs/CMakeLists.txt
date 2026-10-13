@@ -3,8 +3,9 @@ cmake_minimum_required(VERSION 3.20.0)
 # One build for the shared libraries' tests: signing (cmd_auth), replay
 # protection (cmd_counter), command text decoding and routing (cmd_route),
 # the link codec (link_codec), the housekeeping and event encoders
-# (tlm_encode), the FRAM service (nvm), the event queue (event), and the
-# generated message headers and channels (messages). Each keeps its own
+# (tlm_encode), the FRAM service (nvm), the event queue (event), the
+# generated message headers and channels (messages), and zbus scheduling
+# (zbus_sched). Each keeps its own
 # source file and test suite; they share a build only to save CI time, since
 # most of a test's time is building Zephyr for it.
 
@@ -81,5 +82,5 @@ add_custom_target(libs_vectors
 add_dependencies(app libs_vectors)
 
 target_sources(app PRIVATE src/auth.c src/counter.c src/route.c src/link_codec.c
-  src/tlm_encode.c src/nvm.c src/messages.c src/event.c ${FAKES}/fake_fram.c ${FAKES}/fake_retained_mem.c)
+  src/tlm_encode.c src/nvm.c src/messages.c src/event.c src/zbus_sched.c ${FAKES}/fake_fram.c ${FAKES}/fake_retained_mem.c)
 target_include_directories(app PRIVATE ${VECTOR_DIR} ${FAKES})
