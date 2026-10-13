@@ -23,10 +23,22 @@ if tailscale status --peers=false --json 2>/dev/null |
 fi
 
 # The same flags the feature uses. The key carries tag:codespace.
+#
+# The key goes through a file, never on the command line: anything on a
+# command line shows in `ps` to everyone in the Codespace. printf is built
+# into bash, so writing the file doesn't put the key on one either.
+#
+# --timeout stops a join that can't finish (say, a key that isn't
+# pre-approved, waiting for an admin) from holding up the Codespace's start.
+# tailscaled keeps waiting in the background, and joins if it's approved.
 echo "==> tailscale: joining the tailnet"
-if ! sudo tailscale up --accept-routes --authkey="$TS_AUTH_KEY" \
-		--hostname="${CODESPACE_NAME:-codespace}"; then
-	echo "WARNING: tailscale up failed; see docs/flatsat.md," \
-		"\"When something's wrong\"" >&2
+key_file=$(mktemp)
+chmod 600 "$key_file"
+printf '%s' "$TS_AUTH_KEY" > "$key_file"
+if ! sudo tailscale up --accept-routes --auth-key="file:$key_file" \
+		--hostname="${CODESPACE_NAME:-codespace}" --timeout=60s; then
+	echo "WARNING: couldn't join the tailnet; \`tailscale status\` says why." \
+		"See docs/flatsat.md, \"When something's wrong\"" >&2
 fi
+rm -f "$key_file"
 exit 0
