@@ -118,10 +118,11 @@ small team). In its admin console:
      "ssh": [
        // Mentors log in to the box with Tailscale SSH: no keys to manage.
        // "check" makes them sign in to Tailscale again (at most every 12
-       // hours), so an unattended laptop isn't enough. No root: each mentor
-       // logs in as themselves and uses sudo, which records who did what.
+       // hours, the default; changing it needs a paid plan), so an
+       // unattended laptop isn't enough. No root: each mentor logs in as
+       // themselves and uses sudo, which records who did what.
        {"action": "check", "src": ["autogroup:admin"], "dst": ["tag:flatsat"],
-        "users": ["autogroup:nonroot"], "checkPeriod": "12h"},
+        "users": ["autogroup:nonroot"]},
      ],
    }
    ```
@@ -144,6 +145,12 @@ small team). In its admin console:
    pre-approved, tagged `tag:codespace`. Copy it for part 4 below. It
    expires after at most 90 days; note the date, because Codespaces stop
    joining when it does.
+
+   Pre-approved matters once device approval is on (item 5): without it,
+   every Codespace start waits for an admin to approve it. It also means
+   the key alone is enough to join, so treat it as a password. A leaked key
+   reaches only what `tag:codespace` may (the three flatsat ports); revoke
+   it and make a new one (Settings → Keys) if it's ever shown or shared.
 4. **A federated identity for CI** (workload identity federation: GitHub
    vouches for the workflow, so there is no secret to store or rotate). On
    the Trust credentials page, choose Credential → OpenID Connect:
@@ -162,11 +169,11 @@ small team). In its admin console:
 
    Generate it, and copy its **Client ID** and **Audience**. Neither is a
    secret.
-5. **Device approval** (Settings → Device management): turn it on, so a
-   leaked key can't quietly add a device. The Codespaces key is
-   pre-approved (item 3), so Codespaces still join without waiting. After
-   turning it on, run the `flatsat` workflow once (below) to check that CI
-   still joins too.
+5. **Device approval** (Settings → Device management): turn it on, so no
+   device joins by signing in alone: a member's laptop, or anything using a
+   key that isn't pre-approved, waits for an admin. It doesn't stop the
+   pre-approved Codespaces key (item 3). After turning it on, run the
+   `flatsat` workflow once (below) to check that CI still joins.
 
 ### 2. The box
 
@@ -547,6 +554,13 @@ health's status line appears, with no fault and no stack warning (DS-05).
   the Codespace's repository isn't allowed to use it; fix the secret, then
   restart the Codespace. If `tailscale up` fails, the key may have expired:
   make a new one (part 1) and update the secret.
+- **`Machine is not yet approved by tailnet admin`** from
+  `tailscale status`, or the Codespace's start says it couldn't join: the
+  Codespaces key isn't pre-approved, and device approval is on. Approve the
+  Codespace on the admin console's Machines page, and it joins within a
+  few seconds. To stop it happening to every Codespace, make a new key
+  with "Pre-approved" ticked (part 1, item 3), and update the secret.
+  The start gives up waiting after 60 seconds, so it never hangs.
 - **`flatsat:3333 doesn't answer`:** OpenOCD isn't running on the box:
   `systemctl status openocd-flatsat`. It stops retrying if the Nucleo is
   unplugged for long; replug it, or restart the service.
