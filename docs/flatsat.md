@@ -71,7 +71,9 @@ show, the boot modes, and reset loops.
 There is one flatsat. `make flash` replaces whatever is running, and a new
 console connection takes over from an older one. Agree who has the board,
 for example in the team chat, before you flash it. CI flashes it too, on
-each merge to main, nightly, and when someone runs it on demand (below).
+each merge to main, nightly, and when someone runs it on demand (below):
+for about a minute it takes over the console, so your `make console`
+ends, and it resets the board with the firmware from main.
 Close your `make debug` when you finish: while it's attached, OpenOCD
 refuses everyone else, CI included. If you forget, the box closes a GDB
 session that has sent nothing for an hour, and the board carries on
@@ -222,13 +224,38 @@ sudo adduser --system --group flatsat
 sudo usermod -aG plugdev,dialout flatsat
 ```
 
-**OpenOCD as a service**, so its GDB server is always there and restarts if
-the board is unplugged. Create `/etc/systemd/system/openocd-flatsat.service`:
+**A name for the ST-LINK**, so OpenOCD can follow it being unplugged and
+plugged back in. OpenOCD doesn't notice its ST-LINK going away: it carries
+on with a dead connection, accepting GDB but unable to reset, halt or read
+the chip. So a udev rule names the ST-LINK for systemd, and starts OpenOCD
+whenever it appears; the service below stops when it goes. Create
+`/etc/udev/rules.d/70-flatsat-stlink.rules`:
+
+```
+# The Nucleo's ST-LINK (374b before a firmware update, 3752 after):
+# name it for systemd, and start OpenOCD whenever it's plugged in.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0483", ATTR{idProduct}=="374b|3752", TAG+="systemd", SYMLINK+="stlink", ENV{SYSTEMD_WANTS}+="openocd-flatsat.service"
+```
+
+```sh
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=usb --action=add
+systemctl status dev-stlink.device     # "active (plugged)"
+```
+
+If `dev-stlink.device` isn't found, check the ST-LINK's product ID with
+`lsusb | grep 0483` and add it to the rule.
+
+**OpenOCD as a service**, so its GDB server is always there. Create
+`/etc/systemd/system/openocd-flatsat.service`:
 
 ```ini
 [Unit]
 Description=OpenOCD GDB server for the flatsat's Nucleo
 After=network-online.target
+# Stop when the ST-LINK is unplugged; the udev rule starts it again.
+BindsTo=dev-stlink.device
+After=dev-stlink.device
 
 [Service]
 User=flatsat
@@ -236,7 +263,8 @@ ExecStart=/usr/bin/openocd -f board/st_nucleo_f4.cfg \
     -c "reset_config srst_only srst_nogate connect_assert_srst" \
     -c "stm32f4x.cpu configure -event gdb-detach { resume }" \
     -c "bindto 0.0.0.0" -c "gdb_port 3333" \
-    -c "telnet_port disabled" -c "tcl_port disabled"
+    -c "telnet_port disabled" -c "tcl_port disabled" \
+    -c "init" -c "reset run"
 Restart=always
 RestartSec=5
 
@@ -247,7 +275,14 @@ WantedBy=multi-user.target
 The `reset_config` line holds the board in reset while OpenOCD connects.
 OpenOCD checks the chip only once, as it starts, and refuses GDB from then
 on if that check failed; firmware that is asleep or stuck can make it fail.
-It also means starting the service restarts the board.
+Nothing then lets go of the reset until the next reset command, so the
+last line, `init` then `reset run`, starts the board as OpenOCD finishes
+starting. So starting the service restarts the board; a reset keeps the
+backup SRAM, so it doesn't go back to deploy mode.
+
+Unplugging the Nucleo stops the service, and plugging it back in starts a
+fresh one, with no one on the box (`journalctl -u openocd-flatsat` shows
+both).
 
 The `gdb-detach` line starts the board again whenever GDB lets go of it.
 Leaving GDB usually means pressing Ctrl-C, which halts the board, then
@@ -437,8 +472,11 @@ reboot by itself: a reboot that cuts USB power starts the Nucleo over in
 deploy mode, with its 45-minute wait (DS-42). In
 `/etc/apt/apt.conf.d/50unattended-upgrades`, keep
 `Unattended-Upgrade::Automatic-Reboot "false";`, and reboot by hand when
-someone can hold B1. In the BIOS, set the box to power on again after a
-power cut.
+someone can hold B1. In the BIOS, set the box to restore its previous
+power state after a power cut (it's always left on, so it comes back on),
+and not to stop at boot for a setup prompt or a key press (for example,
+"press F1 to continue" when no keyboard is plugged in): no one is there to
+answer it.
 
 **Close GDB sessions nobody is using.** OpenOCD takes one GDB connection
 at a time and never times one out. A student who walks away, or whose
@@ -562,8 +600,15 @@ health's status line appears, with no fault and no stack warning (DS-05).
   with "Pre-approved" ticked (part 1, item 3), and update the secret.
   The start gives up waiting after 60 seconds, so it never hangs.
 - **`flatsat:3333 doesn't answer`:** OpenOCD isn't running on the box:
-  `systemctl status openocd-flatsat`. It stops retrying if the Nucleo is
-  unplugged for long; replug it, or restart the service.
+  `systemctl status openocd-flatsat`. It doesn't run while the Nucleo is
+  unplugged; plug it in, and check `systemctl status dev-stlink.device`
+  says `plugged`. If it's plugged and OpenOCD still isn't running,
+  `journalctl -u openocd-flatsat -n 40` says why.
+- **`SRST error`, `read_memory ... failed`, or `Error erasing flash`** from
+  `make flash` or CI, and `monitor targets` shows `running` even after
+  attaching: OpenOCD has lost its ST-LINK, usually because the Nucleo was
+  unplugged while OpenOCD carried on. The udev rule and `BindsTo` above
+  prevent this; without them, `sudo systemctl restart openocd-flatsat`.
 - **`Remote connection closed` or `Connection reset by peer`** from
   `make debug` or `make flash`: the box answers, but OpenOCD refused GDB.
   On the box, `journalctl -u openocd-flatsat -n 40`. `examination failed`
@@ -584,8 +629,9 @@ health's status line appears, with no fault and no stack warning (DS-05).
   `make debug`, `monitor targets` shows its state:
   - `halted`: usually a GDB session that ended while it was stopped. Check
     the OpenOCD service has the `gdb-detach` line above.
-  - `reset`: OpenOCD is holding it in reset, which can happen after
-    `openocd-flatsat` restarts.
+  - `reset`: OpenOCD is holding it in reset. That happens after
+    `openocd-flatsat` restarts if the service lacks the `init` and
+    `reset run` at the end of its `ExecStart`.
 
   Either way, `monitor reset run` then `quit` starts it (or `make flash`).
   A reset keeps the backup SRAM, so the board doesn't go back to deploy
