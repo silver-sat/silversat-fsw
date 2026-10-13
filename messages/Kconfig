@@ -46,4 +46,15 @@ configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_STATIC_DATA_SIZE
 configdefault ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE
 	default 40
 
+# No priority boost (DS-24). It raises a publisher above a channel's
+# observers only for observers whose threads called
+# zbus_obs_attach_to_thread(), which no app does, so it never raised
+# anything. But after every publish or notify it set the thread's priority
+# again, which in Zephyr moves the thread behind any other ready thread of
+# the same priority: a hidden yield in the middle of an app's work. Off, a
+# publish is a scheduling point only when it wakes a higher-priority
+# observer. tests/unit/libs/src/zbus_sched.c checks both.
+configdefault ZBUS_PRIORITY_BOOST
+	default n
+
 endif # SS_MESSAGES
