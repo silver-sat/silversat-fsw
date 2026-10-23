@@ -24,10 +24,12 @@ SUBSET     ?=
 
 # The flatsat: a Nucleo on an Ubuntu box on the tailnet (docs/flatsat.md).
 # Its GDB server is OpenOCD's; ser2net puts the console and the radio UART
-# on TCP ports. Overridable:  make flash FLATSAT=other-host
-FLATSAT      ?= flatsat
+# on TCP ports. Overridable:  make flash FLATSAT_HOST=other-host. CIRCUITPY is the 
+# QT Py M0's CIRCUITPY mount point.
+FLATSAT_HOST ?= flatsat
 GDB_PORT     ?= 3333
 CONSOLE_PORT ?= 4000
+CIRCUITPY ?= /media/$(USER)/CIRCUITPY
 # The Zephyr SDK's GDB for the board, which isn't on the PATH.
 GDB          ?= $(firstword $(wildcard /opt/toolchains/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb) arm-zephyr-eabi-gdb)
 ELF          := $(BUILD_DIR)/zephyr/zephyr.elf
@@ -37,7 +39,7 @@ CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config
 	{ echo 'No $(BOARD) firmware in $(BUILD_DIR): run `make build` first.'; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console debug clean
+.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console debug clean deploy-controller
 
 help:  ## Show this list
 	@echo ''
@@ -95,3 +97,12 @@ debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
 
 clean:  ## Delete build output
 	rm -rf $(BUILD_DIR) twister-out twister-out.*
+
+deploy-controller:  ## Copy the flatsat controller firmware to the QT Py
+	@test -d $(CIRCUITPY) || udisksctl mount -b /dev/disk/by-label/CIRCUITPY
+	cp flatsat/boot.py flatsat/code.py $(CIRCUITPY)/
+	sync
+	@echo ''
+	@echo '  Copied. code.py auto-reloads on its own.'
+	@echo '  If boot.py changed, press the QT Py reset button.'
+	@echo ''
