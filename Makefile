@@ -29,7 +29,6 @@ SUBSET     ?=
 FLATSAT_HOST ?= flatsat
 GDB_PORT     ?= 3333
 CONSOLE_PORT ?= 4000
-CIRCUITPY ?= /media/$(USER)/CIRCUITPY
 # The Zephyr SDK's GDB for the board, which isn't on the PATH.
 GDB          ?= $(firstword $(wildcard /opt/toolchains/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb) arm-zephyr-eabi-gdb)
 ELF          := $(BUILD_DIR)/zephyr/zephyr.elf
@@ -86,23 +85,17 @@ build:  ## Cross-compile the application for the flatsat board
 
 flash:  ## Load the last `make build` onto the flatsat, and start it
 	@$(CHECK_FIRMWARE)
-	python3 tools/flatsat.py --host $(FLATSAT) flash --gdb $(GDB) --port $(GDB_PORT) --elf $(ELF)
+	python3 tools/flatsat.py --host $(FLATSAT_HOST) flash --gdb $(GDB) --port $(GDB_PORT) --elf $(ELF)
 
 console:  ## Show the flatsat's console (Ctrl-C to stop)
-	python3 tools/flatsat.py --host $(FLATSAT) console --port $(CONSOLE_PORT)
+	python3 tools/flatsat.py --host $(FLATSAT_HOST) console --port $(CONSOLE_PORT)
 
 debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
 	@$(CHECK_FIRMWARE)
-	$(GDB) -ex "target extended-remote $(FLATSAT):$(GDB_PORT)" $(ELF)
+	$(GDB) -ex "target extended-remote $(FLATSAT_HOST):$(GDB_PORT)" $(ELF)
 
 clean:  ## Delete build output
 	rm -rf $(BUILD_DIR) twister-out twister-out.*
 
 deploy-controller:  ## Copy the flatsat controller firmware to the QT Py
-	@test -d $(CIRCUITPY) || udisksctl mount -b /dev/disk/by-label/CIRCUITPY
-	cp flatsat/boot.py flatsat/code.py $(CIRCUITPY)/
-	sync
-	@echo ''
-	@echo '  Copied. code.py auto-reloads on its own.'
-	@echo '  If boot.py changed, press the QT Py reset button.'
-	@echo ''
+	flatsat/deploy.sh
