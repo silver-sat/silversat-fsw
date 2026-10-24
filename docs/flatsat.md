@@ -307,6 +307,9 @@ ls /dev/serial/by-id/
 # usb-Adafruit_Industries_LLC_QT_Py_M0_...-if02      the reset controller
 ```
 
+The reset controller gets a `/dev/flatsat-nrst` symlink of its own from
+the udev rule under "Reset controller" below; the config uses that.
+
 Replace `/etc/ser2net.yaml` with, using those names:
 
 ```yaml
@@ -339,7 +342,7 @@ connection: &nrst-controller
       kickolduser: true
       mdns: false
       max-connections: 1
-    connector: serialdev,/dev/serial/by-id/usb-Adafruit_Industries_LLC_QT_Py_M0_08D29EF75259545020312E39200103FF-if02,115200n81,local
+    connector: serialdev,/dev/flatsat-nrst,115200n81,local
 ```
 
 `max-connections: 1` matters more here than on a console. Two clients
@@ -418,6 +421,27 @@ sudo usermod -aG plugdev,dialout <your-login>
 
 Log out and back in. `newgrp dialout` gets you a working shell immediately
 if you do not want to wait.
+
+Give the controller a name of its own, so neither ser2net nor anyone at a
+terminal has to care which `ttyACM` number it landed on this boot:
+
+```sh
+sudo tee /etc/udev/rules.d/71-flatsat-nrst.rules <<'EOF'
+# The flatsat reset controller: the QT Py's data port (-if02). Its REPL
+# (-if00) is left alone, for mentors with tio. Keyed on the board's serial
+# so a second QT Py on the bench cannot claim the name.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", \
+  ATTRS{serial}=="08D29EF75259545020312E39200103FF", \
+  ENV{ID_USB_INTERFACE_NUM}=="02", \
+  GROUP="dialout", MODE="0660", SYMLINK+="flatsat-nrst"
+EOF
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=tty
+ls -l /dev/flatsat-nrst          # -> ttyACM<something>; the number varies
+```
+
+Replace the serial with your board's: `udevadm info -q property -n
+/dev/ttyACM<n> | grep ID_SERIAL_SHORT`, or read it off the REPL.
 
 Deploying firmware needs the CIRCUITPY volume mounted somewhere predictable
 without a password prompt:
@@ -528,8 +552,11 @@ OpenOCD can then reach the ST-LINK, and write nowhere.
 
 ```ini
 [Service]
-# A throwaway user that exists only while the service runs. The openocd
-# package's USB rules put both serial ports in plugdev, not dialout.
+# A throwaway user that exists only while the service runs. BOTH groups
+# are needed and it is not obvious why: the openocd package's USB rules
+# claim the ST-LINK and the FT232H and put them in plugdev, while the QT
+# Py matches no such rule and keeps Ubuntu's default dialout. Drop either
+# group and one of the three ports stops opening.
 DynamicUser=yes
 SupplementaryGroups=dialout plugdev
 ProtectHome=yes
@@ -787,10 +814,27 @@ because the firmware doesn't use it.
   A reset keeps the backup SRAM, so the board doesn't go back to deploy
   mode. (Deploy mode isn't silent: the console still shows `alive` every
   10 s.)
-- **`Device open failure: Permission denied`** on the console: ser2net
-  can't open the serial port. Check the device's group
-  (`ls -lL /dev/serial/by-id/`) is in the drop-in's `SupplementaryGroups`,
-  and that `/run/lock` holds no `LCK..tty*` files owned by root.
+- **`Device open failure: Permission denied`**: ser2net can't open that
+  serial port. Check what the running service actually has, not what the
+  drop-in was meant to say — the two can differ, and then one port works
+  while another does not:
+
+  ```sh
+  ls -lL /dev/serial/by-id/            # each device's group
+  getent group dialout plugdev         # dialout is 20, plugdev 46
+  pid=$(systemctl show -p MainPID --value ser2net)
+  grep ^Groups /proc/$pid/status       # want 20 and 46, plus its own
+  ```
+
+  The third GID is the transient group `DynamicUser=yes` allocates for the
+  service itself; it changes on every start and is not a problem. If 20 or
+  46 is missing, fix `SupplementaryGroups` in the drop-in and restart.
+  Also check `/run/lock` holds no `LCK..tty*` owned by root or by a user
+  who opened the port by hand with `tio`.
+
+  Do not debug this by `ttyACM` number. They are assigned in enumeration
+  order and move: the QT Py and the ST-LINK have traded places here more
+  than once. Go by `/dev/serial/by-id/` or `/dev/flatsat-nrst`.
 - **`mdns: Can't allocate avahi client`** and **`Unable to start mdns: Out
   of memory`** when ser2net starts: harmless. ser2net tries Avahi once at
   start, finds it missing (or blocked by the sandbox), and carries on;
