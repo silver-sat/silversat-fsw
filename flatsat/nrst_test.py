@@ -149,10 +149,16 @@ def main():
             results = run_checks(port, args.hold)
     except serial.SerialException as exc:
         print("error: could not open %s: %s" % (device, exc), file=sys.stderr)
-        print("(on macOS the usbmodem number changes on every replug; "
-              "try --list)", file=sys.stderr)
-        return 1
-    except ControllerError as exc:
+        if "Permission denied" in str(exc):
+            print("hint: you are probably not in the device's group. Try:\n"
+                  "  ls -l %s\n"
+                  "  sudo usermod -aG dialout $USER\n"
+                  "  then log out and back in, or run: newgrp dialout"
+                  % device, file=sys.stderr)
+        else:
+            print("hint: the device path may have changed; try --list",
+                  file=sys.stderr)
+        return 1    except ControllerError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
 

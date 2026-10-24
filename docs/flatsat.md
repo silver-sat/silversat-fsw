@@ -16,16 +16,17 @@ make console        # watch its console (Ctrl-C to stop)
  Codespace ──┼── tailnet ───────────┤  OpenOCD   :3333 ── USB ── Nucleo (ST-LINK)
  CI ─────────┘  (Tailscale)         │  ser2net   :4000 ── console (USART2)  │
                                     │  ser2net   :4001 ── FT232H ── radio UART
+                                    │  ser2net   :4002 ── QT Py ── NRST     │
                                     └────────────────────────────────────────┘
 ```
 
 - **OpenOCD** is the GDB server for the Nucleo's on-board ST-LINK: `make
   flash` loads firmware through it, and `make debug` debugs through it.
-- **ser2net** puts the board's two serial ports on TCP ports: the console
-  (the ST-LINK's serial port, USART2) and the radio UART (USART1, through an
-  FT232H). `make console` reads the first; the radio simulator talks to the
-  second.
-- **Tailscale** connects them. Codespaces and CI can reach only those three
+- **ser2net** puts three serial ports on TCP ports: the console (the
+  ST-LINK's serial port, USART2), the radio UART (USART1, through an
+  FT232H), and the reset controller. `make console` reads the first, the
+  radio simulator talks to the second, and `make reset` drives the third.
+- **Tailscale** connects them. Codespaces and CI can reach only those four
   ports on the flatsat, and nothing else on the box's network.
 
 ## Using it
@@ -111,9 +112,10 @@ small team). In its admin console:
        "tag:ci":        ["autogroup:admin"],
      },
      "acls": [
-       // Codespaces and CI reach only the flatsat's GDB and serial ports.
+       // Codespaces and CI reach only the flatsat's GDB port, its serial
+       // ports, and the reset controller.
        {"action": "accept", "src": ["tag:codespace", "tag:ci"],
-        "dst": ["tag:flatsat:3333,4000,4001"]},
+        "dst": ["tag:flatsat:3333,4000,4001,4002"]},
        // Mentors reach everything, to look after the box.
        {"action": "accept", "src": ["autogroup:admin"], "dst": ["*:*"]},
      ],
@@ -295,13 +297,18 @@ systemctl status openocd-flatsat      # "Listening on port 3333 for gdb connecti
 journalctl -u openocd-flatsat -n 20   # no "examination failed"
 ```
 
-**ser2net**, for the two serial ports. Find their stable names:
+**ser2net**, for the three serial ports. Find their stable names — these
+do not move when devices re-enumerate, which `/dev/ttyACM*` does:
 
 ```sh
 ls /dev/serial/by-id/
 # usb-STMicroelectronics_STM32_STLink_066B...-if02   the console
 # usb-FTDI_..._-if00-port0                            the FT232H
+# usb-Adafruit_Industries_LLC_QT_Py_M0_...-if02      the reset controller
 ```
+
+The reset controller gets a `/dev/flatsat-nrst` symlink of its own from
+the udev rule under "Reset controller" below; the config uses that.
 
 Replace `/etc/ser2net.yaml` with, using those names:
 
@@ -325,7 +332,23 @@ connection: &radio
       kickolduser: true
       mdns: false
     connector: serialdev,/dev/serial/by-id/usb-FTDI_..._-if00-port0,19200n81,local
+
+# The reset controller: the QT Py's second CDC port (-if02, the data port;
+# -if00 is its REPL). Baud is meaningless over USB CDC, but ser2net wants one.
+connection: &nrst-controller
+    accepter: tcp,4002
+    enable: on
+    options:
+      kickolduser: true
+      mdns: false
+      max-connections: 1
+    connector: serialdev,/dev/flatsat-nrst,115200n81,local
 ```
+
+`max-connections: 1` matters more here than on a console. Two clients
+interleaving `set_reset` commands on a reset line is a bad time, and
+`kickolduser` means a CI job that died without closing its socket does not
+lock the rig out.
 
 ```sh
 sudo systemctl restart ser2net
@@ -338,7 +361,7 @@ network, so a firewall keeps those ports off the box's local network:
 
 ```sh
 sudo ufw allow 41641/udp      # Tailscale's direct connections (else it relays, slowly)
-sudo ufw allow in on tailscale0 to any port 22,3333,4000,4001 proto tcp
+sudo ufw allow in on tailscale0 to any port 22,3333,4000,4001,4002 proto tcp
 grep IPV6 /etc/default/ufw    # IPV6=yes, or the ports stay open over IPv6
 sudo ufw enable
 sudo ufw status verbose       # each rule listed for v4 and v6
@@ -350,8 +373,146 @@ other SSH server (see the next part).
 **Check it** from another device on the tailnet:
 
 ```sh
-make console FLATSAT=flatsat     # from a Codespace: the board's log lines
+make console FLATSAT_HOST=flatsat   # from a Codespace: the board's log lines
+make reset   FLATSAT_HOST=flatsat   # the board reboots, and says so
 ```
+
+## Reset controller (Adafruit QT Py)
+
+`uhubctl` reports per-port power switching on this host's hubs but does not
+actually drop VBUS on any of them except, oddly, an Apple keyboard hub. So
+the rig resets the target by pulling NRST low rather than by cutting power.
+
+An Adafruit QT Py M0 running CircuitPython does that job today. It is a
+stand-in for the student-built flatsat controller board, and it speaks the
+command vocabulary from the controller specification, so `tools/flatsat.py`
+will not change when the real board replaces it.
+
+Firmware lives in `flatsat/` in this repository.
+
+### Wiring
+
+| QT Py | Nucleo-F446RE | Notes |
+|-------|---------------|-------|
+| A0    | `RESET` on CN6, the Arduino power header | Open-drain. Driven low to assert, high-Z to release. |
+| GND   | `GND` on CN6  | Run a real wire. Do not rely on a shared ground through the host's USB. |
+
+**Count by the silkscreen, not by the end of the connector.** CN6's first
+hole carries no label, so counting from the edge puts you one pin off
+`RESET` — and the failure is silent: a released line reads 3.3 V whether or
+not anything is connected, because that is the STM32's own 40 kΩ internal
+pull-up. Confirm with a continuity check between A0 and the pin before
+trusting the harness.
+
+NRST is bidirectional and open-drain. The controller never drives it high;
+it switches the pin between output-low and input-high-Z. That way the
+on-board ST-LINK can still reset the target independently, and a crashed or
+unprogrammed controller leaves the target running rather than held down.
+
+### Host setup
+
+The serial ports are owned by `dialout`, and the ST-LINK's ports are
+relabelled into `plugdev` by the openocd package's udev rules. Mentors who
+need to talk to either directly need both:
+
+```sh
+sudo usermod -aG plugdev,dialout <your-login>
+```
+
+Log out and back in. `newgrp dialout` gets you a working shell immediately
+if you do not want to wait.
+
+Give the controller a name of its own, so neither ser2net nor anyone at a
+terminal has to care which `ttyACM` number it landed on this boot:
+
+```sh
+sudo tee /etc/udev/rules.d/71-flatsat-nrst.rules <<'EOF'
+# The flatsat reset controller: the QT Py's data port (-if02). Its REPL
+# (-if00) is left alone, for mentors with tio. Keyed on the board's serial
+# so a second QT Py on the bench cannot claim the name.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", \
+  ATTRS{serial}=="08D29EF75259545020312E39200103FF", \
+  ENV{ID_USB_INTERFACE_NUM}=="02", \
+  GROUP="dialout", MODE="0660", SYMLINK+="flatsat-nrst"
+EOF
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=tty
+ls -l /dev/flatsat-nrst          # -> ttyACM<something>; the number varies
+```
+
+Replace the serial with your board's: `udevadm info -q property -n
+/dev/ttyACM<n> | grep ID_SERIAL_SHORT`, or read it off the REPL.
+
+Deploying firmware needs the CIRCUITPY volume mounted somewhere predictable
+without a password prompt:
+
+```sh
+sudo mkdir -p /mnt/circuitpy
+echo 'LABEL=CIRCUITPY /mnt/circuitpy vfat noauto,user,umask=000,flush 0 0' \
+    | sudo tee -a /etc/fstab
+```
+
+Then:
+
+```sh
+flatsat/deploy.sh
+```
+
+Press the QT Py's physical reset button afterwards if `boot.py` changed.
+USB descriptors are only rebuilt on a hard reset, and `boot.py` is what
+enables the second CDC port.
+
+### Verifying
+
+```sh
+python3 flatsat/nrst_test.py            # auto-detects the data port
+python3 flatsat/nrst_test.py --hold 10  # long enough to read on a DMM
+```
+
+Nine checks, exit 0 on success. With a meter on NRST, asserted reads 0 V
+and released reads 3.3 V; on the target's console you should see the
+firmware reboot.
+
+### Two CDC ports
+
+The SAMD21 has eight USB endpoint pairs, and CircuitPython spends them by
+default on the console, the CIRCUITPY drive, HID and MIDI. A second CDC
+function does not fit, and it fails quietly: `usb_cdc.enable()` returns
+successfully and `usb_cdc.data` hands back a live object, but the port
+never enumerates. `boot.py` disables HID and MIDI to make room.
+
+Both ports should be present:
+
+```sh
+ls -l /dev/serial/by-id/ | grep -i adafruit
+```
+
+`-if00` is the REPL and console, `-if02` is the command port.
+
+### Troubleshooting
+
+**`cp: No space left on device`, or `df: Input/output error`.** The mount
+has gone stale. CircuitPython re-enumerates on every file save, and if the
+board comes back as a different device node the old mount survives as a
+corpse that reports nonsense. `flatsat/deploy.sh` detects and clears this;
+by hand it is `sudo umount -l /mnt/circuitpy` and then `mount
+/mnt/circuitpy`. `sudo fsck.vfat -n /dev/disk/by-label/CIRCUITPY` will show
+the dirty bit left behind.
+
+**The volume really is full.** It is 47 KB. Any Mac that mounts it leaves
+`._`-prefixed AppleDouble files of 4 KB each, plus `.fseventsd` and
+`.Trashes`. `deploy.sh` removes them. On a Mac, `mdutil -i off
+/Volumes/CIRCUITPY` stops Spotlight re-creating its index directory.
+
+**Starting over.** From the REPL on `-if00`:
+
+```python
+>>> import storage
+>>> storage.erase_filesystem()
+```
+
+Reformats and reboots. CircuitPython itself is in firmware and survives;
+re-run `deploy.sh` and press reset.
 
 ### 3. Hardening the box
 
@@ -391,8 +552,11 @@ OpenOCD can then reach the ST-LINK, and write nowhere.
 
 ```ini
 [Service]
-# A throwaway user that exists only while the service runs. The openocd
-# package's USB rules put both serial ports in plugdev, not dialout.
+# A throwaway user that exists only while the service runs. BOTH groups
+# are needed and it is not obvious why: the openocd package's USB rules
+# claim the ST-LINK and the FT232H and put them in plugdev, while the QT
+# Py matches no such rule and keeps Ubuntu's default dialout. Drop either
+# group and one of the three ports stops opening.
 DynamicUser=yes
 SupplementaryGroups=dialout plugdev
 ProtectHome=yes
@@ -650,10 +814,27 @@ because the firmware doesn't use it.
   A reset keeps the backup SRAM, so the board doesn't go back to deploy
   mode. (Deploy mode isn't silent: the console still shows `alive` every
   10 s.)
-- **`Device open failure: Permission denied`** on the console: ser2net
-  can't open the serial port. Check the device's group
-  (`ls -lL /dev/serial/by-id/`) is in the drop-in's `SupplementaryGroups`,
-  and that `/run/lock` holds no `LCK..tty*` files owned by root.
+- **`Device open failure: Permission denied`**: ser2net can't open that
+  serial port. Check what the running service actually has, not what the
+  drop-in was meant to say — the two can differ, and then one port works
+  while another does not:
+
+  ```sh
+  ls -lL /dev/serial/by-id/            # each device's group
+  getent group dialout plugdev         # dialout is 20, plugdev 46
+  pid=$(systemctl show -p MainPID --value ser2net)
+  grep ^Groups /proc/$pid/status       # want 20 and 46, plus its own
+  ```
+
+  The third GID is the transient group `DynamicUser=yes` allocates for the
+  service itself; it changes on every start and is not a problem. If 20 or
+  46 is missing, fix `SupplementaryGroups` in the drop-in and restart.
+  Also check `/run/lock` holds no `LCK..tty*` owned by root or by a user
+  who opened the port by hand with `tio`.
+
+  Do not debug this by `ttyACM` number. They are assigned in enumeration
+  order and move: the QT Py and the ST-LINK have traded places here more
+  than once. Go by `/dev/serial/by-id/` or `/dev/flatsat-nrst`.
 - **`mdns: Can't allocate avahi client`** and **`Unable to start mdns: Out
   of memory`** when ser2net starts: harmless. ser2net tries Avahi once at
   start, finds it missing (or blocked by the sandbox), and carries on;

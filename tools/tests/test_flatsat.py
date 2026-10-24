@@ -44,6 +44,43 @@ def closed_port():
     return port
 
 
+def controller(reply=lambda command: b"ok", unprompted=b""):
+    """A stand-in for the reset controller on its ser2net port.
+
+    Returns (port, log); log fills with the commands it was sent, in order.
+    `unprompted` is sent on connect, for the lines the controller emits
+    that nobody asked for.
+    """
+    log = []
+    server = socket.create_server(("127.0.0.1", 0))
+
+    def run():
+        # reset() checks the port is reachable, then connects to talk.
+        server.accept()[0].close()
+        conn, _ = server.accept()
+        if unprompted:
+            conn.sendall(unprompted)
+        pending = b""
+        try:
+            while True:
+                data = conn.recv(256)
+                if not data:
+                    break
+                pending += data
+                while b"\n" in pending:
+                    raw, pending = pending.split(b"\n", 1)
+                    log.append(raw.decode().strip())
+                    conn.sendall(reply(log[-1]) + b"\n")
+        except OSError:
+            pass
+        finally:
+            conn.close()
+            server.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return server.getsockname()[1], log
+
+
 # ---- Checking what the board prints -------------------------------------------
 
 def test_watch_passes_when_every_expected_line_appears():
@@ -165,3 +202,79 @@ def test_flash_when_the_box_is_down(tmp_path, capsys):
     assert flatsat.main(["--host", "127.0.0.1", "flash", "--port", str(closed_port()),
                          "--gdb", "false", "--elf", "zephyr.elf"]) == 1
     assert "doesn't answer" in capsys.readouterr().err
+
+
+# ---- Resetting the board ---------------------------------------------------------------
+
+def run_reset(port, *args):
+    return flatsat.main(["--host", "127.0.0.1", "reset", "--port", str(port), *args])
+
+
+def test_reset_pulses_nrst():
+    # The controller has no pulse command: setting state twice is the pulse.
+    port, log = controller()
+    assert run_reset(port, "--hold", "0.05") == 0
+    assert log == ["set_reset asserted", "set_reset released"]
+
+
+def test_reset_can_assert_without_releasing():
+    # For holding a board down while something else is rewired.
+    port, log = controller()
+    assert run_reset(port, "assert") == 0
+    assert log == ["set_reset asserted"]
+
+
+def test_reset_can_release_on_its_own():
+    port, log = controller()
+    assert run_reset(port, "release") == 0
+    assert log == ["set_reset released"]
+
+
+def test_reset_reports_status(capsys):
+    port, log = controller(reply=lambda command: b"ok reset=released")
+    assert run_reset(port, "status") == 0
+    assert log == ["get_status"]
+    assert "reset=released" in capsys.readouterr().out
+
+
+def test_reset_fails_when_the_controller_refuses(capsys):
+    port, _ = controller(reply=lambda command: b"err syntax")
+    assert run_reset(port) == 1
+    assert "refused" in capsys.readouterr().err
+
+
+def test_reset_ignores_lines_nobody_asked_for(capsys):
+    # A hold that timed out earlier announces itself whenever we next
+    # connect. It is not the reply to our command.
+    port, log = controller(unprompted=b"event reset_timeout\n")
+    assert run_reset(port, "--hold", "0.05") == 0
+    assert log == ["set_reset asserted", "set_reset released"]
+    assert "reset_timeout" in capsys.readouterr().err
+
+
+def test_reset_releases_nrst_even_when_interrupted(monkeypatch):
+    # Ctrl-C during the hold must not leave the board stuck in reset.
+    port, log = controller()
+    monkeypatch.setattr(flatsat.time, "sleep", _raise_keyboard_interrupt)
+    assert run_reset(port) == 0
+    assert log == ["set_reset asserted", "set_reset released"]
+
+
+def test_reset_gives_up_when_the_controller_is_silent():
+    # ser2net answers, but nothing is running on the QT Py behind it.
+    server = socket.create_server(("127.0.0.1", 0))
+    with socket.create_connection(server.getsockname()) as sock:
+        conn, _ = server.accept()
+        with pytest.raises(flatsat.ControllerError, match="code.py"):
+            flatsat.command(sock, "version", timeout=0.2)
+        conn.close()
+    server.close()
+
+
+def test_reset_when_the_box_is_down(capsys):
+    assert run_reset(closed_port()) == 1
+    assert "doesn't answer" in capsys.readouterr().err
+
+
+def _raise_keyboard_interrupt(_seconds):
+    raise KeyboardInterrupt
