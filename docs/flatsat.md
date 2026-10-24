@@ -297,12 +297,14 @@ systemctl status openocd-flatsat      # "Listening on port 3333 for gdb connecti
 journalctl -u openocd-flatsat -n 20   # no "examination failed"
 ```
 
-**ser2net**, for the two serial ports. Find their stable names:
+**ser2net**, for the three serial ports. Find their stable names — these
+do not move when devices re-enumerate, which `/dev/ttyACM*` does:
 
 ```sh
 ls /dev/serial/by-id/
 # usb-STMicroelectronics_STM32_STLink_066B...-if02   the console
 # usb-FTDI_..._-if00-port0                            the FT232H
+# usb-Adafruit_Industries_LLC_QT_Py_M0_...-if02      the reset controller
 ```
 
 Replace `/etc/ser2net.yaml` with, using those names:
@@ -328,15 +330,22 @@ connection: &radio
       mdns: false
     connector: serialdev,/dev/serial/by-id/usb-FTDI_..._-if00-port0,19200n81,local
 
-# The flatsat reset controller, using the QT Py
+# The reset controller: the QT Py's second CDC port (-if02, the data port;
+# -if00 is its REPL). Baud is meaningless over USB CDC, but ser2net wants one.
 connection: &nrst-controller
-  accepter: tcp,0.0.0.0,4002
-  # Baud is meaningless over USB CDC, but ser2net requires a value.
-  connector: serialdev,/dev/serial/by-id/usb-Adafruit_Industries_LLC_QT_Py_M0_08D29EF75259545020312E39200103FF-if02,115200n81,local
-  options:
-    kickolduser: true
-    max-connections: 1
+    accepter: tcp,4002
+    enable: on
+    options:
+      kickolduser: true
+      mdns: false
+      max-connections: 1
+    connector: serialdev,/dev/serial/by-id/usb-Adafruit_Industries_LLC_QT_Py_M0_08D29EF75259545020312E39200103FF-if02,115200n81,local
 ```
+
+`max-connections: 1` matters more here than on a console. Two clients
+interleaving `set_reset` commands on a reset line is a bad time, and
+`kickolduser` means a CI job that died without closing its socket does not
+lock the rig out.
 
 ```sh
 sudo systemctl restart ser2net
@@ -349,7 +358,7 @@ network, so a firewall keeps those ports off the box's local network:
 
 ```sh
 sudo ufw allow 41641/udp      # Tailscale's direct connections (else it relays, slowly)
-sudo ufw allow in on tailscale0 to any port 22,3333,4000,4001 proto tcp
+sudo ufw allow in on tailscale0 to any port 22,3333,4000,4001,4002 proto tcp
 grep IPV6 /etc/default/ufw    # IPV6=yes, or the ports stay open over IPv6
 sudo ufw enable
 sudo ufw status verbose       # each rule listed for v4 and v6
@@ -361,7 +370,8 @@ other SSH server (see the next part).
 **Check it** from another device on the tailnet:
 
 ```sh
-make console FLATSAT=flatsat     # from a Codespace: the board's log lines
+make console FLATSAT_HOST=flatsat   # from a Codespace: the board's log lines
+make reset   FLATSAT_HOST=flatsat   # the board reboots, and says so
 ```
 
 ## Reset controller (Adafruit QT Py)
