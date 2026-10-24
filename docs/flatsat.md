@@ -16,16 +16,17 @@ make console        # watch its console (Ctrl-C to stop)
  Codespace ──┼── tailnet ───────────┤  OpenOCD   :3333 ── USB ── Nucleo (ST-LINK)
  CI ─────────┘  (Tailscale)         │  ser2net   :4000 ── console (USART2)  │
                                     │  ser2net   :4001 ── FT232H ── radio UART
+                                    │  ser2net   :4002 ── QT Py ── NRST     │
                                     └────────────────────────────────────────┘
 ```
 
 - **OpenOCD** is the GDB server for the Nucleo's on-board ST-LINK: `make
   flash` loads firmware through it, and `make debug` debugs through it.
-- **ser2net** puts the board's two serial ports on TCP ports: the console
-  (the ST-LINK's serial port, USART2) and the radio UART (USART1, through an
-  FT232H). `make console` reads the first; the radio simulator talks to the
-  second.
-- **Tailscale** connects them. Codespaces and CI can reach only those three
+- **ser2net** puts three serial ports on TCP ports: the console (the
+  ST-LINK's serial port, USART2), the radio UART (USART1, through an
+  FT232H), and the reset controller. `make console` reads the first, the
+  radio simulator talks to the second, and `make reset` drives the third.
+- **Tailscale** connects them. Codespaces and CI can reach only those four
   ports on the flatsat, and nothing else on the box's network.
 
 ## Using it
@@ -111,9 +112,10 @@ small team). In its admin console:
        "tag:ci":        ["autogroup:admin"],
      },
      "acls": [
-       // Codespaces and CI reach only the flatsat's GDB and serial ports.
+       // Codespaces and CI reach only the flatsat's GDB port, its serial
+       // ports, and the reset controller.
        {"action": "accept", "src": ["tag:codespace", "tag:ci"],
-        "dst": ["tag:flatsat:3333,4000,4001"]},
+        "dst": ["tag:flatsat:3333,4000,4001,4002"]},
        // Mentors reach everything, to look after the box.
        {"action": "accept", "src": ["autogroup:admin"], "dst": ["*:*"]},
      ],

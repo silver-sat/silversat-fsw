@@ -24,12 +24,13 @@ PLATFORMS  ?= $(SIM) $(SIM)/native/64
 SUBSET     ?=
 
 # The flatsat: a Nucleo on an Ubuntu box on the tailnet (docs/flatsat.md).
-# Its GDB server is OpenOCD's; ser2net puts the console and the radio UART
-# on TCP ports. Overridable:  make flash FLATSAT_HOST=other-host. CIRCUITPY is the 
-# QT Py M0's CIRCUITPY mount point.
+# Its GDB server is OpenOCD's; ser2net puts the console, the radio UART, and
+# the reset controller on TCP ports.
+# Overridable:  make flash FLATSAT_HOST=other-host
 FLATSAT_HOST ?= flatsat
 GDB_PORT     ?= 3333
 CONSOLE_PORT ?= 4000
+RESET_PORT   ?= 4002
 
 # The Zephyr SDK's GDB for the board, which isn't on the PATH.
 GDB          ?= $(firstword $(wildcard /opt/toolchains/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb) arm-zephyr-eabi-gdb)
@@ -41,7 +42,7 @@ CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config
 	{ echo 'No $(BOARD) firmware in $(BUILD_DIR): run `make build` first.'; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console debug clean deploy-controller
+.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset debug clean deploy-controller
 
 help:  ## Show this list
 	@echo ''
@@ -92,6 +93,9 @@ flash:  ## Load the last `make build` onto the flatsat, and start it
 
 console:  ## Show the flatsat's console (Ctrl-C to stop)
 	python3 tools/flatsat.py --host $(FLATSAT_HOST) console --port $(CONSOLE_PORT)
+
+reset:  ## Reset the flatsat's board (for when it stops answering)
+	python3 tools/flatsat.py --host $(FLATSAT_HOST) reset --port $(RESET_PORT)
 
 debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
 	@$(CHECK_FIRMWARE)
