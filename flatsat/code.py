@@ -39,15 +39,13 @@ asserted_at = None
 
 def assert_reset():
     global asserted_at
-    nrst.direction = digitalio.Direction.OUTPUT
-    nrst.value = False                         # only ever sinks, never sources
+    nrst.switch_to_output(value=False)   # direction and level together
     asserted_at = time.monotonic()
 
 
 def release_reset():
     global asserted_at
-    nrst.direction = digitalio.Direction.INPUT
-    nrst.pull = None
+    nrst.switch_to_input(pull=None)      # high-Z
     asserted_at = None
 
 

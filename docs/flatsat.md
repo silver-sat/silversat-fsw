@@ -325,6 +325,15 @@ connection: &radio
       kickolduser: true
       mdns: false
     connector: serialdev,/dev/serial/by-id/usb-FTDI_..._-if00-port0,19200n81,local
+
+# The flatsat reset controller, using the QT Py
+connection: &nrst-controller
+  accepter: tcp,0.0.0.0,4002
+  # Baud is meaningless over USB CDC, but ser2net requires a value.
+  connector: serialdev,/dev/serial/by-id/usb-Adafruit_Industries_LLC_QT_Py_M0_08D29EF75259545020312E39200103FF-if02,115200n81,local
+  options:
+    kickolduser: true
+    max-connections: 1
 ```
 
 ```sh
@@ -352,6 +361,122 @@ other SSH server (see the next part).
 ```sh
 make console FLATSAT=flatsat     # from a Codespace: the board's log lines
 ```
+
+## Reset controller (Adafruit QT Py)
+
+`uhubctl` reports per-port power switching on this host's hubs but does not
+actually drop VBUS on any of them except, oddly, an Apple keyboard hub. So
+the rig resets the target by pulling NRST low rather than by cutting power.
+
+An Adafruit QT Py M0 running CircuitPython does that job today. It is a
+stand-in for the student-built flatsat controller board, and it speaks the
+command vocabulary from the controller specification, so `tools/flatsat.py`
+will not change when the real board replaces it.
+
+Firmware lives in `flatsat/` in this repository.
+
+### Wiring
+
+| QT Py | Nucleo-F446RE | Notes |
+|-------|---------------|-------|
+| A0    | `RESET` on CN6, the Arduino power header | Open-drain. Driven low to assert, high-Z to release. |
+| GND   | `GND` on CN6  | Run a real wire. Do not rely on a shared ground through the host's USB. |
+
+**Count by the silkscreen, not by the end of the connector.** CN6's first
+hole carries no label, so counting from the edge puts you one pin off
+`RESET` — and the failure is silent: a released line reads 3.3 V whether or
+not anything is connected, because that is the STM32's own 40 kΩ internal
+pull-up. Confirm with a continuity check between A0 and the pin before
+trusting the harness.
+
+NRST is bidirectional and open-drain. The controller never drives it high;
+it switches the pin between output-low and input-high-Z. That way the
+on-board ST-LINK can still reset the target independently, and a crashed or
+unprogrammed controller leaves the target running rather than held down.
+
+### Host setup
+
+The serial ports are owned by `dialout`, and the ST-LINK's ports are
+relabelled into `plugdev` by the openocd package's udev rules. Mentors who
+need to talk to either directly need both:
+
+```sh
+sudo usermod -aG plugdev,dialout <your-login>
+```
+
+Log out and back in. `newgrp dialout` gets you a working shell immediately
+if you do not want to wait.
+
+Deploying firmware needs the CIRCUITPY volume mounted somewhere predictable
+without a password prompt:
+
+```sh
+sudo mkdir -p /mnt/circuitpy
+echo 'LABEL=CIRCUITPY /mnt/circuitpy vfat noauto,user,umask=000,flush 0 0' \
+    | sudo tee -a /etc/fstab
+```
+
+Then:
+
+```sh
+flatsat/deploy.sh
+```
+
+Press the QT Py's physical reset button afterwards if `boot.py` changed.
+USB descriptors are only rebuilt on a hard reset, and `boot.py` is what
+enables the second CDC port.
+
+### Verifying
+
+```sh
+python3 flatsat/nrst_test.py            # auto-detects the data port
+python3 flatsat/nrst_test.py --hold 10  # long enough to read on a DMM
+```
+
+Nine checks, exit 0 on success. With a meter on NRST, asserted reads 0 V
+and released reads 3.3 V; on the target's console you should see the
+firmware reboot.
+
+### Two CDC ports
+
+The SAMD21 has eight USB endpoint pairs, and CircuitPython spends them by
+default on the console, the CIRCUITPY drive, HID and MIDI. A second CDC
+function does not fit, and it fails quietly: `usb_cdc.enable()` returns
+successfully and `usb_cdc.data` hands back a live object, but the port
+never enumerates. `boot.py` disables HID and MIDI to make room.
+
+Both ports should be present:
+
+```sh
+ls -l /dev/serial/by-id/ | grep -i adafruit
+```
+
+`-if00` is the REPL and console, `-if02` is the command port.
+
+### Troubleshooting
+
+**`cp: No space left on device`, or `df: Input/output error`.** The mount
+has gone stale. CircuitPython re-enumerates on every file save, and if the
+board comes back as a different device node the old mount survives as a
+corpse that reports nonsense. `flatsat/deploy.sh` detects and clears this;
+by hand it is `sudo umount -l /mnt/circuitpy` and then `mount
+/mnt/circuitpy`. `sudo fsck.vfat -n /dev/disk/by-label/CIRCUITPY` will show
+the dirty bit left behind.
+
+**The volume really is full.** It is 47 KB. Any Mac that mounts it leaves
+`._`-prefixed AppleDouble files of 4 KB each, plus `.fseventsd` and
+`.Trashes`. `deploy.sh` removes them. On a Mac, `mdutil -i off
+/Volumes/CIRCUITPY` stops Spotlight re-creating its index directory.
+
+**Starting over.** From the REPL on `-if00`:
+
+```python
+>>> import storage
+>>> storage.erase_filesystem()
+```
+
+Reformats and reboots. CircuitPython itself is in firmware and survives;
+re-run `deploy.sh` and press reset.
 
 ### 3. Hardening the box
 

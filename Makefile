@@ -16,6 +16,7 @@ BUILD_DIR  ?= build
 REPO_ROOT  := $(shell pwd)
 VERBOSITY  ?= -v
 SANITIZERS ?= --enable-asan --enable-ubsan
+
 # The platforms `make twister` tests, and which part of the tests. CI runs
 # each platform in two halves, four jobs in parallel:
 #   make twister PLATFORMS=native_sim SUBSET=1/2
@@ -29,9 +30,11 @@ SUBSET     ?=
 FLATSAT_HOST ?= flatsat
 GDB_PORT     ?= 3333
 CONSOLE_PORT ?= 4000
+
 # The Zephyr SDK's GDB for the board, which isn't on the PATH.
 GDB          ?= $(firstword $(wildcard /opt/toolchains/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb) arm-zephyr-eabi-gdb)
 ELF          := $(BUILD_DIR)/zephyr/zephyr.elf
+
 # `make run` builds native_sim into the same directory, so check the build is
 # the flatsat's before loading it.
 CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config || \

@@ -21,14 +21,25 @@ if [ ! -e /dev/disk/by-label/CIRCUITPY ]; then
     exit 1
 fi
 
+# A mountpoint can be stale: CircuitPython re-enumerates on every save,
+# and if the device comes back as a different node the old mount survives
+# as a corpse. Reading it is the only honest test - df and cp report
+# nonsense like ENOSPC.
+if mountpoint -q "$MOUNT" && ! ls "$MOUNT" >/dev/null 2>&1; then
+    echo "stale mount at $MOUNT (board re-enumerated) - remounting"
+    umount "$MOUNT" 2>/dev/null || sudo umount -l "$MOUNT"
+fi
+
 if ! mountpoint -q "$MOUNT"; then
-    if [ ! -d "$MOUNT" ]; then
-        echo "error: $MOUNT does not exist - add the fstab entry above" >&2
-        exit 1
-    fi
+    [ -d "$MOUNT" ] || { echo "error: $MOUNT does not exist - add the fstab entry above" >&2; exit 1; }
     echo "mounting CIRCUITPY at $MOUNT"
     mount "$MOUNT"
 fi
+
+# A 48 KB FAT volume has no room for macOS metadata. Any Mac that mounts
+# CIRCUITPY leaves these behind, and the next copy fails with ENOSPC.
+rm -rf "$MOUNT/.fseventsd" "$MOUNT/.Spotlight-V100" "$MOUNT/.Trashes"
+rm -f "$MOUNT"/._*
 
 cp "$HERE/boot.py" "$HERE/code.py" "$MOUNT/"
 
