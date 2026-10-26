@@ -16,8 +16,15 @@ if [ -z "${TS_AUTH_KEY:-}" ]; then
 	exit 0
 fi
 
+# Self.Online, not BackendState. "Running" only means the daemon is up:
+# the Tailscale feature starts tailscaled at container start, before the
+# Codespace secrets exist, so it sits there logged out with an AuthURL,
+# no peers, and BackendState "Running". Testing BackendState here made
+# this script report success on a Codespace that had never joined, and
+# skip the one thing it exists to do. --peers=false leaves only Self, so
+# there is no other node's Online to match by accident.
 if tailscale status --peers=false --json 2>/dev/null |
-		grep -q '"BackendState": "Running"'; then
+		grep -q '"Online": true'; then
 	echo "==> tailscale: already on the tailnet"
 	exit 0
 fi
