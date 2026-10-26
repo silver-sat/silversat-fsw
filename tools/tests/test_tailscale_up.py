@@ -19,7 +19,7 @@ KEY = "tskey-auth-TESTONLY-0123456789abcdef"
 TAILSCALE = r"""#!/usr/bin/env bash
 echo "$*" >> "$LOG"
 if [ "$1" = status ]; then
-	echo "{\"BackendState\": \"$STATE\"}"
+	echo "{\"BackendState\": \"$STATE\", \"Self\": {\"Online\": $ONLINE}}"
 	exit 0
 fi
 for arg in "$@"; do
@@ -46,9 +46,10 @@ def run(tmp_path):
         f.chmod(0o755)
     log = tmp_path / "log"
 
-    def go(key=KEY, state="NeedsLogin", up_status=0):
+    def go(key=KEY, state="NeedsLogin", up_status=0, online=False):
         env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "LOG": str(log),
                "STATE": state, "UP_STATUS": str(up_status),
+               "ONLINE": "true" if online else "false",
                "CODESPACE_NAME": "test-space", "TMPDIR": str(tmp_path)}
         if key is not None:
             env["TS_AUTH_KEY"] = key
@@ -68,10 +69,21 @@ def test_without_the_secret_it_does_nothing(run):
 
 
 def test_already_on_the_tailnet_it_does_nothing_more(run):
-    result, calls, _ = run(state="Running")
+    result, calls, _ = run(state="Running", online=True)
     assert result.returncode == 0
     assert "already on the tailnet" in result.stdout
     assert not any(c.startswith("up") for c in calls)
+
+
+def test_a_running_daemon_that_never_joined_still_joins(run):
+    # The Tailscale feature starts tailscaled before the Codespace secrets
+    # exist, so it sits logged out with BackendState "Running" and no
+    # tailnet. Reading that as success left Codespaces unable to reach the
+    # flatsat while this script reported everything was fine.
+    result, calls, _ = run(state="Running", online=False)
+    assert result.returncode == 0
+    assert "already on the tailnet" not in result.stdout
+    assert [c for c in calls if c.startswith("up")], "it must try to join"
 
 
 def test_joins_with_the_key_from_a_file_never_the_command_line(run):
