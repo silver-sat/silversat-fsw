@@ -307,8 +307,42 @@ ls /dev/serial/by-id/
 # usb-Adafruit_Industries_LLC_QT_Py_M0_...-if02      the reset controller
 ```
 
-The reset controller gets a `/dev/flatsat-nrst` symlink of its own from
-the udev rule under "Reset controller" below; the config uses that.
+A `by-id` name is stable across re-enumeration but still spells out an
+interface number, and the ST-LINK's has already moved once. Give the
+console a name of its own, as the reset controller gets one under "Reset
+controller" below:
+
+```sh
+sudo tee /etc/udev/rules.d/72-flatsat-console.rules <<'EOF'
+# The Nucleo's console: the ST-LINK's VCP. Keyed on the probe's serial, so
+# a second Nucleo on the bench cannot claim the name. The group is left to
+# the openocd package's rules, which put this port in plugdev; ser2net has
+# both plugdev and dialout, so either works.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", \
+  ATTRS{serial}=="0670FF565271525067133919", \
+  ENV{ID_USB_INTERFACE_NUM}=="01", \
+  SYMLINK+="flatsat-console"
+EOF
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=tty
+sudo udevadm settle        # trigger only queues; settle waits for it
+ls -l /dev/flatsat-console
+```
+
+Use your probe's serial and interface number: `udevadm info -q property -n
+/dev/ttyACM<n> | grep -E 'ID_SERIAL_SHORT|ID_USB_INTERFACE_NUM'`.
+
+Prove the symlink does its job by forcing the thing it protects against —
+power-cycle the board and check the name comes back, whatever `ttyACM`
+number it lands on:
+
+```sh
+sudo uhubctl -l 3-4 -p 1 -a cycle
+sleep 3
+ls -l /dev/flatsat-console /dev/flatsat-nrst
+sudo systemctl restart ser2net
+make console FLATSAT_HOST=localhost
+```
 
 Replace `/etc/ser2net.yaml` with, using those names:
 
@@ -322,7 +356,7 @@ connection: &console
     options:
       kickolduser: true
       mdns: false
-    connector: serialdev,/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066B...-if02,115200n81,local
+    connector: serialdev,/dev/flatsat-console,115200n81,local
 
 # The radio UART (USART1), through the FT232H.
 connection: &radio
@@ -437,6 +471,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", \
 EOF
 sudo udevadm control --reload
 sudo udevadm trigger --subsystem-match=tty
+sudo udevadm settle        # trigger only queues; settle waits for it
 ls -l /dev/flatsat-nrst          # -> ttyACM<something>; the number varies
 ```
 
@@ -814,6 +849,31 @@ because the firmware doesn't use it.
   A reset keeps the backup SRAM, so the board doesn't go back to deploy
   mode. (Deploy mode isn't silent: the console still shows `alive` every
   10 s.)
+- **`Device open failure: Value or file not found`**, usually with the
+  console showing nothing and the check reporting it never saw the boot
+  lines: the device in that connector does not exist. For the console,
+  the usual cause is the ST-LINK's USB stack wedging — it enumerates far
+  enough for `lsusb` and the debug interface, so OpenOCD keeps working
+  and `/dev/stlink` resolves, but the CDC function never comes up and no
+  `ttyACM` appears for it.
+
+  **The board tells you before any command does.** LD1, the tricolour LED
+  by the USB socket, blinks red/green in normal operation. Solid red with
+  no blink is this failure. (The other LED solid red is just power.)
+
+  Power-cycle the port. The Nucleo hangs off the one hub on this box
+  whose per-port power switching actually works — most hubs claim the
+  capability and do nothing:
+
+  ```sh
+  sudo uhubctl -l 3-4 -p 1 -a cycle
+  sleep 3
+  ls -l /dev/serial/by-id/      # the ST-LINK line is back
+  sudo systemctl restart ser2net
+  ```
+
+  ser2net opens connectors by path, so it needs the restart. OpenOCD does
+  not: `BindsTo=dev-stlink.device` restarts it with the probe.
 - **`Device open failure: Permission denied`**: ser2net can't open that
   serial port. Check what the running service actually has, not what the
   drop-in was meant to say — the two can differ, and then one port works
