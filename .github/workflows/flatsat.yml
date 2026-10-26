@@ -120,18 +120,71 @@ jobs:
 
       # Watch the console from before the board resets, so the boot is
       # seen; then load the firmware, which starts it.
+      #
+      # On failure, pull NRST through the flatsat controller and try once
+      # more. A board wedged by the PREVIOUS run's firmware - a hard fault
+      # with the debug interface unresponsive, a watchdog loop that
+      # re-enters before OpenOCD can halt it - fails this step and then
+      # every later run, until someone walks over. NRST is the bigger
+      # hammer than `monitor reset halt`, which `flash` already does.
+      #
+      # A retry that works is NOT a quiet pass: it means the board needed
+      # rescuing, and a board needing that often is a board to look at. It
+      # annotates the run and writes to the summary.
       - name: Flash and watch the boot
         working-directory: silversat-fsw
         run: |
-          python tools/flatsat.py --host flatsat console --seconds 45 \
-            --expect 'SilverSat FSW starting' \
-            --expect '<inf> health: boot' \
-            --forbid 'FATAL ERROR' --forbid 'FAULT' --forbid ' LOW,' \
-            > ../console.log 2>&1 &
-          watcher=$!
-          sleep 2
-          python tools/flatsat.py --host flatsat flash --gdb gdb-multiarch --elf ../fw/zephyr.elf
-          wait "$watcher"
+          attempt() {
+            local log="../console-$1.log" watcher flashed=0 watched=0
+            python tools/flatsat.py --host flatsat console --seconds 45 \
+              --expect 'SilverSat FSW starting' \
+              --expect '<inf> health: boot' \
+              --forbid 'FATAL ERROR' --forbid 'FAULT' --forbid ' LOW,' \
+              > "$log" 2>&1 &
+            watcher=$!
+            sleep 2
+            python tools/flatsat.py --host flatsat flash \
+              --gdb gdb-multiarch --elf ../fw/zephyr.elf || flashed=$?
+            # Wait either way, so the log is complete before we read it.
+            wait "$watcher" || watched=$?
+            [ "$flashed" -eq 0 ] && [ "$watched" -eq 0 ]
+          }
+
+          if attempt 1; then
+            cp ../console-1.log ../console.log
+            exit 0
+          fi
+
+          echo "::warning::The board did not come up. Pulling NRST and retrying once."
+          # Longer than the 0.1 s default: this board is already unhappy.
+          python tools/flatsat.py --host flatsat reset --hold 0.5 || true
+          sleep 3
+
+          attempt 2 && passed=true || passed=false
+          cat ../console-1.log ../console-2.log > ../console.log
+
+          if [ "$passed" = true ]; then
+            echo "::warning::The board passed only after a reset. If this keeps happening, something on the rig needs attention."
+            {
+              echo '### The flatsat needed a reset'
+              echo
+              echo 'The first attempt failed; the board passed after NRST was'
+              echo 'pulled. The run is green, but the hardware is not happy.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit 1
+
+      # Never hand the next run a board held in reset. The controller's own
+      # 30 s hold timeout would release it anyway, but a run that died
+      # mid-pulse should not cost the next one a confusing failure. This
+      # releases rather than resets: a failed run's board is evidence, and
+      # rebooting it throws that away.
+      - name: Leave NRST released
+        if: always()
+        continue-on-error: true
+        working-directory: silversat-fsw
+        run: python tools/flatsat.py --host flatsat reset release
 
       - name: Upload hardware logs
         if: always()
