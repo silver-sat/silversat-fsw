@@ -325,6 +325,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", \
 EOF
 sudo udevadm control --reload
 sudo udevadm trigger --subsystem-match=tty
+sudo udevadm settle        # trigger only queues; settle waits for it
 ls -l /dev/flatsat-console
 ```
 
@@ -470,6 +471,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", \
 EOF
 sudo udevadm control --reload
 sudo udevadm trigger --subsystem-match=tty
+sudo udevadm settle        # trigger only queues; settle waits for it
 ls -l /dev/flatsat-nrst          # -> ttyACM<something>; the number varies
 ```
 
