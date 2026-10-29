@@ -42,7 +42,7 @@ CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config
 	{ echo 'No $(BOARD) firmware in $(BUILD_DIR): run `make build` first.'; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset debug clean deploy-controller
+.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset bootlog debug clean deploy-controller
 
 help:  ## Show this list
 	@echo ''
@@ -96,6 +96,9 @@ console:  ## Show the flatsat's console (Ctrl-C to stop)
 
 reset:  ## Reset the flatsat's board (for when it stops answering)
 	python3 tools/flatsat.py --host $(FLATSAT_HOST) reset --port $(RESET_PORT)
+
+bootlog:  ## Show the flatsat's last 16 boots and why each happened
+	python3 tools/flatsat.py --host $(FLATSAT_HOST) bootlog --gdb $(GDB) --port $(GDB_PORT)
 
 debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
 	@$(CHECK_FIRMWARE)
