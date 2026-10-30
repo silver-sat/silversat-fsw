@@ -107,5 +107,5 @@ debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
 clean:  ## Delete build output
 	rm -rf $(BUILD_DIR) twister-out twister-out.*
 
-deploy-controller:  ## Copy the flatsat controller firmware to the QT Py
+deploy-controller:  ## Copy the flatsat controller firmware to its board (the Pico)
 	flatsat/deploy.sh
