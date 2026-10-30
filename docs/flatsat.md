@@ -108,8 +108,9 @@ done from a distance:
 
 - **A reset:** `make reset` (the reset controller, below), or `make flash`.
 - **A power cycle**, which clears the backup SRAM (boot 1, deploy mode): a
-  mentor on the box, with `sudo uhubctl -l 3-4 -p 1 -a cycle` (the Nucleo's
-  port; see "Reset controller"). Unplugging the board does the same.
+  mentor on the box, with `sudo uhubctl -l 3-4 -p 1 -a cycle -d 5` (the
+  Nucleo's port; see "Reset controller"). Unplugging the board does the
+  same.
 
 ## Setting it up
 
@@ -358,7 +359,7 @@ power-cycle the board and check the name comes back, whatever `ttyACM`
 number it lands on:
 
 ```sh
-sudo uhubctl -l 3-4 -p 1 -a cycle
+sudo uhubctl -l 3-4 -p 1 -a cycle -d 5
 sleep 3
 ls -l /dev/flatsat-console /dev/flatsat-nrst
 sudo systemctl restart ser2net
@@ -436,11 +437,19 @@ make reset   FLATSAT_HOST=flatsat   # the board reboots, and says so
 
 Most hubs report per-port power switching to `uhubctl` but don't actually
 cut the port's power (VBUS). The Nucleo hangs off the one hub on this box
-that does, hub 3-4 port 1: `sudo uhubctl -l 3-4 -p 1 -a cycle` really
+that does, hub 3-4 port 1: `sudo uhubctl -l 3-4 -p 1 -a cycle -d 5` really
 power-cycles it (checked with a USB lamp, 2026-10-29). Check any other hub
 the same way before trusting it. A power cycle clears the backup SRAM,
 though, so for an ordinary reset the rig pulls NRST low instead, which
 keeps it.
+
+`-d 5` keeps the port off for 5 seconds. The Nucleo's capacitors keep the
+chip powered for a moment after the port goes off, and the point of a
+power cycle is usually to clear the backup SRAM, so give it time. Use
+`cycle` rather than `-a off` then `-a on`: it always ends with the port on,
+so a script or SSH session that dies halfway can't leave the board off.
+(Run them separately only to do something while the board is off, and run
+`-a on` straight after.)
 
 An Adafruit QT Py M0 running CircuitPython does that job today. It is a
 stand-in for the student-built flatsat controller board, and it speaks the
@@ -934,7 +943,7 @@ because the firmware doesn't use it.
   capability and do nothing:
 
   ```sh
-  sudo uhubctl -l 3-4 -p 1 -a cycle
+  sudo uhubctl -l 3-4 -p 1 -a cycle -d 5
   sleep 3
   ls -l /dev/serial/by-id/      # the ST-LINK line is back
   sudo systemctl restart ser2net
