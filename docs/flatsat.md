@@ -528,7 +528,7 @@ sudo tee /etc/udev/rules.d/71-flatsat-nrst.rules <<'EOF'
 # which is unique, so a second CircuitPython board on the bench cannot
 # claim the name.
 SUBSYSTEM=="tty", \
-  ATTRS{serial}=="<the Pico's serial>", \
+  ATTRS{serial}=="E6609CB2D3123729", \
   ENV{ID_USB_INTERFACE_NUM}=="02", \
   GROUP="dialout", MODE="0660", SYMLINK+="flatsat-nrst"
 EOF
@@ -538,9 +538,10 @@ sudo udevadm settle        # trigger only queues; settle waits for it
 ls -l /dev/flatsat-nrst          # -> ttyACM<something>; the number varies
 ```
 
-Put your board's serial in: `udevadm info -q property -n
-/dev/ttyACM<n> | grep -E 'ID_SERIAL_SHORT|ID_USB_INTERFACE_NUM'` on the
-data port.
+That's our Pico's serial. CircuitPython uses the board's UID, the `UID:`
+line in `boot_out.txt` on the CIRCUITPY drive. For another board, check
+with `udevadm info -q property -n /dev/ttyACM<n> | grep -E
+'ID_SERIAL_SHORT|ID_USB_INTERFACE_NUM'` on its data port.
 
 Deploying firmware needs the CIRCUITPY volume mounted somewhere predictable
 without a password prompt:
