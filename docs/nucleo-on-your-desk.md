@@ -144,7 +144,9 @@ converter (never 5 V). These steps use Adafruit's FT232H breakout.
 
 **Wire it.** On the Nucleo the radio UART's pins are labelled with their
 Arduino names, **D8** (PA9, the F446 transmits) and **D2** (PA10, the F446
-receives); not D0 and D1, which belong to the console.
+receives); not D0 and D1, which belong to the console. ("Arduino" is ST's
+name for the Nucleo's short headers, laid out like an Arduino Uno's so
+add-on boards fit; we use their pin names, not Arduino software.)
 
 | FT232H | Nucleo |
 |---|---|

@@ -207,6 +207,13 @@ Ubuntu 24.04 or later. Plug the Nucleo into it by its own USB connector,
 and the FT232H by USB, wired to the Nucleo as in docs/nucleo-on-your-desk.md
 (FT232H D0 to Nucleo D2, D1 to D8, GND to GND).
 
+Pin names like D2, D9 or A0, and "the Arduino power header" (3V3, 5V,
+GND, RESET), refer to the Nucleo's Arduino headers: the short sockets laid
+out like an Arduino Uno's, so Arduino add-on boards fit. That's ST's name
+for them (UM1724), and Zephyr's. We use only their layout and pin names,
+not Arduino software. The long double rows along both edges are the ST
+morpho headers, which bring out every pin of the chip.
+
 **The FRAM** (DS-70) is an Adafruit breakout with an 8 KB Fujitsu
 MB85RS64V, on the Nucleo's SPI1. It's a part for testing; the flight part
 is still to be chosen. The firmware expects it here
