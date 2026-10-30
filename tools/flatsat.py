@@ -27,6 +27,13 @@ The radio UART is read by sim/radio_sim.py --port tcp://flatsat:4001.
 
 pulses the board's NRST line through the flatsat controller (`make reset`),
 which is how a wedged board is recovered without anyone walking over to it.
+
+    python3 tools/flatsat.py bootlog
+
+reads the board's last 16 boots from its mirror, through GDB (`make
+bootlog`): each boot's reset cause and how long the run before it lasted.
+It needs no telemetry, so it works in deploy mode, and it reads the board
+as it is, before a power-off clears the mirror.
 """
 
 import argparse
@@ -46,6 +53,15 @@ REPLY_TIMEOUT_S = 2.0
 # Long enough for the STM32 to see it (the datasheet wants microseconds),
 # short enough that a test loop doesn't crawl.
 HOLD_S = 0.1
+
+# The mirror is the STM32F446's backup SRAM (app/boards/nucleo_f446re.overlay,
+# DS-75); messages/nvm_map.yaml gives its size and layout.
+MIRROR_ADDRESS = 0x40024000
+
+# Zephyr's hwinfo reset cause flags (zephyr/drivers/hwinfo.h), bit 0 first.
+RESET_CAUSES = ["pin", "software", "brownout", "power-on", "watchdog", "debug",
+                "security", "low-power wake", "CPU lockup", "parity", "PLL",
+                "clock", "hardware", "user", "temperature", "bootloader", "flash"]
 
 
 class ControllerError(Exception):
@@ -235,6 +251,82 @@ def reset(host, port, action, hold):
     return 0
 
 
+def reset_cause_names(flags):
+    """Zephyr's reset cause flags as words. An STM32 sets pin, brownout and
+    power-on together at power-up."""
+    names = [name for bit, name in enumerate(RESET_CAUSES) if flags & (1 << bit)]
+    unknown = flags & ~((1 << len(RESET_CAUSES)) - 1)
+    if unknown:
+        names.append(f"0x{unknown:x}")
+    return ", ".join(names) if names else "none"
+
+
+def bootlog_gdb_commands(host, port, path, size):
+    """GDB, in batch mode: copy the mirror to path. Attaching halts the
+    board for a moment; detaching starts it again (the box's OpenOCD
+    resumes it when GDB lets go)."""
+    return ["-batch",
+            "-ex", f"target extended-remote {host}:{port}",
+            "-ex", f"dump binary memory {path} 0x{MIRROR_ADDRESS:08x} "
+                   f"0x{MIRROR_ADDRESS + size:08x}",
+            "-ex", "detach"]
+
+
+def boot_log_lines(records):
+    """What a decoded mirror says about the board's boots, as lines."""
+    lines = []
+    checkpoint = records.get("run_checkpoint", {}).get("fields")
+    if checkpoint is None:
+        lines.append("no run checkpoint: the mirror is blank or unreadable")
+    else:
+        lines.append(f"boot {checkpoint['boot_number']}: up {checkpoint['uptime_ms'] / 1000:.0f} s, "
+                     f"MET {checkpoint['met_ms'] / 1000:.0f} s at the last checkpoint")
+    entries = records.get("boot_log", {}).get("entries", [])
+    for entry in entries:
+        fields = entry["fields"]
+        line = (f"boot {entry['number']}: reset by {reset_cause_names(fields['reset_cause'])}; "
+                f"the run before lasted {fields['previous_run_ms'] / 1000:.0f} s")
+        if fields["reset_app"]:
+            line += f"; reset for app {fields['reset_app']}'s stall"
+        lines.append(line)
+    return lines
+
+
+def bootlog(gdb, host, port):
+    ok, why = reachable(host, port)
+    if not ok:
+        print(f"flatsat: {why}", file=sys.stderr)
+        return 1
+    # The decoder reads the message YAML, which needs PyYAML; only this
+    # command does, so the others stay standard-library only, as CI uses them.
+    import tempfile
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nvm_dump
+    import telemetry
+
+    dictionary = telemetry.load_dictionary()
+    size = dictionary["nvm"]["mirror_size"]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "mirror.bin"
+        result = subprocess.run([gdb] + bootlog_gdb_commands(host, port, path, size),
+                                capture_output=True, text=True)
+        if result.returncode != 0 or not path.exists():
+            print(f"flatsat: GDB couldn't read the mirror:\n{result.stderr.strip()}",
+                  file=sys.stderr)
+            return 1
+        image = path.read_bytes()
+    if not any(image):
+        # A running board's mirror is never all zeros; a board held in
+        # reset reads as zeros (docs/flatsat.md, "When something's wrong").
+        print("flatsat: the mirror read as all zeros: is the board held in reset? "
+              "In `make debug`, `monitor targets` says", file=sys.stderr)
+        return 1
+    for line in boot_log_lines(nvm_dump.decode_image(dictionary, image, "mirror")):
+        print(line)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Use the flatsat over the network.")
     parser.add_argument("--host", default="flatsat", help="the flatsat box (default flatsat)")
@@ -263,7 +355,13 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=RESET_PORT,
                    help=f"controller port (default {RESET_PORT})")
 
+    p = commands.add_parser("bootlog", help="read the board's last boots from its mirror")
+    p.add_argument("--gdb", default="arm-zephyr-eabi-gdb", help="the GDB to use")
+    p.add_argument("--port", type=int, default=GDB_PORT, help=f"GDB port (default {GDB_PORT})")
+
     args = parser.parse_args(argv)
+    if args.command == "bootlog":
+        return bootlog(args.gdb, args.host, args.port)
     if args.command == "flash":
         return flash(args.gdb, args.host, args.port, args.elf)
     if args.command == "reset":

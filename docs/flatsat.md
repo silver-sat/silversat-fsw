@@ -54,7 +54,27 @@ make build                  # the Nucleo firmware, in build/
 make flash                  # load it onto the flatsat and start it
 make console                # watch the console
 make debug                  # or debug it in GDB: break, continue, step...
+make reset                  # reset the board (through the reset controller)
+make bootlog                # its last 16 boots, and why each happened
 ```
+
+`make bootlog` reads the boot log the board keeps in its mirror (the
+backup SRAM, DS-75), through GDB, so it works in any mode, deploy mode
+included:
+
+```
+boot 30: up 421 s, MET 487 s at the last checkpoint
+boot 15: reset by watchdog; the run before lasted 900 s; reset for app 3's stall
+boot 29: reset by pin, brownout, power-on; the run before lasted 0 s
+boot 30: reset by pin; the run before lasted 2 s
+```
+
+The first line is now; the rest are the last 16 boots, oldest first. "pin,
+brownout, power-on" together is a power-up; "pin" alone is NRST (the reset
+button, `make reset`, `make flash`, or OpenOCD starting); "watchdog" is
+health's watchdog (DS-43). Run it as soon as a boot count looks wrong: a
+power-off clears the mirror, and the log with it. Attaching pauses the
+board for a moment.
 
 To talk to the board over the radio link, as the ground would (signed
 commands up, telemetry and events down):
@@ -82,13 +102,15 @@ running.
 
 ### Things that still need hands
 
-Until the box has a USB power switch and a relay on the Nucleo's reset pin
-(DS-04), someone at the box:
+Someone at the box **holds the blue button (B1) through a reset** to boot
+test mode; nothing does that remotely yet (DS-04). Everything else can be
+done from a distance:
 
-- **Holds the blue button (B1) through a reset** to boot test mode, or
-- **Unplugs the board** to clear the backup SRAM (boot 1, deploy mode).
-
-`make flash` resets the board itself, so ordinary loading needs no one.
+- **A reset:** `make reset` (the reset controller, below), or `make flash`.
+- **A power cycle**, which clears the backup SRAM (boot 1, deploy mode): a
+  mentor on the box, with `sudo uhubctl -l 3-4 -p 1 -a cycle -d 5` (the
+  Nucleo's port; see "Reset controller"). Unplugging the board does the
+  same.
 
 ## Setting it up
 
@@ -337,7 +359,7 @@ power-cycle the board and check the name comes back, whatever `ttyACM`
 number it lands on:
 
 ```sh
-sudo uhubctl -l 3-4 -p 1 -a cycle
+sudo uhubctl -l 3-4 -p 1 -a cycle -d 5
 sleep 3
 ls -l /dev/flatsat-console /dev/flatsat-nrst
 sudo systemctl restart ser2net
@@ -413,9 +435,21 @@ make reset   FLATSAT_HOST=flatsat   # the board reboots, and says so
 
 ## Reset controller (Adafruit QT Py)
 
-`uhubctl` reports per-port power switching on this host's hubs but does not
-actually drop VBUS on any of them except, oddly, an Apple keyboard hub. So
-the rig resets the target by pulling NRST low rather than by cutting power.
+Most hubs report per-port power switching to `uhubctl` but don't actually
+cut the port's power (VBUS). The Nucleo hangs off the one hub on this box
+that does, hub 3-4 port 1: `sudo uhubctl -l 3-4 -p 1 -a cycle -d 5` really
+power-cycles it (checked with a USB lamp, 2026-10-29). Check any other hub
+the same way before trusting it. A power cycle clears the backup SRAM,
+though, so for an ordinary reset the rig pulls NRST low instead, which
+keeps it.
+
+`-d 5` keeps the port off for 5 seconds. The Nucleo's capacitors keep the
+chip powered for a moment after the port goes off, and the point of a
+power cycle is usually to clear the backup SRAM, so give it time. Use
+`cycle` rather than `-a off` then `-a on`: it always ends with the port on,
+so a script or SSH session that dies halfway can't leave the board off.
+(Run them separately only to do something while the board is off, and run
+`-a on` straight after.)
 
 An Adafruit QT Py M0 running CircuitPython does that job today. It is a
 stand-in for the student-built flatsat controller board, and it speaks the
@@ -442,6 +476,28 @@ NRST is bidirectional and open-drain. The controller never drives it high;
 it switches the pin between output-low and input-high-Z. That way the
 on-board ST-LINK can still reset the target independently, and a crashed or
 unprogrammed controller leaves the target running rather than held down.
+
+**But an unpowered controller holds the target in reset.** Every
+microcontroller pin has protection diodes to its own supply. With the QT Py
+unpowered, its supply is at 0 V, so the diode on A0 pulls NRST low, and the
+Nucleo stays in reset: `make console` is silent, `monitor targets` in
+`make debug` says `reset`, and `monitor reset run` can't release it. While
+the QT Py's power comes up (plugged in, the box booting), NRST can let go
+and catch again several times, and each release is a boot: a burst of very
+short boots, which health counts as a reset loop. So keep the controller
+powered whenever it's wired to the Nucleo, and plug it in before the
+Nucleo.
+
+A switching transistor removes the problem for any controller: the
+controller's pin drives an N-channel MOSFET (for example a 2N7000, gate to
+the pin through 100 Ω, a 100 kΩ gate pull-down, drain to NRST, source to
+GND) or an NPN transistor (a 2N3904 with 1 kΩ on the base). Unpowered, the
+transistor is off and NRST is free. The logic flips (the pin high asserts
+reset), a two-line change in `flatsat/code.py`. The student-built
+controller board must meet the same rule: **anything wired to NRST must
+leave it alone when unpowered.** Changing the QT Py for another board, a
+Raspberry Pi Pico for its mounting holes, say, doesn't change this; the
+transistor does.
 
 ### Host setup
 
@@ -784,6 +840,10 @@ health's status line appears, with no fault and no stack warning (DS-05).
 
 ## When something's wrong
 
+When the board does something unexpected, run `make bootlog` first, before
+anyone power-cycles it: it says how each recent boot happened, and a
+power-off erases that.
+
 At the box, the Nucleo's LD1 (the red and green LED by the ST-LINK's USB
 connector) gives a quick first look:
 
@@ -841,14 +901,31 @@ because the firmware doesn't use it.
   `make debug`, `monitor targets` shows its state:
   - `halted`: usually a GDB session that ended while it was stopped. Check
     the OpenOCD service has the `gdb-detach` line above.
-  - `reset`: OpenOCD is holding it in reset. That happens after
-    `openocd-flatsat` restarts if the service lacks the `init` and
-    `reset run` at the end of its `ExecStart`.
+  - `reset`: something holds NRST low. Either OpenOCD (after
+    `openocd-flatsat` restarts, if the service lacks the `init` and
+    `reset run` at the end of its `ExecStart`), or the reset controller:
+    `python3 tools/flatsat.py reset status` should say `reset=released`. If it can't reach the controller, the
+    controller is unplugged, unpowered or miswired, and an unpowered
+    controller holds NRST low ("Reset controller", above).
 
-  Either way, `monitor reset run` then `quit` starts it (or `make flash`).
-  A reset keeps the backup SRAM, so the board doesn't go back to deploy
-  mode. (Deploy mode isn't silent: the console still shows `alive` every
-  10 s.)
+  Then `monitor reset run` and `quit` start it (or `make flash`). A reset
+  keeps the backup SRAM, so the board doesn't go back to deploy mode.
+  (Deploy mode isn't silent: the console still shows `alive` every 10 s.)
+- **`short runs 6, stopped 0x80`** in health's status line, and at boot
+  `event: health reset_loop` and `app_stopped app=nvm`: health's
+  reset-loop protection (DS-44). Every run shorter than 10 minutes counts
+  as short; at 3 in a row health asks for safe mode (refused in deploy
+  mode, which is right), and at 6 it stops the apps it can (`stopped` is
+  a bit per app ID; 0x80 is bit 7, nvm, the only one not protected). The
+  flatsat trips it easily: CI runs, `make reset`, `make flash`, OpenOCD
+  restarts and replugs all reset the board. It clears itself: let the
+  board run 10 minutes, and the next boot counts from zero. `make bootlog`
+  shows the resets that tripped it, and why each happened.
+- **The boot count is higher than it should be:** `make bootlog`, before
+  anything else. A burst of boots that lasted seconds each, after the box
+  or the reset controller was plugged in, is the controller's NRST clamp
+  while its power came up ("Reset controller"). A boot count that
+  survived unplugging the board means the board never fully lost power.
 - **`Device open failure: Value or file not found`**, usually with the
   console showing nothing and the check reporting it never saw the boot
   lines: the device in that connector does not exist. For the console,
@@ -866,7 +943,7 @@ because the firmware doesn't use it.
   capability and do nothing:
 
   ```sh
-  sudo uhubctl -l 3-4 -p 1 -a cycle
+  sudo uhubctl -l 3-4 -p 1 -a cycle -d 5
   sleep 3
   ls -l /dev/serial/by-id/      # the ST-LINK line is back
   sudo systemctl restart ser2net

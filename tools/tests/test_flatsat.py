@@ -278,3 +278,90 @@ def test_reset_when_the_box_is_down(capsys):
 
 def _raise_keyboard_interrupt(_seconds):
     raise KeyboardInterrupt
+
+
+# ---- Reading the boot log ------------------------------------------------------
+
+def test_reset_cause_names_reads_zephyrs_flags():
+    # An STM32 power-up sets pin, brownout and power-on together.
+    assert flatsat.reset_cause_names(0b1101) == "pin, brownout, power-on"
+    assert flatsat.reset_cause_names(1 << 4) == "watchdog"
+    assert flatsat.reset_cause_names(0) == "none"
+    assert flatsat.reset_cause_names((1 << 20) | 1) == "pin, 0x100000"
+
+
+def test_bootlog_dumps_the_whole_mirror_and_lets_the_board_go():
+    commands = flatsat.bootlog_gdb_commands("flatsat", 3333, "m.bin", 4096)
+    sequence = [commands[i + 1] for i, c in enumerate(commands) if c == "-ex"]
+    assert sequence == ["target extended-remote flatsat:3333",
+                        "dump binary memory m.bin 0x40024000 0x40025000",
+                        "detach"]
+
+
+def fake_gdb_writing(tmp_path, image):
+    """A stand-in GDB that writes image wherever it's told to dump."""
+    source = tmp_path / "image.bin"
+    source.write_bytes(image)
+    gdb = tmp_path / "gdb"
+    gdb.write_text(f"""#!{sys.executable}
+import shutil, sys
+for arg in sys.argv[1:]:
+    if arg.startswith("dump binary memory "):
+        shutil.copy({str(source)!r}, arg.split()[3])
+""")
+    gdb.chmod(gdb.stat().st_mode | stat.S_IEXEC)
+    return gdb
+
+
+def mirror_image(records):
+    import nvm_dump
+    import telemetry
+    return nvm_dump.build_image(telemetry.load_dictionary(), records, "mirror")
+
+
+def run_bootlog(gdb):
+    port = serve(b"", close=True)
+    return flatsat.main(["--host", "127.0.0.1", "bootlog", "--port", str(port),
+                         "--gdb", str(gdb)])
+
+
+def test_bootlog_prints_each_boot_and_why_it_happened(tmp_path, capsys):
+    image = mirror_image({
+        "run_checkpoint": {"boot_number": 30, "met_ms": 487000, "uptime_ms": 421000},
+        "boot_log": [
+            {"number": 29, "values": {"reset_cause": 0b1101, "previous_run_ms": 0}},
+            {"number": 30, "values": {"reset_cause": 1, "previous_run_ms": 2000}},
+            {"number": 31 - 16, "values": {"reset_cause": 1 << 4, "previous_run_ms": 900000,
+                                           "reset_app": 3}},
+        ],
+    })
+    assert run_bootlog(fake_gdb_writing(tmp_path, image)) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "boot 30: up 421 s, MET 487 s at the last checkpoint"
+    assert "boot 15: reset by watchdog; the run before lasted 900 s; reset for app 3's stall" in out
+    assert "boot 29: reset by pin, brownout, power-on; the run before lasted 0 s" in out
+    assert "boot 30: reset by pin; the run before lasted 2 s" in out
+    # Oldest first, as the ring is read.
+    assert [line.split(":")[0] for line in out[1:]] == ["boot 15", "boot 29", "boot 30"]
+
+
+def test_bootlog_of_a_blank_mirror_says_so(tmp_path, capsys):
+    assert run_bootlog(fake_gdb_writing(tmp_path, mirror_image({}))) == 0
+    assert "no run checkpoint" in capsys.readouterr().out
+
+
+def test_bootlog_of_all_zeros_suggests_the_board_is_held_in_reset(tmp_path, capsys):
+    # What OpenOCD reads from a board held in reset.
+    assert run_bootlog(fake_gdb_writing(tmp_path, bytes(4096))) == 1
+    assert "held in reset" in capsys.readouterr().err
+
+
+def test_bootlog_when_gdb_fails(tmp_path, capsys):
+    assert run_bootlog("false") == 1
+    assert "GDB couldn't read the mirror" in capsys.readouterr().err
+
+
+def test_bootlog_when_the_box_is_down(capsys):
+    assert flatsat.main(["--host", "127.0.0.1", "bootlog", "--port", str(closed_port()),
+                         "--gdb", "false"]) == 1
+    assert "doesn't answer" in capsys.readouterr().err
