@@ -144,7 +144,9 @@ converter (never 5 V). These steps use Adafruit's FT232H breakout.
 
 **Wire it.** On the Nucleo the radio UART's pins are labelled with their
 Arduino names, **D8** (PA9, the F446 transmits) and **D2** (PA10, the F446
-receives); not D0 and D1, which belong to the console.
+receives); not D0 and D1, which belong to the console. ("Arduino" is ST's
+name for the Nucleo's short headers, laid out like an Arduino Uno's so
+add-on boards fit; we use their pin names, not Arduino software.)
 
 | FT232H | Nucleo |
 |---|---|
@@ -215,10 +217,15 @@ and nominal mode, never in deploy mode.
   boot. To start counting again, let one run last 10 minutes; then the
   next boot sees a long run. Or unplug the board, which clears everything
   (see the next point).
-- **No FRAM is fitted yet.** Only the records kept in the mirror (the
-  F446's backup SRAM) survive a reset: the mode, the deployment, the
-  boot count, MET, the boot log, command state. Unplugging the board clears
-  them, so the next boot is boot 1 again, in deploy mode.
+- **No FRAM, unless you fit one.** The firmware expects an FRAM breakout
+  on SPI1, as the flatsat has (docs/flatsat.md, "The box"). Without it,
+  the first write fails its read-back check, and the board carries on
+  without FRAM (DS-75): the nvm app's housekeeping shows
+  `fram_available=False` and one error, which is expected. Then only the
+  records kept in the mirror (the F446's backup SRAM) survive a reset: the
+  mode, the deployment, the boot count, MET, the boot log, command state.
+  Unplugging the board clears them, so the next boot is boot 1 again, in
+  deploy mode.
 - **The watchdog is live** (3 seconds). It pauses while a debugger halts
   the chip, so stepping through code won't reset the board.
 - **Telemetry goes out on the radio UART**, not the console. See below.

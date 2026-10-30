@@ -25,6 +25,7 @@ struct fake_fram_data {
 	bool dropping;
 	bool tearing;
 	size_t keep;
+	size_t reported_size;
 };
 
 static int fake_read(const struct device *dev, off_t offset, void *buf, size_t len)
@@ -64,8 +65,9 @@ static int fake_write(const struct device *dev, off_t offset, const void *buf, s
 
 static size_t fake_size(const struct device *dev)
 {
-	ARG_UNUSED(dev);
-	return FAKE_FRAM_SIZE;
+	struct fake_fram_data *data = dev->data;
+
+	return data->reported_size != 0 ? data->reported_size : FAKE_FRAM_SIZE;
 }
 
 void fake_fram_reset(const struct device *dev)
@@ -91,6 +93,11 @@ void fake_fram_tear_next_write(const struct device *dev, size_t keep)
 void fake_fram_drop_writes(const struct device *dev, bool dropping)
 {
 	((struct fake_fram_data *)dev->data)->dropping = dropping;
+}
+
+void fake_fram_report_size(const struct device *dev, size_t size)
+{
+	((struct fake_fram_data *)dev->data)->reported_size = size;
 }
 
 uint8_t *fake_fram_memory(const struct device *dev)

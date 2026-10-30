@@ -82,8 +82,11 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 
 /*
  * A FRAM write (nvm_write and the driver under it) takes about 800 bytes of
- * stack on the Nucleo, and a log line, formatted on the caller's stack in
- * immediate mode, several hundred more. An app doing either needs room for
+ * stack on the Nucleo with only the mirror, and more through the SPI driver
+ * to a fitted FRAM; a log line, formatted on the caller's stack in
+ * immediate mode, takes several hundred more. Health's boot handling does
+ * FRAM writes on the main thread's stack, before any app starts: that one is
+ * CONFIG_MAIN_STACK_SIZE, in app/prj.conf. An app doing either needs room for
  * it on top of its own frames. native_sim's stacks don't show this: check
  * health's status line (least stack left) on the board after any change
  * that makes an app's calls deeper (DS-44).

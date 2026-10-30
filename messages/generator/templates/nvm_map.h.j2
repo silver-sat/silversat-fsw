@@ -11,13 +11,8 @@
  * nvm/<owner>.h, and that is where the defaults are.
  */
 
+#include "nvm/sizes.h"
 #include "silversat/nvm.h"
-
-/* Bytes of FRAM and of the mirror the map assumes, and uses. */
-#define NVM_FRAM_SIZE {{ nvm.fram_size }}
-#define NVM_FRAM_USED {{ nvm.used }}
-#define NVM_MIRROR_SIZE {{ nvm.mirror_size }}
-#define NVM_MIRROR_USED {{ nvm.mirror_used }}
 
 #define NVM_REGION_COUNT {{ nvm.regions | length }}
 {% if nvm.regions %}

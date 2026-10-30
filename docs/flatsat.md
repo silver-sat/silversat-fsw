@@ -207,6 +207,41 @@ Ubuntu 24.04 or later. Plug the Nucleo into it by its own USB connector,
 and the FT232H by USB, wired to the Nucleo as in docs/nucleo-on-your-desk.md
 (FT232H D0 to Nucleo D2, D1 to D8, GND to GND).
 
+Pin names like D2, D9 or A0, and "the Arduino power header" (3V3, 5V,
+GND, RESET), refer to the Nucleo's Arduino headers: the short sockets laid
+out like an Arduino Uno's, so Arduino add-on boards fit. That's ST's name
+for them (UM1724), and Zephyr's. We use only their layout and pin names,
+not Arduino software. The long double rows along both edges are the ST
+morpho headers, which bring out every pin of the chip.
+
+**The FRAM** (DS-70) is an Adafruit breakout with an 8 KB Fujitsu
+MB85RS64V, on the Nucleo's SPI1. It's a part for testing; the flight part
+is still to be chosen. The firmware expects it here
+(`app/boards/nucleo_f446re.overlay`):
+
+| Breakout | Nucleo-F446RE |
+|---|---|
+| VCC | 3V3, on the Arduino power header |
+| GND | GND, on the Arduino power header |
+| SCK | D13 (PA5) |
+| MISO | D12 (PA6) |
+| MOSI | D11 (PA7) |
+| CS | D9 (PC7) |
+| WP, HOLD | unconnected (the breakout pulls them high) |
+
+Go by the pin names printed beside the headers: the connector numbers
+(CN5 to CN10) differ between board revisions. D10 is kept for the
+magnetometer's chip select. D13 is also the green user
+LED (LD2), so it flickers when the FRAM is used. The map needs 784 bytes;
+a part smaller than that is left unused.
+
+To check it, the nvm app's housekeeping (in telemetry,
+`python3 sim/radio_sim.py --port tcp://flatsat:4001 --listen`) should
+show `fram_available=True` and `errors=0`. The real test is a power cycle
+(`sudo uhubctl -l 3-4 -p 1 -a cycle -d 5` on the box): with the FRAM
+working, the board comes back in safe mode at the next boot number, not
+in deploy mode at boot 1.
+
 **Name it** `flatsat`, the name everything else uses:
 
 ```sh
@@ -468,9 +503,9 @@ transistor pulls NRST low:
 |------|----|-------|
 | Pico GP15 (pin 20) | 4.7 kΩ, then the transistor's base | Two 10 kΩ in parallel, or one 10 kΩ, also work. |
 | Transistor base | 100 kΩ, then GND | Keeps the transistor off while the Pico boots and its pin floats. |
-| Transistor emitter | `GND` on CN6 | |
-| Transistor collector | `RESET` on CN6, the Arduino power header | |
-| Pico GND (pin 18) | `GND` on CN6 | Run a real wire. Do not rely on a shared ground through the host's USB. |
+| Transistor emitter | `GND` on the Arduino power header | |
+| Transistor collector | `RESET` on the Arduino power header | |
+| Pico GND (pin 18) | `GND` on the Arduino power header | Run a real wire. Do not rely on a shared ground through the host's USB. |
 
 Check the transistor's pins before fitting it; TO-92 parts differ. Our
 MPS2222A, flat face toward you and legs down, is emitter, base, collector,
@@ -482,8 +517,8 @@ Pico pin high turns the transistor on, which pulls NRST low: the target is
 held in reset. Pin low turns it off, and NRST goes back to the target's
 own pull-up. `flatsat/code.py` keeps the pin low unless told otherwise.
 
-**Count by the silkscreen, not by the end of the connector.** CN6's first
-hole carries no label, so counting from the edge puts you one pin off
+**Count by the silkscreen, not by the end of the connector.** The power
+header's first hole carries no label, so counting from the edge puts you one pin off
 `RESET` — and the failure is silent: a released line reads 3.3 V whether or
 not anything is connected, because that is the STM32's own 40 kΩ internal
 pull-up. Confirm with a continuity check between the collector and the pin
@@ -899,6 +934,14 @@ because the firmware doesn't use it.
   unplugged; plug it in, and check `systemctl status dev-stlink.device`
   says `plugged`. If it's plugged and OpenOCD still isn't running,
   `journalctl -u openocd-flatsat -n 40` says why.
+- **`openocd-flatsat` failed with `core-dump` (`SEGV`)**, after
+  `libusb_open() failed with LIBUSB_ERROR_ACCESS`: the ST-LINK dropped off
+  USB while OpenOCD was starting, and OpenOCD crashed on the way out. The
+  service stays failed even after the ST-LINK comes back. If LD1 blinks
+  red without settling, the ST-LINK keeps resetting: look for a short or
+  overload on the board's 3.3 V (a wiring mistake on something just added
+  is the usual cause), then power-cycle the port. Once LD1 flashes red and
+  green, `sudo systemctl restart openocd-flatsat ser2net`.
 - **`SRST error`, `read_memory ... failed`, or `Error erasing flash`** from
   `make flash` or CI, and `monitor targets` shows `running` even after
   attaching: OpenOCD has lost its ST-LINK, usually because the Nucleo was
@@ -948,6 +991,13 @@ because the firmware doesn't use it.
   restarts and replugs all reset the board. It clears itself: let the
   board run 10 minutes, and the next boot counts from zero. `make bootlog`
   shows the resets that tripped it, and why each happened.
+- **`fram_available=False`** in the nvm app's housekeeping on the
+  flatsat: the FRAM service found no working FRAM at boot, or a write to
+  it didn't read back, and it's running on the backup SRAM alone (DS-75).
+  Check the breakout's wiring (above, "The box"), then send `nvm retry`
+  (`python3 sim/radio_sim.py --port tcp://flatsat:4001 --listen nvm
+  retry`), or reset the board. On a Nucleo without the breakout, this, and
+  one error, is expected.
 - **The boot count is higher than it should be:** `make bootlog`, before
   anything else. A burst of boots that lasted seconds each, after the box
   or the reset controller was plugged in, points at the controller's

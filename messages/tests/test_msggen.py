@@ -169,6 +169,7 @@ def test_outputs_one_header_and_one_source_per_app(tmp_path):
         "include/nvm/map.h",
         "include/nvm/quiet.h",
         "include/nvm/sensor.h",
+        "include/nvm/sizes.h",
         "src/cmd_routes.c",
         "src/msg_quiet.c",
         "src/msg_sensor.c",
@@ -1216,9 +1217,20 @@ def test_flight_boot_log_is_a_mirrored_ring():
 def test_nvm_map_header(tmp_path):
     out = generate(write_defs(tmp_path, nvm=mirrored_nvm()))["include/nvm/map.h"]
     assert "#define NVM_REGION_COUNT 2" in out
-    assert "#define NVM_FRAM_SIZE 1024" in out and "#define NVM_MIRROR_SIZE 4096" in out
+    assert '#include "nvm/sizes.h"' in out
     assert '.name = "sensor_count",' in out and ".mirror_address = 0x0000," in out
     assert "_defaults" not in out, "read-only places only; the defaults stay with the owner"
+
+
+def test_nvm_sizes_header(tmp_path):
+    # The sizes alone, for the FRAM service; no regions, so it can't see them.
+    defs = write_defs(tmp_path, nvm=mirrored_nvm())
+    out = generate(defs)["include/nvm/sizes.h"]
+    nvm = msggen.load_definitions(defs).nvm
+    assert "#define NVM_FRAM_SIZE 1024" in out and "#define NVM_MIRROR_SIZE 4096" in out
+    assert f"#define NVM_FRAM_USED {nvm.used}" in out
+    assert f"#define NVM_MIRROR_USED {nvm.mirror_used}" in out
+    assert "nvm_region" not in out
 
 
 def test_nvm_map_header_without_a_map(tmp_path):
