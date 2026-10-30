@@ -214,15 +214,17 @@ is still to be chosen. The firmware expects it here
 
 | Breakout | Nucleo-F446RE |
 |---|---|
-| VCC | 3V3 (CN6) |
-| GND | GND (CN6) |
+| VCC | 3V3, on the Arduino power header |
+| GND | GND, on the Arduino power header |
 | SCK | D13 (PA5) |
 | MISO | D12 (PA6) |
 | MOSI | D11 (PA7) |
 | CS | D9 (PC7) |
 | WP, HOLD | unconnected (the breakout pulls them high) |
 
-D10 is kept for the magnetometer's chip select. D13 is also the green user
+Go by the pin names printed beside the headers: the connector numbers
+(CN5 to CN10) differ between board revisions. D10 is kept for the
+magnetometer's chip select. D13 is also the green user
 LED (LD2), so it flickers when the FRAM is used. The map needs 784 bytes;
 a part smaller than that is left unused.
 
@@ -494,9 +496,9 @@ transistor pulls NRST low:
 |------|----|-------|
 | Pico GP15 (pin 20) | 4.7 kΩ, then the transistor's base | Two 10 kΩ in parallel, or one 10 kΩ, also work. |
 | Transistor base | 100 kΩ, then GND | Keeps the transistor off while the Pico boots and its pin floats. |
-| Transistor emitter | `GND` on CN6 | |
-| Transistor collector | `RESET` on CN6, the Arduino power header | |
-| Pico GND (pin 18) | `GND` on CN6 | Run a real wire. Do not rely on a shared ground through the host's USB. |
+| Transistor emitter | `GND` on the Arduino power header | |
+| Transistor collector | `RESET` on the Arduino power header | |
+| Pico GND (pin 18) | `GND` on the Arduino power header | Run a real wire. Do not rely on a shared ground through the host's USB. |
 
 Check the transistor's pins before fitting it; TO-92 parts differ. Our
 MPS2222A, flat face toward you and legs down, is emitter, base, collector,
@@ -508,8 +510,8 @@ Pico pin high turns the transistor on, which pulls NRST low: the target is
 held in reset. Pin low turns it off, and NRST goes back to the target's
 own pull-up. `flatsat/code.py` keeps the pin low unless told otherwise.
 
-**Count by the silkscreen, not by the end of the connector.** CN6's first
-hole carries no label, so counting from the edge puts you one pin off
+**Count by the silkscreen, not by the end of the connector.** The power
+header's first hole carries no label, so counting from the edge puts you one pin off
 `RESET` — and the failure is silent: a released line reads 3.3 V whether or
 not anything is connected, because that is the STM32's own 40 kΩ internal
 pull-up. Confirm with a continuity check between the collector and the pin
@@ -925,6 +927,14 @@ because the firmware doesn't use it.
   unplugged; plug it in, and check `systemctl status dev-stlink.device`
   says `plugged`. If it's plugged and OpenOCD still isn't running,
   `journalctl -u openocd-flatsat -n 40` says why.
+- **`openocd-flatsat` failed with `core-dump` (`SEGV`)**, after
+  `libusb_open() failed with LIBUSB_ERROR_ACCESS`: the ST-LINK dropped off
+  USB while OpenOCD was starting, and OpenOCD crashed on the way out. The
+  service stays failed even after the ST-LINK comes back. If LD1 blinks
+  red without settling, the ST-LINK keeps resetting: look for a short or
+  overload on the board's 3.3 V (a wiring mistake on something just added
+  is the usual cause), then power-cycle the port. Once LD1 flashes red and
+  green, `sudo systemctl restart openocd-flatsat ser2net`.
 - **`SRST error`, `read_memory ... failed`, or `Error erasing flash`** from
   `make flash` or CI, and `monitor targets` shows `running` even after
   attaching: OpenOCD has lost its ST-LINK, usually because the Nucleo was
