@@ -30,6 +30,8 @@ import usb_cdc
 
 NRST_PIN = board.GP15          # Pico pin 20; ground is pin 18
 HOLD_TIMEOUT = 30.0            # bench safety: never hold reset forever
+# Change VERSION whenever this file changes: `make reset` compares it with
+# the repository's copy, and warns when the board runs something else.
 VERSION = b"flatsat-nrst 0.3"
 
 serial = usb_cdc.data

@@ -43,12 +43,26 @@ rm -f "$MOUNT"/._*
 
 cp "$HERE/boot.py" "$HERE/code.py" "$MOUNT/"
 
+# Say what was deployed, and from where. A clone on an old branch deploys
+# old firmware without complaint; `make reset` warns later if the board's
+# version differs from the Codespace's, but this is the place to catch it.
+VERSION=$(sed -n 's/^VERSION = b"\(.*\)".*/\1/p' "$HERE/code.py")
+BRANCH=$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo "?")
+
 # FAT on a microcontroller needs the flush, or CircuitPython can start
 # reloading a half-written file.
 sync
 
 echo
-echo "  Copied to $MOUNT"
+echo "  Copied $VERSION to $MOUNT, from $BRANCH at $COMMIT."
+if [ "$BRANCH" != main ]; then
+    echo "  Not main: once that branch merges, check out main, git pull, and"
+    echo "  deploy again."
+fi
+if ! git -C "$HERE" diff --quiet HEAD -- . 2>/dev/null; then
+    echo "  The flatsat/ files have uncommitted changes."
+fi
 echo "  code.py auto-reloads on its own."
 echo "  If boot.py changed, unplug the Pico and plug it back in (it has no"
 echo "  reset button) - USB descriptors only change on a hard reset."

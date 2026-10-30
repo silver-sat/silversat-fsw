@@ -558,6 +558,13 @@ Then:
 flatsat/deploy.sh
 ```
 
+It says which firmware version it copied, and from which branch and
+commit, and warns when that isn't `main`. Deploy from an up-to-date clone:
+the box's copy of this repository falls behind easily. `make reset` checks
+too: it warns when the controller reports a different version from the
+`flatsat/code.py` in the checkout it runs from. So change `VERSION` in
+`code.py` whenever the file changes.
+
 If `boot.py` changed, unplug the Pico and plug it back in afterwards (it
 has no reset button). USB descriptors are only rebuilt on a hard reset, and
 `boot.py` is what enables the second CDC port. Replugging the Pico doesn't
