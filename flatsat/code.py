@@ -1,27 +1,38 @@
 # SilverSat flatsat NRST controller - CircuitPython prototype.
 #
-# Drives the target's NRST line as an open-drain output, emulated by
-# switching pin direction: INPUT (high-Z) = released, OUTPUT LOW = asserted.
-# The pin is never driven high, so it can never fight the target's own
-# internal reset, and an unprogrammed or crashed board leaves the target
-# running.
+# Runs on a Raspberry Pi Pico. NRST_PIN drives an NPN transistor (MPS2222A
+# or 2N3904) whose collector is on the target's NRST and whose emitter is
+# on ground (docs/flatsat.md, "Reset controller"):
+#
+#   pin high -> transistor on  -> NRST pulled low  -> target held in reset
+#   pin low  -> transistor off -> NRST left alone  -> target runs
+#
+# The transistor is there for when this board has no power. A pin wired
+# straight to NRST pulls it low through the pin's protection diode whenever
+# the controller is unpowered, holding the target in reset; with the
+# transistor, an unpowered, unprogrammed or crashed controller leaves the
+# target running. A 100 kOhm resistor from base to ground keeps the
+# transistor off while this board boots and its pin floats.
 #
 # The command vocabulary matches the flatsat controller specification, so
 # the host script does not change when the student-built board replaces
 # this one.
 #
-# Note on portability: CircuitPython on the SAMD21 (QT Py M0) has no
-# bytes.decode(), so everything here stays in bytes and compares against
-# byte literals. Do not add .decode() to this file without checking.
+# Note on portability: CircuitPython on the SAMD21 (the QT Py M0 this
+# replaced) has no bytes.decode(), so everything here stays in bytes and
+# compares against byte literals. Keep it that way, so the file runs on
+# either board.
 
 import board
 import digitalio
 import time
 import usb_cdc
 
-NRST_PIN = board.A0
+NRST_PIN = board.GP15          # Pico pin 20; ground is pin 18
 HOLD_TIMEOUT = 30.0            # bench safety: never hold reset forever
-VERSION = b"flatsat-nrst 0.2"
+# Change VERSION whenever this file changes: `make reset` compares it with
+# the repository's copy, and warns when the board runs something else.
+VERSION = b"flatsat-nrst 0.3"
 
 serial = usb_cdc.data
 if serial is None:
@@ -30,22 +41,22 @@ if serial is None:
         "Hard-reset the board; saving the file is not enough."
     )
 
+# Released from the start: the pin low keeps the transistor off.
 nrst = digitalio.DigitalInOut(NRST_PIN)
-nrst.direction = digitalio.Direction.INPUT     # high-Z == released
-nrst.pull = None
+nrst.switch_to_output(value=False)
 
 asserted_at = None
 
 
 def assert_reset():
     global asserted_at
-    nrst.switch_to_output(value=False)   # direction and level together
+    nrst.value = True          # transistor on: NRST low
     asserted_at = time.monotonic()
 
 
 def release_reset():
     global asserted_at
-    nrst.switch_to_input(pull=None)      # high-Z
+    nrst.value = False         # transistor off: NRST back to its pull-up
     asserted_at = None
 
 

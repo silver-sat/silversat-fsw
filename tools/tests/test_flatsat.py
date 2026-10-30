@@ -214,26 +214,26 @@ def test_reset_pulses_nrst():
     # The controller has no pulse command: setting state twice is the pulse.
     port, log = controller()
     assert run_reset(port, "--hold", "0.05") == 0
-    assert log == ["set_reset asserted", "set_reset released"]
+    assert log == ["set_reset asserted", "set_reset released", "version"]
 
 
 def test_reset_can_assert_without_releasing():
     # For holding a board down while something else is rewired.
     port, log = controller()
     assert run_reset(port, "assert") == 0
-    assert log == ["set_reset asserted"]
+    assert log == ["set_reset asserted", "version"]
 
 
 def test_reset_can_release_on_its_own():
     port, log = controller()
     assert run_reset(port, "release") == 0
-    assert log == ["set_reset released"]
+    assert log == ["set_reset released", "version"]
 
 
 def test_reset_reports_status(capsys):
     port, log = controller(reply=lambda command: b"ok reset=released")
     assert run_reset(port, "status") == 0
-    assert log == ["get_status"]
+    assert log == ["get_status", "version"]
     assert "reset=released" in capsys.readouterr().out
 
 
@@ -248,7 +248,7 @@ def test_reset_ignores_lines_nobody_asked_for(capsys):
     # connect. It is not the reply to our command.
     port, log = controller(unprompted=b"event reset_timeout\n")
     assert run_reset(port, "--hold", "0.05") == 0
-    assert log == ["set_reset asserted", "set_reset released"]
+    assert log == ["set_reset asserted", "set_reset released", "version"]
     assert "reset_timeout" in capsys.readouterr().err
 
 
@@ -269,6 +269,42 @@ def test_reset_gives_up_when_the_controller_is_silent():
             flatsat.command(sock, "version", timeout=0.2)
         conn.close()
     server.close()
+
+
+def answering_version(version):
+    """A controller reply function: `version` says version, the rest ok."""
+    return lambda command: (b"ok " + version.encode()) if command == "version" else b"ok"
+
+
+def test_reset_is_quiet_when_the_controller_runs_this_checkouts_firmware(capsys):
+    port, _ = controller(reply=answering_version(flatsat.expected_controller_version()))
+    assert run_reset(port, "--hold", "0.05") == 0
+    assert "warning" not in capsys.readouterr().err
+
+
+def test_reset_warns_when_the_controller_runs_other_firmware(capsys):
+    # A box on an old branch deployed old firmware: still reset, but say so.
+    port, log = controller(reply=answering_version("flatsat-nrst 0.2"))
+    assert run_reset(port, "--hold", "0.05") == 0
+    assert log[:2] == ["set_reset asserted", "set_reset released"]
+    err = capsys.readouterr().err
+    assert "runs flatsat-nrst 0.2" in err
+    assert f"this checkout has {flatsat.expected_controller_version()}" in err
+    assert "make deploy-controller" in err
+
+
+def test_reset_warns_when_the_controller_has_no_version(capsys):
+    port, _ = controller(reply=lambda command: b"err syntax" if command == "version" else b"ok")
+    assert run_reset(port, "--hold", "0.05") == 0
+    assert "runs unknown firmware" in capsys.readouterr().err
+
+
+def test_the_expected_version_comes_from_flatsat_code_py(tmp_path):
+    assert flatsat.expected_controller_version().startswith("flatsat-nrst ")
+    code = tmp_path / "code.py"
+    code.write_text('VERSION = b"flatsat-nrst 9.9"\n')
+    assert flatsat.expected_controller_version(code) == "flatsat-nrst 9.9"
+    assert flatsat.expected_controller_version(tmp_path / "missing.py") is None
 
 
 def test_reset_when_the_box_is_down(capsys):

@@ -42,6 +42,7 @@ import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 GDB_PORT = 3333
 CONSOLE_PORT = 4000
@@ -53,6 +54,11 @@ REPLY_TIMEOUT_S = 2.0
 # Long enough for the STM32 to see it (the datasheet wants microseconds),
 # short enough that a test loop doesn't crawl.
 HOLD_S = 0.1
+
+# The controller firmware this checkout would deploy. `reset` compares its
+# VERSION with what the controller reports, because a box or Codespace on
+# an old branch deploys old firmware without a word.
+CONTROLLER_CODE = Path(__file__).resolve().parents[1] / "flatsat" / "code.py"
 
 # The mirror is the STM32F446's backup SRAM (app/boards/nucleo_f446re.overlay,
 # DS-75); messages/nvm_map.yaml gives its size and layout.
@@ -210,6 +216,29 @@ def checked(sock, line):
     return reply
 
 
+def expected_controller_version(path=CONTROLLER_CODE):
+    """The VERSION in this checkout's flatsat/code.py, or None."""
+    try:
+        match = re.search(r'^VERSION = b"([^"]+)"', path.read_text(), re.MULTILINE)
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+def check_controller_version(sock, expected):
+    """Warn, without failing, when the controller runs other firmware than
+    this checkout has: usually the box deployed from an old branch."""
+    if expected is None:
+        return
+    reply = command(sock, "version")
+    running = reply[len("ok "):] if reply.startswith("ok ") else None
+    if running != expected:
+        print(f"flatsat: warning: the controller runs {running or 'unknown firmware'}, "
+              f"but this checkout has {expected}. On the box, check out the same "
+              "branch, `git pull`, and `make deploy-controller` (docs/flatsat.md).",
+              file=sys.stderr)
+
+
 def reset(host, port, action, hold):
     """Drive the target's NRST line through the flatsat controller.
 
@@ -239,6 +268,7 @@ def reset(host, port, action, hold):
                     # controller's own hold timeout is the backstop.
                     checked(sock, "set_reset released")
                 print(f"flatsat: reset pulse, NRST low for {hold:g}s")
+            check_controller_version(sock, expected_controller_version())
     except KeyboardInterrupt:
         # The `finally` above has already released NRST.
         return 0

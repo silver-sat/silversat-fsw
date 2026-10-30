@@ -21,7 +21,9 @@ import time
 import serial
 from serial.tools import list_ports
 
-ADAFRUIT_VID = 0x239A
+# CircuitPython boards report one of these USB vendor IDs: Adafruit's, or
+# Raspberry Pi's on some RP2040 boards. `lsusb` shows which a board uses.
+CIRCUITPYTHON_VIDS = (0x239A, 0x2E8A)
 BAUD = 115200          # ignored over USB CDC, but pyserial wants a number
 REPLY_TIMEOUT = 2.0
 
@@ -33,7 +35,7 @@ class ControllerError(Exception):
 def candidate_ports():
     """CircuitPython boards, sorted so the order is stable."""
     return sorted(
-        (p for p in list_ports.comports() if p.vid == ADAFRUIT_VID),
+        (p for p in list_ports.comports() if p.vid in CIRCUITPYTHON_VIDS),
         key=lambda p: p.device,
     )
 
@@ -46,9 +48,10 @@ def find_data_port():
         return ports[1].device
     if not ports:
         raise ControllerError(
-            "no CircuitPython board found (looked for USB VID 0x%04X).\n"
+            "no CircuitPython board found (looked for USB VIDs %s).\n"
             "Is it plugged in? Did boot.py enable the data port, and has the "
-            "board been hard-reset since?" % ADAFRUIT_VID
+            "board been hard-reset since?"
+            % ", ".join("0x%04X" % vid for vid in CIRCUITPYTHON_VIDS)
         )
     raise ControllerError(
         "expected 2 CircuitPython ports, found %d:\n  %s\n"
@@ -158,7 +161,8 @@ def main():
         else:
             print("hint: the device path may have changed; try --list",
                   file=sys.stderr)
-        return 1    except ControllerError as exc:
+        return 1
+    except ControllerError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
 

@@ -16,7 +16,7 @@ make console        # watch its console (Ctrl-C to stop)
  Codespace ──┼── tailnet ───────────┤  OpenOCD   :3333 ── USB ── Nucleo (ST-LINK)
  CI ─────────┘  (Tailscale)         │  ser2net   :4000 ── console (USART2)  │
                                     │  ser2net   :4001 ── FT232H ── radio UART
-                                    │  ser2net   :4002 ── QT Py ── NRST     │
+                                    │  ser2net   :4002 ── Pico ── NRST      │
                                     └────────────────────────────────────────┘
 ```
 
@@ -326,7 +326,7 @@ do not move when devices re-enumerate, which `/dev/ttyACM*` does:
 ls /dev/serial/by-id/
 # usb-STMicroelectronics_STM32_STLink_066B...-if02   the console
 # usb-FTDI_..._-if00-port0                            the FT232H
-# usb-Adafruit_Industries_LLC_QT_Py_M0_...-if02      the reset controller
+# usb-..._Pico_...-if02                              the reset controller
 ```
 
 A `by-id` name is stable across re-enumeration but still spells out an
@@ -389,7 +389,7 @@ connection: &radio
       mdns: false
     connector: serialdev,/dev/serial/by-id/usb-FTDI_..._-if00-port0,19200n81,local
 
-# The reset controller: the QT Py's second CDC port (-if02, the data port;
+# The reset controller: the Pico's second CDC port (-if02, the data port;
 # -if00 is its REPL). Baud is meaningless over USB CDC, but ser2net wants one.
 connection: &nrst-controller
     accepter: tcp,4002
@@ -433,7 +433,7 @@ make console FLATSAT_HOST=flatsat   # from a Codespace: the board's log lines
 make reset   FLATSAT_HOST=flatsat   # the board reboots, and says so
 ```
 
-## Reset controller (Adafruit QT Py)
+## Reset controller (Raspberry Pi Pico)
 
 Most hubs report per-port power switching to `uhubctl` but don't actually
 cut the port's power (VBUS). The Nucleo hangs off the one hub on this box
@@ -451,53 +451,59 @@ so a script or SSH session that dies halfway can't leave the board off.
 (Run them separately only to do something while the board is off, and run
 `-a on` straight after.)
 
-An Adafruit QT Py M0 running CircuitPython does that job today. It is a
-stand-in for the student-built flatsat controller board, and it speaks the
-command vocabulary from the controller specification, so `tools/flatsat.py`
-will not change when the real board replaces it.
+A Raspberry Pi Pico running CircuitPython does that job today, through a
+transistor. It replaced an Adafruit QT Py M0, which had no mounting holes.
+It is a stand-in for the student-built flatsat controller board, and it
+speaks the command vocabulary from the controller specification, so
+`tools/flatsat.py` will not change when the real board replaces it.
 
 Firmware lives in `flatsat/` in this repository.
 
 ### Wiring
 
-| QT Py | Nucleo-F446RE | Notes |
-|-------|---------------|-------|
-| A0    | `RESET` on CN6, the Arduino power header | Open-drain. Driven low to assert, high-Z to release. |
-| GND   | `GND` on CN6  | Run a real wire. Do not rely on a shared ground through the host's USB. |
+The Pico switches an NPN transistor (an MPS2222A or a 2N3904), and the
+transistor pulls NRST low:
+
+| From | To | Notes |
+|------|----|-------|
+| Pico GP15 (pin 20) | 4.7 kΩ, then the transistor's base | Two 10 kΩ in parallel, or one 10 kΩ, also work. |
+| Transistor base | 100 kΩ, then GND | Keeps the transistor off while the Pico boots and its pin floats. |
+| Transistor emitter | `GND` on CN6 | |
+| Transistor collector | `RESET` on CN6, the Arduino power header | |
+| Pico GND (pin 18) | `GND` on CN6 | Run a real wire. Do not rely on a shared ground through the host's USB. |
+
+Check the transistor's pins before fitting it; TO-92 parts differ. Our
+MPS2222A, flat face toward you and legs down, is emitter, base, collector,
+left to right. With a meter's diode test, red on the base reads about
+0.6 to 0.7 V to each other leg, slightly higher to the emitter (0.680 V
+against 0.671 V on ours).
+
+Pico pin high turns the transistor on, which pulls NRST low: the target is
+held in reset. Pin low turns it off, and NRST goes back to the target's
+own pull-up. `flatsat/code.py` keeps the pin low unless told otherwise.
 
 **Count by the silkscreen, not by the end of the connector.** CN6's first
 hole carries no label, so counting from the edge puts you one pin off
 `RESET` — and the failure is silent: a released line reads 3.3 V whether or
 not anything is connected, because that is the STM32's own 40 kΩ internal
-pull-up. Confirm with a continuity check between A0 and the pin before
-trusting the harness.
+pull-up. Confirm with a continuity check between the collector and the pin
+before trusting the harness.
 
-NRST is bidirectional and open-drain. The controller never drives it high;
-it switches the pin between output-low and input-high-Z. That way the
-on-board ST-LINK can still reset the target independently, and a crashed or
-unprogrammed controller leaves the target running rather than held down.
+NRST is bidirectional and open-drain, and the transistor only ever pulls it
+to ground. So the on-board ST-LINK can still reset the target on its own,
+and the controller can never drive NRST high.
 
-**But an unpowered controller holds the target in reset.** Every
-microcontroller pin has protection diodes to its own supply. With the QT Py
-unpowered, its supply is at 0 V, so the diode on A0 pulls NRST low, and the
-Nucleo stays in reset: `make console` is silent, `monitor targets` in
+**Why the transistor.** Every microcontroller pin has protection diodes to
+its own supply. With a pin wired straight to NRST, as the QT Py's was, an
+unpowered controller's supply sits at 0 V, so the diode pulls NRST low and
+the Nucleo stays in reset: `make console` is silent, `monitor targets` in
 `make debug` says `reset`, and `monitor reset run` can't release it. While
-the QT Py's power comes up (plugged in, the box booting), NRST can let go
-and catch again several times, and each release is a boot: a burst of very
-short boots, which health counts as a reset loop. So keep the controller
-powered whenever it's wired to the Nucleo, and plug it in before the
-Nucleo.
-
-A switching transistor removes the problem for any controller: the
-controller's pin drives an N-channel MOSFET (for example a 2N7000, gate to
-the pin through 100 Ω, a 100 kΩ gate pull-down, drain to NRST, source to
-GND) or an NPN transistor (a 2N3904 with 1 kΩ on the base). Unpowered, the
-transistor is off and NRST is free. The logic flips (the pin high asserts
-reset), a two-line change in `flatsat/code.py`. The student-built
-controller board must meet the same rule: **anything wired to NRST must
-leave it alone when unpowered.** Changing the QT Py for another board, a
-Raspberry Pi Pico for its mounting holes, say, doesn't change this; the
-transistor does.
+the controller's power comes up (plugged in, the box booting), NRST can let
+go and catch again several times, and each release is a boot: a burst of
+very short boots, which health counts as a reset loop. With the transistor,
+an unpowered controller passes no current into the base, the transistor is
+off, and NRST is free. The student-built controller board must meet the
+same rule: **anything wired to NRST must leave it alone when unpowered.**
 
 ### Host setup
 
@@ -517,11 +523,12 @@ terminal has to care which `ttyACM` number it landed on this boot:
 
 ```sh
 sudo tee /etc/udev/rules.d/71-flatsat-nrst.rules <<'EOF'
-# The flatsat reset controller: the QT Py's data port (-if02). Its REPL
-# (-if00) is left alone, for mentors with tio. Keyed on the board's serial
-# so a second QT Py on the bench cannot claim the name.
-SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", \
-  ATTRS{serial}=="08D29EF75259545020312E39200103FF", \
+# The flatsat reset controller: the Pico's data port (-if02). Its REPL
+# (-if00) is left alone, for mentors with tio. Keyed on the board's serial,
+# which is unique, so a second CircuitPython board on the bench cannot
+# claim the name.
+SUBSYSTEM=="tty", \
+  ATTRS{serial}=="E6609CB2D3123729", \
   ENV{ID_USB_INTERFACE_NUM}=="02", \
   GROUP="dialout", MODE="0660", SYMLINK+="flatsat-nrst"
 EOF
@@ -531,8 +538,10 @@ sudo udevadm settle        # trigger only queues; settle waits for it
 ls -l /dev/flatsat-nrst          # -> ttyACM<something>; the number varies
 ```
 
-Replace the serial with your board's: `udevadm info -q property -n
-/dev/ttyACM<n> | grep ID_SERIAL_SHORT`, or read it off the REPL.
+That's our Pico's serial. CircuitPython uses the board's UID, the `UID:`
+line in `boot_out.txt` on the CIRCUITPY drive. For another board, check
+with `udevadm info -q property -n /dev/ttyACM<n> | grep -E
+'ID_SERIAL_SHORT|ID_USB_INTERFACE_NUM'` on its data port.
 
 Deploying firmware needs the CIRCUITPY volume mounted somewhere predictable
 without a password prompt:
@@ -549,9 +558,17 @@ Then:
 flatsat/deploy.sh
 ```
 
-Press the QT Py's physical reset button afterwards if `boot.py` changed.
-USB descriptors are only rebuilt on a hard reset, and `boot.py` is what
-enables the second CDC port.
+It says which firmware version it copied, and from which branch and
+commit, and warns when that isn't `main`. Deploy from an up-to-date clone:
+the box's copy of this repository falls behind easily. `make reset` checks
+too: it warns when the controller reports a different version from the
+`flatsat/code.py` in the checkout it runs from. So change `VERSION` in
+`code.py` whenever the file changes.
+
+If `boot.py` changed, unplug the Pico and plug it back in afterwards (it
+has no reset button). USB descriptors are only rebuilt on a hard reset, and
+`boot.py` is what enables the second CDC port. Replugging the Pico doesn't
+disturb the Nucleo: the transistor stays off.
 
 ### Verifying
 
@@ -560,22 +577,28 @@ python3 flatsat/nrst_test.py            # auto-detects the data port
 python3 flatsat/nrst_test.py --hold 10  # long enough to read on a DMM
 ```
 
-Nine checks, exit 0 on success. With a meter on NRST, asserted reads 0 V
-and released reads 3.3 V; on the target's console you should see the
-firmware reboot.
+Eight checks, exit 0 on success. With a meter on NRST, asserted reads close
+to 0 V (the transistor's saturation voltage, under 0.1 V) and released
+reads 3.3 V; on the target's console you should see the firmware reboot.
+
+Then the check the transistor is there for: **unplug the Pico, and the
+Nucleo must keep running** (`make console` keeps showing `alive`). Plug it
+back in, and it must still keep running.
 
 ### Two CDC ports
 
-The SAMD21 has eight USB endpoint pairs, and CircuitPython spends them by
-default on the console, the CIRCUITPY drive, HID and MIDI. A second CDC
-function does not fit, and it fails quietly: `usb_cdc.enable()` returns
-successfully and `usb_cdc.data` hands back a live object, but the port
-never enumerates. `boot.py` disables HID and MIDI to make room.
+`boot.py` turns on a second USB serial port, the data port, and turns off
+HID and MIDI, which nothing uses. On the QT Py's SAMD21 turning them off
+was required: it has only eight USB endpoint pairs, and with HID and MIDI
+on, the second port failed quietly (`usb_cdc.enable()` returned
+successfully and `usb_cdc.data` handed back a live object, but the port
+never enumerated). The Pico's RP2040 has room for everything, but the
+controller needs neither.
 
 Both ports should be present:
 
 ```sh
-ls -l /dev/serial/by-id/ | grep -i adafruit
+ls -l /dev/serial/by-id/ | grep -i -E 'pico|circuitpython'
 ```
 
 `-if00` is the REPL and console, `-if02` is the command port.
@@ -904,9 +927,13 @@ because the firmware doesn't use it.
   - `reset`: something holds NRST low. Either OpenOCD (after
     `openocd-flatsat` restarts, if the service lacks the `init` and
     `reset run` at the end of its `ExecStart`), or the reset controller:
-    `python3 tools/flatsat.py reset status` should say `reset=released`. If it can't reach the controller, the
-    controller is unplugged, unpowered or miswired, and an unpowered
-    controller holds NRST low ("Reset controller", above).
+    `python3 tools/flatsat.py reset status` should say `reset=released`.
+    If it says `asserted`, run `make reset` (which releases at the end), or
+    wait: the controller lets go by itself after 30 s. If it can't reach
+    the controller and the board is still held, check the wiring: an
+    unpowered controller can't hold NRST through the transistor, but a pin
+    wired straight to NRST, or a short from NRST to ground, can ("Reset
+    controller", above).
 
   Then `monitor reset run` and `quit` start it (or `make flash`). A reset
   keeps the backup SRAM, so the board doesn't go back to deploy mode.
@@ -923,9 +950,10 @@ because the firmware doesn't use it.
   shows the resets that tripped it, and why each happened.
 - **The boot count is higher than it should be:** `make bootlog`, before
   anything else. A burst of boots that lasted seconds each, after the box
-  or the reset controller was plugged in, is the controller's NRST clamp
-  while its power came up ("Reset controller"). A boot count that
-  survived unplugging the board means the board never fully lost power.
+  or the reset controller was plugged in, points at the controller's
+  wiring: before the transistor, the controller's pin clamped NRST while
+  its power came up ("Reset controller"). A boot count that survived
+  unplugging the board means the board never fully lost power.
 - **`Device open failure: Value or file not found`**, usually with the
   console showing nothing and the check reporting it never saw the boot
   lines: the device in that connector does not exist. For the console,
@@ -970,7 +998,7 @@ because the firmware doesn't use it.
   who opened the port by hand with `tio`.
 
   Do not debug this by `ttyACM` number. They are assigned in enumeration
-  order and move: the QT Py and the ST-LINK have traded places here more
+  order and move: the controller and the ST-LINK have traded places here more
   than once. Go by `/dev/serial/by-id/` or `/dev/flatsat-nrst`.
 - **`mdns: Can't allocate avahi client`** and **`Unable to start mdns: Out
   of memory`** when ser2net starts: harmless. ser2net tries Avahi once at
