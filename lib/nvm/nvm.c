@@ -12,7 +12,8 @@
  *            marked mirror: in nvm_map.yaml (DS-75's second tier).
  *
  * A board without an alias runs without that store: a record kept in
- * neither reads as its default.
+ * neither reads as its default. So does a store smaller than the map needs
+ * (nvm/sizes.h): the part fitted isn't the one the map was laid out for.
  *
  * Rings (DS-71's boot log) are entries in the same slot form, each written
  * once at its number modulo the ring's length, in FRAM and, if the ring is
@@ -36,6 +37,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
 
+#include "nvm/sizes.h"
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
 
@@ -435,13 +437,26 @@ bool nvm_mirror_available(void)
 	return is_available(MIRROR);
 }
 
+/*
+ * Whether a store holds every region the map puts in it. A smaller part
+ * would have its last records refused by the driver one by one; better to
+ * run without it from the start, as DS-75 plans for.
+ */
+static bool big_enough(enum store s)
+{
+	if (s == FRAM) {
+		return eeprom_get_size(devices[s]) >= NVM_FRAM_USED;
+	}
+	return retained_mem_size(devices[s]) >= (ssize_t)NVM_MIRROR_USED;
+}
+
 int nvm_retry(void)
 {
 	int rc;
 
 	k_mutex_lock(&nvm_lock, K_FOREVER);
 	for (enum store s = FRAM; s < STORES; s++) {
-		available[s] = devices[s] != NULL && device_is_ready(devices[s]);
+		available[s] = devices[s] != NULL && device_is_ready(devices[s]) && big_enough(s);
 	}
 	rc = available[FRAM] ? 0 : -EIO;
 	k_mutex_unlock(&nvm_lock);

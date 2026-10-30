@@ -30,6 +30,9 @@ void fake_fram_tear_next_write(const struct device *dev, size_t keep);
 /* While dropping, writes report success but store nothing. */
 void fake_fram_drop_writes(const struct device *dev, bool dropping);
 
+/* Report this size instead of the real one, as a smaller part would; 0 undoes it. */
+void fake_fram_report_size(const struct device *dev, size_t size);
+
 /* The memory itself, to corrupt or inspect. */
 uint8_t *fake_fram_memory(const struct device *dev);
 

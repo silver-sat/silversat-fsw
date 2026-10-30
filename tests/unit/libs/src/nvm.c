@@ -21,6 +21,7 @@
 #include "fake_retained_mem.h"
 #include "nvm/command_ingest.h"
 #include "nvm/health.h"
+#include "nvm/sizes.h"
 #include "nvm_vectors.h"
 #include "silversat/nvm.h"
 #include "silversat/resource_map.h"
@@ -228,6 +229,32 @@ ZTEST(nvm, test_dead_part_gives_defaults_until_retried)
 	zassert_mem_equal(read_expect(-EIO), defaults, 4);
 	zassert_ok(nvm_retry());
 	zassert_mem_equal(read_expect(0), a, 4);
+}
+
+ZTEST(nvm, test_a_part_too_small_for_the_map_goes_unused)
+{
+	/* A smaller FRAM than the map was laid out for: run without it. */
+	fake_fram_report_size(fram, NVM_FRAM_USED - 1);
+	zassert_equal(nvm_retry(), -EIO);
+	zassert_false(nvm_available());
+	zassert_true(nvm_mirror_available(), "the mirror carries on");
+	zassert_equal(nvm_write(&region, a), -EIO);
+
+	/* Exactly big enough is enough. */
+	fake_fram_report_size(fram, NVM_FRAM_USED);
+	zassert_ok(nvm_retry());
+	zassert_true(nvm_available());
+}
+
+ZTEST(nvm, test_a_mirror_too_small_for_the_map_goes_unused)
+{
+	fake_retained_mem_report_size(mirror, NVM_MIRROR_USED - 1);
+	zassert_ok(nvm_retry(), "FRAM still works");
+	zassert_false(nvm_mirror_available());
+
+	fake_retained_mem_report_size(mirror, NVM_MIRROR_USED);
+	zassert_ok(nvm_retry());
+	zassert_true(nvm_mirror_available());
 }
 
 ZTEST(nvm, test_a_write_that_does_not_stick_is_a_failure)

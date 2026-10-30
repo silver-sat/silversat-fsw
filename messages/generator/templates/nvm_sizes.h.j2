@@ -1,0 +1,17 @@
+{% import "_macros.j2" as m %}
+{{ m.banner("messages/nvm_map.yaml") }}
+
+#ifndef SILVERSAT_NVM_SIZES_H_
+#define SILVERSAT_NVM_SIZES_H_
+
+/*
+ * Bytes of FRAM and of the mirror the map assumes, and uses. Apart from
+ * nvm/map.h, so the FRAM service can check a fitted part is big enough
+ * without seeing every region (DS-74).
+ */
+#define NVM_FRAM_SIZE {{ nvm.fram_size }}
+#define NVM_FRAM_USED {{ nvm.used }}
+#define NVM_MIRROR_SIZE {{ nvm.mirror_size }}
+#define NVM_MIRROR_USED {{ nvm.mirror_used }}
+
+#endif /* SILVERSAT_NVM_SIZES_H_ */

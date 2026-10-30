@@ -6,18 +6,15 @@
  * pins are not used, because PB6 is reserved below for the magnetometer's
  * chip select. To be confirmed by the five-UART pin-mux check.
  *
- * The magnetometer PR adds:
+ * The magnetometer PR adds a second chip select and device to spi1 below:
  *
- *   &spi1 {
- *           status = "okay";
- *           cs-gpios = <&gpiob 6 GPIO_ACTIVE_LOW>;
+ *           cs-gpios = <&gpioc 7 GPIO_ACTIVE_LOW>, <&gpiob 6 GPIO_ACTIVE_LOW>;
  *
- *           mag: mag@0 {
+ *           mag: mag@1 {
  *                   compatible = "silversat,mag";
- *                   reg = <0>;
+ *                   reg = <1>;
  *                   spi-max-frequency = <10000000>;
  *           };
- *   };
  *
  * Note that the node label (`mag`) matches the one used in the native_sim
  * overlay. That is what lets the same driver code and the same tests run
@@ -35,12 +32,37 @@
 		test-mode-signal = &user_button;
 		/* The hardware watchdog, fed only by health (DS-43). */
 		watchdog0 = &iwdg;
-		/*
-		 * The FRAM service's mirror (DS-75): the 4 KB backup SRAM. There is
-		 * no fram alias until a part is chosen, so on the flatsat the
-		 * mirrored records are the only ones that survive a reset.
-		 */
+		/* The FRAM (DS-70), on spi1 below. */
+		fram = &fram;
+		/* The FRAM service's mirror (DS-75): the 4 KB backup SRAM. */
 		nvm-mirror = &backup_retained;
+	};
+};
+
+/*
+ * The FRAM: an 8 KB Fujitsu MB85RS64V on an Adafruit breakout, wired to the
+ * flatsat (docs/flatsat.md). A part for testing, not the flight choice,
+ * which is still to be made (DS-70). Zephyr's Infineon FM25 driver runs it:
+ * the commands are the same, and it picks 2-byte addresses from the size.
+ * (Zephyr's Fujitsu MB85RS driver accepts only the 2 Mbit parts.)
+ *
+ * A Nucleo without the breakout still runs: the driver can't tell nothing
+ * is there, but the FRAM service reads back every write, so the first one
+ * fails and the service carries on with the mirror alone (DS-75). Its
+ * housekeeping then shows fram_available false and one error.
+ */
+&spi1 {
+	/* No hardware NSS (PA4): each device has its own GPIO chip select. */
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	cs-gpios = <&gpioc 7 GPIO_ACTIVE_LOW>; /* D9 */
+	status = "okay";
+
+	fram: fram@0 {
+		compatible = "infineon,fm25xxx";
+		reg = <0>;
+		/* The part runs to 20 MHz; slow, for jumper wires. */
+		spi-max-frequency = <1000000>;
+		size = <8192>;
 	};
 };
 

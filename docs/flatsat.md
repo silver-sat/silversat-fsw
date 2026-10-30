@@ -207,6 +207,32 @@ Ubuntu 24.04 or later. Plug the Nucleo into it by its own USB connector,
 and the FT232H by USB, wired to the Nucleo as in docs/nucleo-on-your-desk.md
 (FT232H D0 to Nucleo D2, D1 to D8, GND to GND).
 
+**The FRAM** (DS-70) is an Adafruit breakout with an 8 KB Fujitsu
+MB85RS64V, on the Nucleo's SPI1. It's a part for testing; the flight part
+is still to be chosen. The firmware expects it here
+(`app/boards/nucleo_f446re.overlay`):
+
+| Breakout | Nucleo-F446RE |
+|---|---|
+| VCC | 3V3 (CN6) |
+| GND | GND (CN6) |
+| SCK | D13 (PA5) |
+| MISO | D12 (PA6) |
+| MOSI | D11 (PA7) |
+| CS | D9 (PC7) |
+| WP, HOLD | unconnected (the breakout pulls them high) |
+
+D10 is kept for the magnetometer's chip select. D13 is also the green user
+LED (LD2), so it flickers when the FRAM is used. The map needs 784 bytes;
+a part smaller than that is left unused.
+
+To check it, the nvm app's housekeeping (in telemetry,
+`python3 sim/radio_sim.py --port tcp://flatsat:4001 --listen`) should
+show `fram_available=True` and `errors=0`. The real test is a power cycle
+(`sudo uhubctl -l 3-4 -p 1 -a cycle -d 5` on the box): with the FRAM
+working, the board comes back in safe mode at the next boot number, not
+in deploy mode at boot 1.
+
 **Name it** `flatsat`, the name everything else uses:
 
 ```sh
@@ -948,6 +974,13 @@ because the firmware doesn't use it.
   restarts and replugs all reset the board. It clears itself: let the
   board run 10 minutes, and the next boot counts from zero. `make bootlog`
   shows the resets that tripped it, and why each happened.
+- **`fram_available=False`** in the nvm app's housekeeping on the
+  flatsat: the FRAM service found no working FRAM at boot, or a write to
+  it didn't read back, and it's running on the backup SRAM alone (DS-75).
+  Check the breakout's wiring (above, "The box"), then send `nvm retry`
+  (`python3 sim/radio_sim.py --port tcp://flatsat:4001 --listen nvm
+  retry`), or reset the board. On a Nucleo without the breakout, this, and
+  one error, is expected.
 - **The boot count is higher than it should be:** `make bootlog`, before
   anything else. A burst of boots that lasted seconds each, after the box
   or the reset controller was plugged in, points at the controller's

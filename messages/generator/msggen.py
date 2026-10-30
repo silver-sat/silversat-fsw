@@ -49,6 +49,8 @@ Output, in <out>/:
                              one per app, empty if it has none
     include/nvm/map.h        every region's place, read-only, for the nvm
                              app's scrubbing (DS-74)
+    include/nvm/sizes.h      the FRAM and mirror sizes the map assumes and
+                             uses, for the FRAM service's check of the part
 
 --json FILE also writes the dictionary (DS-61): every ground command with
 its arguments, ranges and modes, and the internal commands apart; each app's
@@ -1171,6 +1173,7 @@ def render(defs):
     outputs[Path("src/tlm_encode.c")] = \
         env.get_template("tlm_encode.c.j2").render(defs=defs)
     outputs[Path("include/nvm/map.h")] = env.get_template("nvm_map.h.j2").render(nvm=defs.nvm)
+    outputs[Path("include/nvm/sizes.h")] = env.get_template("nvm_sizes.h.j2").render(nvm=defs.nvm)
     # One per app, with or without records, so the build knows the outputs
     # from the app files alone.
     for app in defs.apps:

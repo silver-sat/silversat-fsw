@@ -22,12 +22,14 @@
 struct fake_retained_mem_data {
 	uint8_t memory[FAKE_SIZE];
 	bool failing;
+	ssize_t reported_size;
 };
 
 static ssize_t fake_size(const struct device *dev)
 {
-	ARG_UNUSED(dev);
-	return FAKE_SIZE;
+	struct fake_retained_mem_data *data = dev->data;
+
+	return data->reported_size != 0 ? data->reported_size : FAKE_SIZE;
 }
 
 static int fake_read(const struct device *dev, off_t offset, uint8_t *buffer, size_t size)
@@ -77,6 +79,11 @@ void fake_retained_mem_reset(const struct device *dev)
 void fake_retained_mem_fail(const struct device *dev, bool failing)
 {
 	((struct fake_retained_mem_data *)dev->data)->failing = failing;
+}
+
+void fake_retained_mem_report_size(const struct device *dev, ssize_t size)
+{
+	((struct fake_retained_mem_data *)dev->data)->reported_size = size;
 }
 
 uint8_t *fake_retained_mem_memory(const struct device *dev)
