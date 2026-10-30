@@ -570,7 +570,7 @@ python3 flatsat/nrst_test.py            # auto-detects the data port
 python3 flatsat/nrst_test.py --hold 10  # long enough to read on a DMM
 ```
 
-Nine checks, exit 0 on success. With a meter on NRST, asserted reads close
+Eight checks, exit 0 on success. With a meter on NRST, asserted reads close
 to 0 V (the transistor's saturation voltage, under 0.1 V) and released
 reads 3.3 V; on the target's console you should see the firmware reboot.
 
