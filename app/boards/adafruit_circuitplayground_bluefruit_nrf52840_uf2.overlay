@@ -1,0 +1,46 @@
+/*
+ * Application overlay for the Circuit Playground Bluefruit, the student
+ * learning and exploration tier (DS-04, docs/cpb.md).
+ *
+ * The console is the board's USB serial port. The radio UART is on the TX
+ * and RX pads, at SilverSat's 19200 baud: Zephyr's automatic USB setup
+ * registers only one serial port, so it can't go over USB yet.
+ *
+ * The nRF52840 has no backup SRAM, so there is no nvm-mirror alias (DS-75):
+ * with the FRAM fitted every record survives; without it none do.
+ */
+
+/ {
+	aliases {
+		radio-uart = &uart0;
+		/* The slide switch selects test mode, read once at boot (DS-42). */
+		test-mode-signal = &slide_switch;
+		/* The FRAM (DS-70), on i2c0 below. */
+		fram = &fram;
+	};
+};
+
+&uart0 {
+	current-speed = <19200>;
+};
+
+/* Neither board is documented as having pull-ups on these lines. */
+&i2c0_default {
+	group1 {
+		bias-pull-up;
+	};
+};
+
+/*
+ * A 32 KB Fujitsu MB85RC256V on an Adafruit breakout (ID 1895), on the A4
+ * (SCL) and A5 (SDA) pads. A part for learning, not the flight choice (DS-70).
+ */
+&i2c0 {
+	fram: fram@50 {
+		compatible = "fujitsu,mb85rcxx";
+		reg = <0x50>;
+		size = <32768>;
+		pagesize = <32768>;
+		address-width = <16>;
+	};
+};

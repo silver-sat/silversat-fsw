@@ -1,0 +1,8 @@
+board:
+  name: adafruit_circuitplayground_bluefruit
+  full_name: Circuit Playground Bluefruit
+  vendor: adafruit
+  socs:
+    - name: nrf52840
+      variants:
+        - name: uf2

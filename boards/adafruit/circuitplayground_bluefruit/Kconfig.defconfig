@@ -1,0 +1,14 @@
+# Adafruit Circuit Playground Bluefruit board configuration
+
+# Copyright (c) 2026 Adafruit Industries LLC
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_ADAFRUIT_CIRCUITPLAYGROUND_BLUEFRUIT
+
+if BOARD_ADAFRUIT_CIRCUITPLAYGROUND_BLUEFRUIT_NRF52840_UF2
+
+source "boards/common/usb/Kconfig.cdc_acm_serial.defconfig"
+
+endif
+
+endif # BOARD_ADAFRUIT_CIRCUITPLAYGROUND_BLUEFRUIT

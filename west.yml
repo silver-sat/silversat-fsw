@@ -9,6 +9,10 @@
 #   └── modules/    <- fetched by west, not version controlled here
 #
 manifest:
+  # Projects in the cpb group are fetched only after `make cpb-setup`, so
+  # only builds for that board pay for them.
+  group-filter: [-cpb]
+
   remotes:
     - name: upstream
       url-base: https://github.com/zephyrproject-rtos
@@ -30,6 +34,17 @@ manifest:
         name-allowlist:
           - cmsis_6
           - hal_stm32
+
+    # The Nordic HAL, for the Circuit Playground Bluefruit (docs/cpb.md). It
+    # is about 300 MB, so it's in a group of its own. The revision is the
+    # one Zephyr's own west.yml gives at the tag above: keep them the same
+    # when bumping Zephyr.
+    - name: hal_nordic
+      remote: upstream
+      revision: 44fd3d44b15cb75f80a25b4679f91d2787e28664
+      path: modules/hal/nordic
+      groups:
+        - cpb
 
   self:
     # Must match the directory name in every environment. Codespaces clones

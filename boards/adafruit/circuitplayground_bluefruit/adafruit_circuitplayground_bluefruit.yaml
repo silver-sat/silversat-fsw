@@ -1,0 +1,17 @@
+identifier: adafruit_circuitplayground_bluefruit/nrf52840
+name: Adafruit Circuit Playground Bluefruit
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - adc
+  - usbd
+  - ble
+  - watchdog
+  - counter
+  - i2c
+  - spi
+  - uart
+vendor: adafruit
