@@ -192,8 +192,9 @@ python3 sim/radio_sim.py --port /dev/cu.usbserial-XXXXXXXX --baud 19200 \
     --listen nvm retry
 ```
 
-For example, `frame_manager set_app_enabled nvm true` starts the nvm app
-again after a reset loop stopped it. If a command gets no reply and the radio's
+For example, `frame_manager set_app_enabled 7 true` starts the nvm app
+again after a reset loop stopped it (the command takes the app's number,
+its `id:` in `messages/apps/`; a name gets `bad_arg 0`). If a command gets no reply and the radio's
 `frames_repeated` went up, the radio took it for a repeat of the frame
 before (each frame carries a sequence number, and one that repeats the last
 is dropped, DS-65). Each run of the simulator starts its numbers somewhere
