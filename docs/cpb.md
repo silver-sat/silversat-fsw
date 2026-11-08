@@ -86,9 +86,11 @@ Move the switch, then press reset once.
   board run for 10 minutes and the count clears.
 - **No telemetry over USB yet.** The radio UART is on the TX and RX pads at
   19200 baud, and Zephyr's automatic USB setup makes only one serial port.
-  To send commands and read telemetry you need a 3.3 V USB-serial adapter on
-  those pads; docs/nucleo-on-your-desk.md shows how with
-  `sim/radio_sim.py`. (Not yet tried on this board.)
+  To send commands and read telemetry you need a USB-serial link to those
+  pads at 3.3 V: an adapter, or another CircuitPython board running a
+  USB-to-UART bridge, wired TX to RX, RX to TX, GND to GND. Then run
+  `sim/radio_sim.py` as in docs/nucleo-on-your-desk.md, in a clone of this
+  repository. Telemetry has been read this way, through a Metro M0.
 - **No app reads the sensors yet.** The motion, temperature and light sensors
   are next.
 
