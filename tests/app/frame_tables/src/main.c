@@ -53,6 +53,14 @@ ZTEST(frame_tables, test_the_mode_manager_and_health_run_in_every_mode)
 	}
 }
 
+ZTEST(frame_tables, test_the_temperature_app_runs_only_in_mission_modes)
+{
+	zassert_true(table_has(MODE_TEST, APP_ID_TEMPERATURE));
+	zassert_true(table_has(MODE_NOMINAL, APP_ID_TEMPERATURE));
+	zassert_false(table_has(MODE_SAFE, APP_ID_TEMPERATURE), "DS-41");
+	zassert_false(table_has(MODE_DEPLOY, APP_ID_TEMPERATURE), "DS-42");
+}
+
 ZTEST(frame_tables, test_the_nvm_app_runs_in_every_mode)
 {
 	/* FRAM is scrubbed, and its housekeeping kept current, whatever the mode (DS-74). */

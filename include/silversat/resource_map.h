@@ -78,6 +78,9 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 /* Woken once a major frame to scrub one FRAM region (DS-70). */
 #define NVM_PRIORITY PRIORITY_HOUSEKEEPING
 
+/* Woken once a major frame to read the sensor (DS-30). */
+#define TEMPERATURE_PRIORITY PRIORITY_1HZ
+
 /* ---- Stack sizes (bytes) ------------------------------------------------ */
 
 /*
@@ -99,6 +102,7 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 #define MODE_MANAGER_STACK_SIZE     1536 /* a FRAM write, a log line */
 #define HEALTH_STACK_SIZE           2048 /* a FRAM write every major frame, the status line */
 #define NVM_STACK_SIZE              1536 /* one link frame, one FRAM slot */
+#define TEMPERATURE_STACK_SIZE      1536 /* the sensor driver, an event */
 
 /* ---- UART assignments --------------------------------------------------- */
 
@@ -152,6 +156,16 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
  *                native_sim: none (tests use a fake)
  */
 #define NVM_MIRROR_NODE DT_ALIAS(nvm_mirror)
+
+/*
+ * The temperature sensor (DS-30): any Zephyr sensor with an ambient
+ * temperature channel. A board without the alias runs the app with no
+ * readings: its data channel is marked not valid.
+ *
+ *   temperature-sensor   circuitplayground_bluefruit: the on-board thermistor
+ *                        nucleo_f446re, native_sim: none (tests use a fake)
+ */
+#define TEMPERATURE_SENSOR_NODE DT_ALIAS(temperature_sensor)
 
 /*
  * Bytes buffered between the UART interrupt and the radio app, each way.
@@ -353,6 +367,17 @@ static const struct app_attr app_attrs[APP_ID_MAX + 1] = {
 	 * start it again (DS-43).
 	 */
 	[APP_ID_NVM] = {
+		.protected = false,
+		.stall_threshold = 3,
+		.reenable = REENABLE_GROUND,
+		.auto_retry_cap = 0,
+		.critical = false,
+	},
+	/*
+	 * Not protected: nothing depends on it yet. A stall stops it; the
+	 * ground can start it again (DS-43).
+	 */
+	[APP_ID_TEMPERATURE] = {
 		.protected = false,
 		.stall_threshold = 3,
 		.reenable = REENABLE_GROUND,

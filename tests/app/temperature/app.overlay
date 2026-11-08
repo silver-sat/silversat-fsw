@@ -1,0 +1,12 @@
+/* The sensor is a fake the tests can set and fail (tests/fakes/). */
+
+/ {
+	aliases {
+		temperature-sensor = &fake_temperature;
+	};
+
+	fake_temperature: fake-temperature {
+		compatible = "silversat,fake-temperature";
+		status = "okay";
+	};
+};

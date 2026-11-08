@@ -12,5 +12,6 @@ rsource "telemetry_output/Kconfig"
 rsource "mode_manager/Kconfig"
 rsource "health/Kconfig"
 rsource "nvm/Kconfig"
+rsource "temperature/Kconfig"
 
 endmenu

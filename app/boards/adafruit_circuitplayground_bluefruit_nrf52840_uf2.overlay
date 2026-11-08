@@ -10,6 +10,9 @@
  * with the FRAM fitted every record survives; without it none do.
  */
 
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-saadc.h>
+
 / {
 	aliases {
 		radio-uart = &uart0;
@@ -17,6 +20,46 @@
 		test-mode-signal = &slide_switch;
 		/* The FRAM (DS-70), on i2c0 below. */
 		fram = &fram;
+		/* The on-board thermistor (DS-30). */
+		temperature-sensor = &board_thermistor;
+	};
+
+	/*
+	 * Thermistor to the supply, a 10 kOhm resistor to ground, and the ADC
+	 * between them, on A9 (P0.31, AIN7). The table is for 10 kOhm at 25 C
+	 * and a beta of 3950, the values Adafruit's own library uses, from
+	 * Zephyr's scripts/utils/ntc_thermistor_table.py.
+	 */
+	board_thermistor: board-thermistor {
+		compatible = "ntc-thermistor-generic";
+		io-channels = <&adc 7>;
+		pullup-ohm = <0>;
+		pulldown-ohm = <10000>;
+		connected-positive;
+		zephyr,compensation-table = <(-25) 144316>, <(-15) 77898>, <(-5) 44026>,
+					    <(5) 25924>, <(15) 15837>, <(25) 10000>,
+					    <(35) 6505>, <(45) 4348>, <(55) 2978>,
+					    <(65) 2086>, <(75) 1491>, <(85) 1086>,
+					    <(95) 805>, <(105) 606>, <(115) 463>, <(125) 358>;
+	};
+};
+
+/*
+ * VDD/4 with a gain of 1/4 makes the ADC's full scale the supply, which the
+ * thermistor's divider is ratioed against, so the supply's exact voltage
+ * cancels out.
+ */
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@7 {
+		reg = <7>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_VDD_1_4";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN7>;
+		zephyr,resolution = <12>;
 	};
 };
 

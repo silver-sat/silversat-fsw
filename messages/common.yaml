@@ -144,6 +144,24 @@ structs:
         type: int64
         description: Mission elapsed time when this mode was entered.
 
+  - name: temperature_reading
+    description: >
+      The latest temperature, published only by the temperature app on
+      temperature_chan (DS-31).
+    fields:
+      - name: temperature_c
+        type: float32
+        description: Degrees Celsius. Meaningful only when valid is true.
+      - name: met_ms
+        type: int64
+        description: Mission elapsed time of the reading (DS-25).
+      - name: seq
+        type: uint32
+        description: Counts up by one with every publish.
+      - name: valid
+        type: bool
+        description: False if there is no reading (no sensor, stopped, or failing).
+
   - name: frame_report
     description: >
       Published by the frame manager on frame_report_chan at the start of

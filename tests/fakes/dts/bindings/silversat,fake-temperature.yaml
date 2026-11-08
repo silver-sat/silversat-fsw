@@ -1,0 +1,10 @@
+# Copyright (c) 2026 SilverSat
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  A test-only temperature sensor (tests/fakes/fake_temperature.c), behind
+  Zephyr's sensor API, with controls to set its reading and make it fail.
+
+compatible: "silversat,fake-temperature"
+
+include: base.yaml
