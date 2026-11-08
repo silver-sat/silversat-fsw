@@ -1,0 +1,31 @@
+# The temperature app (DS-30, DS-31).
+
+config SS_TEMPERATURE
+	bool "Temperature app"
+	depends on SS_MESSAGES
+	select SS_EVENT
+	select SENSOR if $(dt_alias_enabled,temperature-sensor)
+	help
+	  Reads the temperature sensor once a major frame and publishes it on
+	  temperature_chan.
+
+if SS_TEMPERATURE
+
+config SS_TEMPERATURE_FAIL_LIMIT
+	int "Failed readings in a row before a retry"
+	default 3
+	range 1 100
+	help
+	  After this many failed readings in a row, the app counts a reinit
+	  and starts over (DS-31).
+
+config SS_TEMPERATURE_REINIT_LIMIT
+	int "Retries in a row before the sensor is marked failed"
+	default 3
+	range 1 100
+	help
+	  After this many reinits with no good reading between them, the app
+	  marks the sensor failed, raises an event, and stops reading it
+	  until the ground sends reinit (DS-31).
+
+endif # SS_TEMPERATURE

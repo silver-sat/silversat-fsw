@@ -1,0 +1,10 @@
+common:
+  tags:
+    - app
+    - temperature
+
+tests:
+  app.temperature_no_sensor:
+    platform_allow:
+      - native_sim
+      - native_sim/native/64

@@ -72,6 +72,15 @@
 	{.slot = (n), .app = APP_ID_NVM, .wakeup_chan = &nvm_wakeup_chan,                      \
 	 .status_chan = &nvm_status_chan}
 
+/*
+ * The temperature app runs once a major frame, in slot 0, where sensors
+ * read (DS-21). Only in the modes that do mission work: not in deploy or
+ * safe mode, where the spacecraft does as little as it can (DS-41, DS-42).
+ */
+#define TEMPERATURE_IN_SLOT(n)                                                                 \
+	{.slot = (n), .app = APP_ID_TEMPERATURE, .wakeup_chan = &temperature_wakeup_chan,      \
+	 .status_chan = &temperature_status_chan}
+
 static const struct frame_entry safe_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
@@ -96,12 +105,14 @@ static const struct frame_entry test_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
 	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9), HEALTH_IN_SLOT(0), NVM_IN_SLOT(8),
+	TEMPERATURE_IN_SLOT(0),
 };
 
 static const struct frame_entry nominal_entries[] = {
 	LINK_IN_SLOT(0), LINK_IN_SLOT(1), LINK_IN_SLOT(2), LINK_IN_SLOT(3), LINK_IN_SLOT(4),
 	LINK_IN_SLOT(5), LINK_IN_SLOT(6), LINK_IN_SLOT(7), LINK_IN_SLOT(8), LINK_IN_SLOT(9),
 	TELEMETRY_OUTPUT_IN_SLOT(5), MODE_MANAGER_IN_SLOT(9), HEALTH_IN_SLOT(0), NVM_IN_SLOT(8),
+	TEMPERATURE_IN_SLOT(0),
 };
 
 BUILD_ASSERT(ARRAY_SIZE(safe_entries) <= FRAME_ENTRIES_MAX);

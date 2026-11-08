@@ -117,11 +117,14 @@ Every app publishes its housekeeping at least once per major frame (at slot 0, o
 
 **DS-30 Device apps: Specified.** Sensors and simple peripherals (IMU, magnetometer, sun sensor, MCU die temperature, shift register) each get their own app, which drives a Zephyr driver. Student device apps use the classic sensor API (`sensor_sample_fetch` / `sensor_channel_get`).
 
+- The first device app, built 2026-11-08: `apps/temperature`, the pattern for the others. It reads whichever sensor a board's `temperature-sensor` devicetree alias names (the on-board thermistor on the Circuit Playground Bluefruit, none yet on the Nucleo), once a major frame in slot 0, in test and nominal mode. A board without the alias runs the app with nothing valid to report.
+
 **DS-31 Device app contents: Proposed.**
 - A data channel with calibrated SI values, MET, sequence number, and validity flag.
 - Housekeeping including raw values.
 - Commands: enable, reinit, self-test, calibration load, range.
 - A fault policy: N consecutive failures leads to reinit; M reinits marks the device failed and emits an event.
+- As built in `apps/temperature` (2026-11-08): the data channel, housekeeping, the fault policy, and the commands `set_enabled` and `reinit`. Self-test, calibration load and range aren't there: a thermistor has no self-test or range, and calibration waits for a sensor that needs it. Zephyr's sensor API has no call to restart a driver, so a reinit clears the fault counts and tries again.
 
 **DS-32 Subsystem apps: Specified.** Antenna, radio, payload, and power are subsystem apps: proxies for intelligent peers. Each connects over UART with CRC, unless the selected antenna or power system mandates its own protocol, in which case only that app's message layer changes.
 
@@ -498,3 +501,4 @@ Keys are not in FRAM: they are compiled into flash (DS-54).
 | 2026-10-13 | DS-24: zbus priority boost off; with no observers attached to threads it never boosted, and its priority reset after each publish made every publish a hidden yield to equal-priority apps |
 | 2026-10-30 | DS-70: a test FRAM on the flatsat (MB85RS64V, 8 KB, on SPI1) behind the Nucleo's `fram` alias; the flight part is still to be chosen. The FRAM service leaves unused a store smaller than the map needs |
 | 2026-11-08 | DS-04: a student learning and exploration tier, on the Circuit Playground Bluefruit with an I2C FRAM. DS-05: a build-only check for that board |
+| 2026-11-08 | DS-30, DS-31: the first device app, `apps/temperature`, reading the Circuit Playground Bluefruit's thermistor |

@@ -1,0 +1,69 @@
+# The temperature app's messages (DS-30, DS-31).
+#
+# A device app: it reads one temperature sensor through Zephyr's classic
+# sensor API and publishes the result for other apps to read.
+
+app: temperature
+id: 8
+description: Reads the temperature sensor and publishes it (DS-30).
+# Woken once a major frame, in slot 0 (DS-21).
+wakeup: true
+
+commands:
+  - name: set_enabled
+    id: 1
+    modes: [safe, nominal, test]
+    description: >
+      Start or stop reading the sensor. Sets the state rather than toggling
+      it (DS-35). While stopped, the data channel is marked not valid.
+    fields:
+      - name: enabled
+        type: bool
+        description: True to read the sensor, false to stop.
+  - name: reinit
+    id: 2
+    modes: [safe, nominal, test]
+    description: >
+      Clear the app's fault counts and try the sensor again, after it was
+      marked failed (DS-31). Rejected on a board with no sensor.
+
+data_channels:
+  - name: temperature_chan
+    type: temperature_reading
+    description: The latest temperature. Published once a major frame.
+
+# Events (DS-10): the sensor giving up and coming back (DS-31).
+events:
+  - name: failed
+    id: 1
+    severity: error
+    description: The sensor kept failing and is no longer read, until a reinit command.
+  - name: restored
+    id: 2
+    severity: info
+    description: The sensor is in use again, after a reinit command.
+
+housekeeping:
+  description: The sensor's state and counts, published every major frame.
+  fields:
+    - name: present
+      type: bool
+      description: False if this board has no temperature sensor.
+    - name: enabled
+      type: bool
+      description: False while the ground has stopped the sensor.
+    - name: failed
+      type: bool
+      description: True once the sensor kept failing, until a reinit command.
+    - name: temperature_mc
+      type: int32
+      description: The latest good reading from the sensor, in millidegrees Celsius.
+    - name: samples
+      type: uint32
+      description: Good readings since boot.
+    - name: read_errors
+      type: uint32
+      description: Readings the sensor failed, since boot.
+    - name: reinits
+      type: uint32
+      description: Times the app retried the sensor after failures in a row (DS-31).

@@ -91,8 +91,12 @@ Move the switch, then press reset once.
   USB-to-UART bridge, wired TX to RX, RX to TX, GND to GND. Then run
   `sim/radio_sim.py` as in docs/nucleo-on-your-desk.md, in a clone of this
   repository. Telemetry has been read this way, through a Metro M0.
-- **No app reads the sensors yet.** The motion, temperature and light sensors
-  are next.
+- **The temperature sensor is read in test and nominal mode.** It's in the
+  `temperature` line of the telemetry: `temperature_mc` is millidegrees
+  Celsius. The thermistor sits on the board, so expect a little above room
+  temperature, and for it to rise if you hold a finger on the sensor.
+  `apps/temperature` is the pattern for a device app (DS-30).
+- **The motion and light sensors aren't read yet.**
 
 ## Debugging
 
