@@ -36,13 +36,18 @@ RESET_PORT   ?= 4002
 GDB          ?= $(firstword $(wildcard /opt/toolchains/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb) arm-zephyr-eabi-gdb)
 ELF          := $(BUILD_DIR)/zephyr/zephyr.elf
 
+# The Circuit Playground Bluefruit, the student tier (docs/cpb.md). Its own
+# build directory, so it doesn't replace the flatsat's firmware.
+CPB_BOARD    := adafruit_circuitplayground_bluefruit/nrf52840/uf2
+CPB_BUILD_DIR ?= build-cpb
+
 # `make run` builds native_sim into the same directory, so check the build is
 # the flatsat's before loading it.
 CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config || \
 	{ echo 'No $(BOARD) firmware in $(BUILD_DIR): run `make build` first.'; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset bootlog debug clean deploy-controller
+.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset bootlog debug clean cpb cpb-setup deploy-controller
 
 help:  ## Show this list
 	@echo ''
@@ -106,6 +111,16 @@ debug:  ## Debug the flatsat's firmware in GDB (the last `make build`)
 
 clean:  ## Delete build output
 	rm -rf $(BUILD_DIR) twister-out twister-out.*
+
+cpb-setup:  ## Fetch the Nordic HAL the Circuit Playground needs (once)
+	west config manifest.group-filter -- +cpb
+	west update hal_nordic
+
+cpb:  ## Build the UF2 for the Circuit Playground Bluefruit (docs/cpb.md)
+	@test -d ../modules/hal/nordic || $(MAKE) cpb-setup
+	west build -p -b $(CPB_BOARD) $(APP) -d $(CPB_BUILD_DIR)
+	@echo ''
+	@echo 'Firmware: $(CPB_BUILD_DIR)/zephyr/zephyr.uf2'
 
 deploy-controller:  ## Copy the flatsat controller firmware to its board (the Pico)
 	flatsat/deploy.sh

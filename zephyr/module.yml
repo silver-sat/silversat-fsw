@@ -7,3 +7,6 @@ build:
     # Adds dts/bindings/ to the binding search path, and makes
     # dts/bindings/vendor-prefixes.txt recognized.
     dts_root: .
+    # Adds boards/ to the board search path, for boards upstream Zephyr
+    # doesn't have yet.
+    board_root: .
