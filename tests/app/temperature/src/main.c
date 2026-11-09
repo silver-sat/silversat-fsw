@@ -26,6 +26,16 @@
 
 static const struct device *const sensor = DEVICE_DT_GET(TEMPERATURE_SENSOR_NODE);
 
+/*
+ * The channel the app should read in this build. The fake answers only on
+ * the channel it's told to, so every test here also checks the app asks for
+ * the right one.
+ */
+#define EXPECTED_CHANNEL                                                                           \
+	(IS_ENABLED(CONFIG_SS_TEMPERATURE_CHIP) ? SENSOR_CHAN_DIE_TEMP : SENSOR_CHAN_AMBIENT_TEMP)
+#define OTHER_CHANNEL                                                                              \
+	(IS_ENABLED(CONFIG_SS_TEMPERATURE_CHIP) ? SENSOR_CHAN_AMBIENT_TEMP : SENSOR_CHAN_DIE_TEMP)
+
 /* Wakeups and commands sent so far: the app's status counts both. */
 static uint32_t steps;
 static uint32_t commands;
@@ -94,6 +104,7 @@ static void before(void *fixture)
 {
 	ARG_UNUSED(fixture);
 	fake_temperature_reset(sensor);
+	fake_temperature_answer_on(sensor, EXPECTED_CHANNEL);
 	set_enabled(true);
 	(void)send_reinit();
 	app_test_drain_events();
@@ -279,6 +290,16 @@ ZTEST(temperature, test_set_enabled_sets_rather_than_toggles)
 	zassert_true(housekeeping().enabled);
 	wake();
 	zassert_true(latest().valid);
+}
+
+ZTEST(temperature, test_a_sensor_without_the_channel_is_a_failed_reading)
+{
+	uint32_t errors = housekeeping().read_errors;
+
+	fake_temperature_answer_on(sensor, OTHER_CHANNEL);
+	wake();
+	zassert_false(latest().valid);
+	zassert_equal(housekeeping().read_errors, errors + 1);
 }
 
 ZTEST(temperature, test_an_unknown_command_is_rejected)

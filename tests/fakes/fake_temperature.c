@@ -18,6 +18,7 @@
 
 struct fake_temperature_data {
 	int32_t millidegrees;
+	enum sensor_channel channel;
 	bool failing;
 	uint32_t fetches;
 };
@@ -36,7 +37,7 @@ static int fake_channel_get(const struct device *dev, enum sensor_channel chan,
 {
 	struct fake_temperature_data *data = dev->data;
 
-	if (chan != SENSOR_CHAN_AMBIENT_TEMP) {
+	if (chan != data->channel) {
 		return -ENOTSUP;
 	}
 	return sensor_value_from_milli(val, data->millidegrees);
@@ -45,6 +46,11 @@ static int fake_channel_get(const struct device *dev, enum sensor_channel chan,
 void fake_temperature_set_mc(const struct device *dev, int32_t millidegrees)
 {
 	((struct fake_temperature_data *)dev->data)->millidegrees = millidegrees;
+}
+
+void fake_temperature_answer_on(const struct device *dev, enum sensor_channel chan)
+{
+	((struct fake_temperature_data *)dev->data)->channel = chan;
 }
 
 void fake_temperature_fail(const struct device *dev, bool failing)
@@ -60,6 +66,7 @@ uint32_t fake_temperature_fetches(const struct device *dev)
 void fake_temperature_reset(const struct device *dev)
 {
 	memset(dev->data, 0, sizeof(struct fake_temperature_data));
+	fake_temperature_answer_on(dev, SENSOR_CHAN_AMBIENT_TEMP);
 }
 
 static DEVICE_API(sensor, fake_temperature_api) = {

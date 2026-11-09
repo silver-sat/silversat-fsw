@@ -5,7 +5,9 @@
  *
  * A device app: the pattern for the others. It drives one Zephyr sensor,
  * named by the temperature-sensor devicetree alias, so the same code runs on
- * any board's sensor. Woken once a major frame, it:
+ * any board's sensor. A board whose only sensor is inside the chip sets
+ * SS_TEMPERATURE_CHIP, which reads the die temperature channel instead of
+ * ambient. Woken once a major frame, it:
  *
  *   - reads the sensor through the classic sensor API;
  *   - publishes the result on temperature_chan, in degrees Celsius, with its
@@ -45,6 +47,10 @@ ZBUS_CHAN_ADD_OBS(temperature_cmd_chan, temperature_sub, 3);
 /* NULL on a board with no temperature-sensor alias. */
 static const struct device *const sensor = DEVICE_DT_GET_OR_NULL(TEMPERATURE_SENSOR_NODE);
 
+/* Which of the sensor's channels this board reads (DS-30). */
+static const enum sensor_channel channel =
+	IS_ENABLED(CONFIG_SS_TEMPERATURE_CHIP) ? SENSOR_CHAN_DIE_TEMP : SENSOR_CHAN_AMBIENT_TEMP;
+
 static struct app_status status;
 static struct temperature_hk hk = {.enabled = true};
 static struct temperature_reading reading;
@@ -79,7 +85,7 @@ static bool read_sensor(struct sensor_value *value)
 	if (sensor_sample_fetch(sensor) != 0) {
 		return false;
 	}
-	return sensor_channel_get(sensor, SENSOR_CHAN_AMBIENT_TEMP, value) == 0;
+	return sensor_channel_get(sensor, channel, value) == 0;
 }
 
 /* Read the sensor if there is one to read, and publish what came of it. */

@@ -41,13 +41,25 @@ ELF          := $(BUILD_DIR)/zephyr/zephyr.elf
 CPB_BOARD    := adafruit_circuitplayground_bluefruit/nrf52840/uf2
 CPB_BUILD_DIR ?= build-cpb
 
+# The Metro RP2350, also the student tier (docs/metro-rp2350.md).
+METRO_BOARD  := adafruit_metro_rp2350/rp2350b/m33
+METRO_BUILD_DIR ?= build-metro
+
+# Turn on a west group, keeping any already on: `west config` replaces the
+# whole list, and a board whose group is off can't find its HAL.
+define ENABLE_WEST_GROUP
+filter="$$(west config manifest.group-filter || true)"; \
+case ",$$filter," in *,+$(1),*) ;; \
+*) west config manifest.group-filter -- "$${filter:+$$filter,}+$(1)" ;; esac
+endef
+
 # `make run` builds native_sim into the same directory, so check the build is
 # the flatsat's before loading it.
 CHECK_FIRMWARE = grep -qs '^CONFIG_BOARD="$(BOARD)"' $(BUILD_DIR)/zephyr/.config || \
 	{ echo 'No $(BOARD) firmware in $(BUILD_DIR): run `make build` first.'; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset bootlog debug clean cpb cpb-setup deploy-controller
+.PHONY: help test twister test-quick test-python coverage run run-fresh build flash console reset bootlog debug clean cpb cpb-setup metro metro-setup deploy-controller
 
 help:  ## Show this list
 	@echo ''
@@ -113,7 +125,7 @@ clean:  ## Delete build output
 	rm -rf $(BUILD_DIR) twister-out twister-out.*
 
 cpb-setup:  ## Fetch the Nordic HAL the Circuit Playground needs (once)
-	west config manifest.group-filter -- +cpb
+	@$(call ENABLE_WEST_GROUP,cpb)
 	west update hal_nordic
 
 cpb:  ## Build the UF2 for the Circuit Playground Bluefruit (docs/cpb.md)
@@ -121,6 +133,16 @@ cpb:  ## Build the UF2 for the Circuit Playground Bluefruit (docs/cpb.md)
 	west build -p -b $(CPB_BOARD) $(APP) -d $(CPB_BUILD_DIR)
 	@echo ''
 	@echo 'Firmware: $(CPB_BUILD_DIR)/zephyr/zephyr.uf2'
+
+metro-setup:  ## Fetch the Raspberry Pi HAL the Metro RP2350 needs (once)
+	@$(call ENABLE_WEST_GROUP,metro)
+	west update hal_rpi_pico
+
+metro:  ## Build the UF2 for the Metro RP2350 (docs/metro-rp2350.md)
+	@test -d ../modules/hal/rpi_pico || $(MAKE) metro-setup
+	west build -p -S cdc-acm-console -b $(METRO_BOARD) $(APP) -d $(METRO_BUILD_DIR)
+	@echo ''
+	@echo 'Firmware: $(METRO_BUILD_DIR)/zephyr/zephyr.uf2'
 
 deploy-controller:  ## Copy the flatsat controller firmware to its board (the Pico)
 	flatsat/deploy.sh

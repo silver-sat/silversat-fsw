@@ -241,6 +241,45 @@ jobs:
           path: silversat-fsw/build-cpb/zephyr/zephyr.uf2
           retention-days: 7
 
+  # The other student board (DS-04, docs/metro-rp2350.md): build only.
+  build_metro:
+    name: metro_rp2350 build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          path: silversat-fsw
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: silversat-fsw
+          toolchains: arm-zephyr-eabi
+          ccache-cache-key: metro-build
+          ccache-max-size: 256MB
+
+      - name: Install message generator requirements
+        run: pip install -r silversat-fsw/messages/requirements.txt
+
+      - name: Build application
+        working-directory: silversat-fsw
+        run: make metro
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyr-metro_rp2350
+          path: silversat-fsw/build-metro/zephyr/zephyr.uf2
+          retention-days: 7
+
   compliance:
     name: compliance
     if: github.event_name == 'pull_request'

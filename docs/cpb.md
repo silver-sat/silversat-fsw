@@ -6,6 +6,7 @@ your own computer. The same board still runs CircuitPython and Arduino.
 
 This is for learning. The CPB's nRF52840 isn't the flight processor, so a
 test that matters still belongs on the flatsat (docs/flatsat.md).
+docs/metro-rp2350.md covers the other board in this tier.
 
 ## What you need
 
@@ -82,8 +83,9 @@ Move the switch, then press reset once.
   the breakout, or if it isn't wired right, every start is boot 1.
 - **`short runs` and `reset_loop` are normal while you're experimenting.**
   Every run under 10 minutes counts as short. At three in a row health asks
-  for safe mode, and at six it stops the nvm app (`stopped 0x80`). Let the
-  board run for 10 minutes and the count clears.
+  for safe mode, and at six it stops the nvm app (`stopped 0x80`). The count
+  is worked out once, at each start: run the board for 10 minutes, and the
+  next start shows 0.
 - **No telemetry over USB yet.** The radio UART is on the TX and RX pads at
   19200 baud, and Zephyr's automatic USB setup makes only one serial port.
   To send commands and read telemetry you need a USB-serial link to those

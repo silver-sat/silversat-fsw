@@ -1,0 +1,95 @@
+/*
+ * Application overlay for the Adafruit Metro RP2350, a board in the student
+ * learning and exploration tier (DS-04, docs/metro-rp2350.md).
+ *
+ * The console is the board's USB serial port. The radio UART is on D0 and
+ * D1, at SilverSat's 19200 baud.
+ *
+ * There is no nvm-mirror alias (DS-75): with the FRAM fitted every record
+ * survives; without it none do.
+ */
+
+/ {
+	aliases {
+		radio-uart = &uart0;
+		/* D2 held to ground selects test mode, read once at boot (DS-42). */
+		test-mode-signal = &test_mode_signal;
+		/* The FRAM (DS-70), on i2c0 below. */
+		fram = &fram;
+		/* The sensor inside the RP2350 (DS-30). */
+		temperature-sensor = &die_temp;
+	};
+
+	test_mode_signal: test-mode-signal {
+		compatible = "silversat,test-mode-signal";
+		gpios = <&gpio0 2 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+	};
+};
+
+/*
+ * Link the code at the start of flash. Zephyr's RP2350 UF2 output starts at
+ * the base of flash, but this board reserves the first 0x100 bytes, so its
+ * images land 0x100 too low and never start.
+ */
+/delete-node/ &image_def;
+/delete-node/ &code_partition;
+
+&flash0 {
+	partitions {
+		code_partition: partition@0 {
+			label = "code-partition";
+			reg = <0x0 DT_SIZE_M(16)>;
+			read-only;
+		};
+	};
+};
+
+/*
+ * The Pico SDK's crystal start-up setting for this board. We have not tested
+ * whether the board needs it.
+ */
+&xosc {
+	startup-delay-multiplier = <64>;
+};
+
+/* The board leaves the watchdog off. Health feeds it (DS-43). */
+&wdt0 {
+	status = "okay";
+};
+
+&die_temp {
+	status = "okay";
+};
+
+&uart0 {
+	current-speed = <19200>;
+};
+
+/*
+ * The controller reads SCL back, so that pin needs its input on: without it
+ * every FRAM transfer timed out (-116). The board's definition enables only
+ * SDA's. The pull-ups cover a breakout that lacks its own.
+ */
+&i2c0_default {
+	group1 {
+		bias-pull-up;
+	};
+	group2 {
+		input-enable;
+		bias-pull-up;
+	};
+};
+
+/*
+ * A 32 KB Fujitsu MB85RC256V on an Adafruit breakout (ID 1895), on the
+ * Stemma QT connector. A part for learning, not the flight choice (DS-70).
+ */
+&i2c0 {
+	fram: fram@50 {
+		compatible = "fujitsu,mb85rcxx";
+		reg = <0x50>;
+		size = <32768>;
+		pagesize = <32768>;
+		address-width = <16>;
+	};
+};
