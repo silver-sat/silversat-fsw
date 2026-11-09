@@ -69,6 +69,39 @@ The board reads D2 once, as it starts.
 
 Change the wire, then press Reset once.
 
+## Telemetry and commands
+
+These use the radio UART on D0 and D1, at 19200 baud and 3.3 V, not USB. You
+need a USB-serial link to those pins. Both directions have been tested through
+a Metro M0 running CircuitPython as a USB-to-UART bridge (docs/cpb.md).
+
+Set the board's RX/TX switch to the position closest to the Boot button, where
+the board reads `RX 1 TX 0`. Adafruit ships the switch in either position, so
+check it. Then wire it like this, whatever the label seems to say:
+
+| Metro RP2350 | Metro M0 bridge |
+|---|---|
+| D1 | D0 |
+| D0 | D1 |
+| GND | GND |
+
+A USB-serial adapter should wire the same way, its RX to D1 and its TX to D0,
+but that hasn't been tried yet. Then:
+
+```sh
+python3 sim/radio_sim.py --port /dev/cu.usbmodemXXXXX --baud 19200 --listen
+```
+
+Add a command to the end of that line to send one, for example
+`temperature set_enabled false`.
+
+A CircuitPython bridge has two USB ports. Use the data port, which on a Mac is
+usually the one with the higher number. If you see only one port and the
+bridge's NeoPixel flashes three times, it is in safe mode and the bridge isn't
+running. Open its port and press Enter to read the reason, before you reset
+it: a reset loses that message. Then take the TX and RX wires off and press
+its Reset button once.
+
 ## What to know
 
 - **The FRAM is what remembers.** Without it, or if it isn't wired right,
@@ -81,10 +114,7 @@ Change the wire, then press Reset once.
 - **Temperature is the chip's own.** The Metro has no other temperature
   sensor, so `temperature_mc` in the telemetry reads above room temperature
   and follows how hard the chip is working (DS-30).
-- **No telemetry over USB.** The radio UART is on D0 and D1 at 19200 baud and
-  3.3 V, and the board's RX/TX switch swaps those two pins. Use it as
-  docs/cpb.md describes for the Circuit Playground's pads. This path hasn't
-  been tried on the Metro yet.
+- **No telemetry over USB.** See the section above.
 
 ## Known limits
 
