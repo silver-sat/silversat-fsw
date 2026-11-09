@@ -11,6 +11,14 @@ config SS_TEMPERATURE
 
 if SS_TEMPERATURE
 
+config SS_TEMPERATURE_CHIP
+	bool "The sensor measures the chip, not its surroundings"
+	help
+	  Read the sensor's die temperature channel instead of its ambient
+	  channel. For a board whose only sensor is inside the processor
+	  (DS-30). Expect a reading above room temperature that follows how
+	  hard the chip is working as much as the air around it.
+
 config SS_TEMPERATURE_FAIL_LIMIT
 	int "Failed readings in a row before a retry"
 	default 3

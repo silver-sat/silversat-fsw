@@ -133,6 +133,7 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
  * alias has no watchdog; health still watches the apps.
  *
  *   watchdog0   nucleo_f446re: the independent watchdog (IWDG)
+ *               adafruit_metro_rp2350: the chip's watchdog (wdt0)
  *               native_sim: none (tests use a fake that counts feeds)
  */
 #define WATCHDOG_NODE DT_ALIAS(watchdog0)
@@ -159,10 +160,12 @@ BUILD_ASSERT(FRAME_MINOR_MS * FRAME_SLOTS == 1000, "a major frame is 1 second (D
 
 /*
  * The temperature sensor (DS-30): any Zephyr sensor with an ambient
- * temperature channel. A board without the alias runs the app with no
- * readings: its data channel is marked not valid.
+ * temperature channel, or a die temperature channel with
+ * CONFIG_SS_TEMPERATURE_CHIP. A board without the alias runs the app with
+ * no readings: its data channel is marked not valid.
  *
  *   temperature-sensor   circuitplayground_bluefruit: the on-board thermistor
+ *                        adafruit_metro_rp2350: the sensor inside the chip
  *                        nucleo_f446re, native_sim: none (tests use a fake)
  */
 #define TEMPERATURE_SENSOR_NODE DT_ALIAS(temperature_sensor)

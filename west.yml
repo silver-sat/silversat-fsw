@@ -9,9 +9,9 @@
 #   └── modules/    <- fetched by west, not version controlled here
 #
 manifest:
-  # Projects in the cpb group are fetched only after `make cpb-setup`, so
-  # only builds for that board pay for them.
-  group-filter: [-cpb]
+  # Projects in these groups are fetched only after `make cpb-setup` or
+  # `make metro-setup`, so only builds for those boards pay for them.
+  group-filter: [-cpb, -metro]
 
   remotes:
     - name: upstream
@@ -45,6 +45,16 @@ manifest:
       path: modules/hal/nordic
       groups:
         - cpb
+
+    # The Raspberry Pi HAL, for the Metro RP2350 (docs/metro-rp2350.md). Like
+    # the Nordic HAL above, keep it at the revision in Zephyr's own west.yml
+    # when bumping Zephyr.
+    - name: hal_rpi_pico
+      remote: upstream
+      revision: 562b41e10a1d8b1a761b253b107c5c6a84cf4535
+      path: modules/hal/rpi_pico
+      groups:
+        - metro
 
   self:
     # Must match the directory name in every environment. Codespaces clones

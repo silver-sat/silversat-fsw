@@ -3,8 +3,12 @@ common:
     - app
     - temperature
 
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+
 tests:
-  app.temperature:
-    platform_allow:
-      - native_sim
-      - native_sim/native/64
+  app.temperature: {}
+  app.temperature.chip:
+    extra_configs:
+      - CONFIG_SS_TEMPERATURE_CHIP=y
