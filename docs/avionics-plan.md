@@ -115,7 +115,15 @@ We'll also replace the placeholder ground station coordinates in exercise 1 with
 
 **Why:** SilverSat has no dedicated space, so we set up and tear down hardware at every session. The flatsat fixes that by living somewhere permanent and being reachable from every Codespace and from CI ([flatsat.md](flatsat.md)). It needs a device that can switch power and drive reset remotely.
 
-**Where we are now (flatsat version 1):** a Nucleo-F446RE on an Ubuntu box on the SilverSat tailnet. A Raspberry Pi Pico running CircuitPython (`flatsat/`) drives the Nucleo's NRST line through a transistor. Nothing switches power yet.
+**Where we are now (flatsat version 1):** a Nucleo-F446RE on an Ubuntu box on the SilverSat tailnet. A Raspberry Pi Pico running CircuitPython (`flatsat/`) drives the Nucleo's NRST line through a transistor.
+
+Power switching already works too. The USB hub built into the Ubuntu box's keyboard can actually cut power to its ports (most hubs claim they can and don't). A mentor connects over Tailscale SSH and power-cycles the Nucleo with `uhubctl`:
+
+```sh
+sudo uhubctl -l 3-4 -p 1 -a cycle -d 5
+```
+
+[flatsat.md](flatsat.md) has the details. This has some limits. It needs someone with SSH and `sudo` on the box, rather than a command from a Codespace or CI. It switches the one port the Nucleo is on. And it depends on that particular keyboard hub: check any replacement hub before trusting it.
 
 **What students build:** a proper controller board:
 
@@ -131,7 +139,7 @@ We'll also replace the placeholder ground station coordinates in exercise 1 with
 
 **Why it's a good project:** the controller is a subsystem board in miniature. It has a command interface over a serial link, a state machine, and fail-safe behavior. Students who build it will understand the radio, payload, and power boards much better.
 
-**Not on the critical path:** the interim Pico keeps working, and a commercial USB switch can fill in for power switching. If the controller takes longer than planned, nothing downstream waits for it.
+**Not on the critical path:** the Pico handles reset, and the keyboard hub and `uhubctl` handle power. Together they can serve as the long-term solution if the controller board is delayed, not only as a stopgap. If we later need more switched ports than the keyboard hub has, a commercial hub that is verified to cut power can add them. If the controller takes longer than planned, nothing downstream waits for it.
 
 ### Stage 4: Mission device interfaces (in parallel with stage 3)
 
@@ -141,7 +149,7 @@ We'll also replace the placeholder ground station coordinates in exercise 1 with
 2. **Mission devices (mission-dependent):**
    - *Ionospheric beacon:* the beacon transmitter's control interface, a stable time and frequency reference, and its telemetry.
    - *Lightning sensing:* the VLF receiver or digitizer interface, event triggering, data buffering, and possibly GPS time for event timestamps.
-3. **The payload interface:** a UART link with CRC-32C to the payload board, like the other subsystem apps (DS-33).
+3. **The payload app:** the avionics side of the payload interface. This is flight software on the avionics board, not the payload's own software. It talks to the payload board over a UART link with CRC-32C, like the other subsystem apps (DS-33). It turns the payload on and off, sends it commands, watches its health, and collects its data for downlink. The payload team writes and owns the software that runs on the payload itself, and the two teams agree on the interface between them.
 
 **How:**
 
@@ -190,7 +198,8 @@ These are the places where avionics depends on decisions it doesn't own, or prod
 |---|---|
 | Schematic review, layout help, and supervised assembly for the controller board | From spring 2027 |
 | A shared approach to KiCad: version, libraries, and the "one person per board at a time" rule | Before the controller board starts |
-| Input on avionics part selection (microcontroller, buses, sensors, FRAM) | 2027, as stage 4 picks parts |
+| **Component libraries:** an agreed place for symbols, footprints, and 3D models, and a rule for who adds and checks them. Options are the existing `silver-sat/kicad_library` repo, or a library inside each board's repo. We expect this to be a problem: newer SPI sensors and mission-specific parts often have no KiCad library, vendor and third-party footprints vary in quality, and a wrong footprint costs a board spin | Before the controller board starts, and for every new part after that |
+| Input on avionics part selection (microcontroller, buses, sensors, FRAM). For each candidate part, we need to know whether a checked KiCad symbol and footprint exist, or who will make them | 2027, as stage 4 picks parts |
 | Design and build of flatsat version 2 | 2028, possibly later |
 
 | Avionics provides | |
@@ -223,7 +232,7 @@ These are the places where avionics depends on decisions it doesn't own, or prod
 | Avionics provides | |
 |---|---|
 | A payload simulator, written by students in Python, with a fault menu (DS-90) | 2027 |
-| The payload app and its interface on the flatsat | Stage 4 |
+| The payload app: avionics flight software that commands the payload and collects its telemetry and data over the agreed interface. It is not the payload's own software, which the payload team writes | Stage 4 |
 
 ### Project management team
 
@@ -275,9 +284,10 @@ A two-year plan will outlast some of the students who start it. Several things h
 | Risk | Mitigation |
 |---|---|
 | The mission decision slips past December 12 | The Basilisk unit and the practice devices are useful for either mission |
-| Nobody from the hardware team can supervise the controller board | The interim Pico and a commercial USB switch keep the flatsat working. The board waits |
+| Nobody from the hardware team can supervise the controller board | The Pico (reset) and the keyboard hub with `uhubctl` (power) keep the flatsat working indefinitely. The board waits |
 | The toolchain overwhelms students working a few hours a week | Make targets hide west, CMake, devicetree, and Kconfig. Students start in CircuitPython. Mentors own the infrastructure (design spec section 11) |
 | CSLI timing or eligibility changes | Check NASA's CSLI page each term. Most of the work stands on its own whatever the launch route |
+| A selected part has no usable KiCad symbol or footprint | Ask about library support during part selection. Check every new footprint against the datasheet before layout |
 | Flatsat version 2 runs long | It's allowed to. Version 1 with add-ons supports the proposal |
 
 ## 7. Questions for mentors
@@ -294,4 +304,5 @@ A two-year plan will outlast some of the students who start it. Several things h
 | Date | Change |
 |---|---|
 | 2026-11-17 | Initial draft. Builds on the multi-year avionics plan drafted for mentors in November 2026 (not sent), and replaces its November 2027 proposal assumption with an anticipated late-2028 CSLI solicitation |
+| 2026-11-17 | Flatsat power switching through the keyboard hub and `uhubctl` as an ongoing fallback for the controller. KiCad component libraries added to the hardware team's needs and to the risks. The payload app described as the avionics side of the payload interface |
 | 2026-11-17 | CSLI timing from NASA's page: next solicitation expected in 2028, no date yet |
