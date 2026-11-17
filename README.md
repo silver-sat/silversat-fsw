@@ -130,6 +130,13 @@ Simulated time in native_sim means a full orbit's worth of mode transitions
 runs in milliseconds. Use it. A test that takes an hour of wall clock on
 hardware can take a few hundred lines and no time at all here.
 
+## The plan
+
+[docs/avionics-plan.md](docs/avionics-plan.md) is the avionics team's
+two-year plan: onboarding, simulation, the flatsat controller, mission
+device interfaces, flatsat version 2, and how each connects to the other
+teams.
+
 ## Related repositories
 
 - https://github.com/silver-sat/basilisk-sim — orbital dynamics, and the
