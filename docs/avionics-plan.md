@@ -6,6 +6,7 @@
 | Owner | Lee Congdon (avionics mentor) |
 | Last updated | 2026-11-17 |
 | Horizon | About two years: November 2026 to late 2028 |
+| Proposal | [NASA CSLI](https://www.nasa.gov/announcement-of-partnership-opportunity-for-cubesat-launch-initiative/): next solicitation expected in 2028 |
 
 This is the avionics team's plan for the next two years: what we'll learn, what we'll build, and where our work depends on the other teams. SilverSat 2 will have four or five teams. This document covers the avionics part and describes each place where it connects to the hardware, radio, payload, and project management teams.
 
@@ -38,7 +39,7 @@ The work comes in five stages. Onboarding and simulation come first. After those
 4. **Mission device interfaces** (runs alongside 3): Zephyr drivers and apps for the sensors and devices the selected mission needs.
 5. **Flatsat version 2**: a complete prototype flatsat, built with the hardware team. It can slip past the two-year window. Until it's ready, we add to the existing flatsat.
 
-**The proposal** runs in parallel the whole time. We expect the NASA CubeSat Launch Initiative (CSLI) to open a solicitation in late 2028. Most of the education, development, and testing in this plan doubles as evidence for that proposal.
+**The proposal** runs in parallel the whole time. NASA's CubeSat Launch Initiative (CSLI) page says the agency expects to release its next solicitation in 2028, with no month given yet, and will publish eligibility and application details before then (page updated October 29, 2026). Recent rounds opened in the summer with proposals due in November (for example, June and November 2024), so we plan on a late-2028 deadline until NASA says otherwise. Most of the education, development, and testing in this plan doubles as evidence for that proposal.
 
 ### Calendar anchors
 
@@ -50,7 +51,8 @@ The work comes in five stages. Onboarding and simulation come first. After those
 | Spring 2027 | Controller board design starts with the hardware team | Planned |
 | 2027 | Mission device interfaces on emulators, then on hardware | Planned |
 | 2028 | Flatsat version 2 built and brought up | Target; may slip |
-| Late 2028 | CSLI proposal submitted | Anticipated, not yet announced |
+| 2028 | NASA releases the next CSLI solicitation | NASA says 2028; no date published |
+| Late 2028 | CSLI proposal submitted | Assumed from past rounds |
 
 All dates after December 2026 are targets. We'll update them here as they firm up.
 
@@ -275,7 +277,7 @@ A two-year plan will outlast some of the students who start it. Several things h
 | The mission decision slips past December 12 | The Basilisk unit and the practice devices are useful for either mission |
 | Nobody from the hardware team can supervise the controller board | The interim Pico and a commercial USB switch keep the flatsat working. The board waits |
 | The toolchain overwhelms students working a few hours a week | Make targets hide west, CMake, devicetree, and Kconfig. Students start in CircuitPython. Mentors own the infrastructure (design spec section 11) |
-| CSLI timing or eligibility changes | Track the announcement. Most of the work stands on its own whatever the launch route |
+| CSLI timing or eligibility changes | Check NASA's CSLI page each term. Most of the work stands on its own whatever the launch route |
 | Flatsat version 2 runs long | It's allowed to. Version 1 with add-ons supports the proposal |
 
 ## 7. Questions for mentors
@@ -292,3 +294,4 @@ A two-year plan will outlast some of the students who start it. Several things h
 | Date | Change |
 |---|---|
 | 2026-11-17 | Initial draft. Builds on the multi-year avionics plan drafted for mentors in November 2026 (not sent), and replaces its November 2027 proposal assumption with an anticipated late-2028 CSLI solicitation |
+| 2026-11-17 | CSLI timing from NASA's page: next solicitation expected in 2028, no date yet |
