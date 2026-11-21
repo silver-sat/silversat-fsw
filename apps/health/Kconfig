@@ -32,21 +32,33 @@ config SS_WATCHDOG_TIMEOUT_MS
 	  (DS-43).
 
 config SS_HEALTH_STATUS_LOG
-	bool "Log a status line on the console (development)"
+	bool "Log a status line and a heartbeat on the console (development)"
 	default y if !SS_FLIGHT_BUILD
 	depends on LOG
 	help
 	  Once every SS_HEALTH_STATUS_SECONDS, health logs the boot, MET,
 	  mode and reason, the least stack any app has left, stalls and
 	  stopped apps: on the bench, with only a USB cable, the console is
-	  the one window in. Not in the flight build (DS-06); nothing depends
-	  on it.
+	  the one window in. Once every SS_HEALTH_HEARTBEAT_SECONDS it also
+	  logs "alive", so a board in a mode that is otherwise silent (deploy)
+	  still shows it is running. Not in the flight build (DS-06); nothing
+	  depends on it.
 
 config SS_HEALTH_STATUS_SECONDS
 	int "Seconds between status lines"
 	default 60
 	range 1 3600
 	depends on SS_HEALTH_STATUS_LOG
+
+config SS_HEALTH_HEARTBEAT_SECONDS
+	int "Seconds between heartbeat lines"
+	default 10
+	range 1 3600
+	depends on SS_HEALTH_STATUS_LOG
+	help
+	  How often health logs "alive". Health runs in every mode's frame
+	  table, so the heartbeat shows the frame manager and health are both
+	  running, whatever the mode.
 
 config SS_REENABLE_COOLDOWN_FRAMES
 	int "Major frames before health restarts an AUTO app"
