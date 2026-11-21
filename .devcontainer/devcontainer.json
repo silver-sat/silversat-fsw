@@ -14,7 +14,12 @@
 		// joining: see postStartCommand.
 		"ghcr.io/tailscale/codespace/tailscale": {
 			"version": "latest"
-		}
+		},
+		// An SSH server, so `gh codespace ssh` can run commands in the
+		// Codespace from a laptop: for example, a Claude Code session on a
+		// mentor's laptop building and testing here. Nothing in the build
+		// uses it.
+		"ghcr.io/devcontainers/features/sshd:1": {}
 	},
 
 	// Assembles the west workspace. Runs during prebuild, so a Codespace
