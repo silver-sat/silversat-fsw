@@ -30,7 +30,8 @@
  *      left unused, and which app (DS-44). Each app's thread is named
  *      <app>_tid (app_thread_name()), so health finds it by name;
  *   5. feeds the hardware watchdog, unless a reset is coming;
- *   6. in a development build, logs a status line every
+ *   6. in a development build, logs "alive" every
+ *      CONFIG_SS_HEALTH_HEARTBEAT_SECONDS and a status line every
  *      CONFIG_SS_HEALTH_STATUS_SECONDS (status.c).
  *
  * A reset loop (DS-44): at boot, boot.c counts the short runs in a row in
@@ -386,9 +387,13 @@ static void check(const struct frame_report *report)
 }
 
 /*
- * The development status line (status.c); nothing in the flight build. Kept
- * out of line, so its buffer is on the stack only while a line is written,
- * not through every major frame's FRAM write.
+ * The development heartbeat and status line (status.c); nothing in the
+ * flight build. Kept out of line, so its buffer is on the stack only while a
+ * line is written, not through every major frame's FRAM write.
+ *
+ * The heartbeat comes from health, not from a loop in main(): a line here
+ * means the frame manager woke health this major frame, so if either one
+ * stops, the heartbeat stops too.
  */
 static __noinline void log_status(int64_t met_ms)
 {
@@ -396,6 +401,9 @@ static __noinline void log_status(int64_t met_ms)
 	struct mode_state mode;
 	char line[160];
 
+	if (status_due(major_frames, CONFIG_SS_HEALTH_HEARTBEAT_SECONDS)) {
+		LOG_INF("alive");
+	}
 	if (!status_due(major_frames, CONFIG_SS_HEALTH_STATUS_SECONDS)) {
 		return;
 	}

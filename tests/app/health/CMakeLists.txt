@@ -18,6 +18,7 @@ zephyr_compile_definitions(SS_TEST_APP_ATTRS="test_app_attrs.h")
 zephyr_include_directories(src)
 
 target_sources(app PRIVATE src/main.c src/fake_watchdog.c ../common/app_test.c
+  ../common/log_capture.c
   ${FAKES}/fake_fram.c ${FAKES}/fake_retained_mem.c)
 # apps/health, for the status line's own tests (status.h). A test may reach
 # into an app; an app may not (DS-12).

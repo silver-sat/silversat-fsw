@@ -8,9 +8,10 @@
  * development build health logs one line every
  * CONFIG_SS_HEALTH_STATUS_SECONDS with what matters most: the boot, MET,
  * the mode and why, the least stack any app has left, stalls, short runs
- * in a row (a reset loop, DS-44), and the apps health has stopped. The
- * flight build leaves it out (CONFIG_SS_HEALTH_STATUS_LOG), and nothing
- * depends on it.
+ * in a row (a reset loop, DS-44), and the apps health has stopped. Every
+ * CONFIG_SS_HEALTH_HEARTBEAT_SECONDS it also logs "alive", on the same
+ * schedule (status_due). The flight build leaves both out
+ * (CONFIG_SS_HEALTH_STATUS_LOG), and nothing depends on them.
  */
 
 #include <stdio.h>

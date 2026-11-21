@@ -38,6 +38,7 @@
 
 #include "app_test.h"
 #include "fake_watchdog.h"
+#include "log_capture.h"
 #include "msg/common.h"
 #include "msg/frame_manager.h"
 #include "msg/health.h"
@@ -938,6 +939,23 @@ ZTEST(health, test_protected_stall_stops_the_watchdog)
 #endif /* PROTECTED_STALL */
 
 /* ---- The development status line (status.c, DS-06) ---------------------- */
+
+#if !defined(RESET_LOOP) && !defined(PROTECTED_STALL)
+/*
+ * The console heartbeat: "alive" once every CONFIG_SS_HEALTH_HEARTBEAT_SECONDS
+ * major frames, from health, so it shows the frame manager and health are
+ * running even in deploy mode, when nothing else is logged. Health is in
+ * every mode's frame table (tests/app/frame_tables).
+ */
+ZTEST(health, test_alive_once_every_heartbeat_period)
+{
+	log_capture_start("health: alive");
+	for (int i = 0; i < 3 * CONFIG_SS_HEALTH_HEARTBEAT_SECONDS; i++) {
+		report(0, 0);
+	}
+	zassert_equal(log_capture_count(), 3, "whichever major frame the count starts at");
+}
+#endif
 
 ZTEST(health, test_status_is_due_at_frame_2_then_every_period)
 {

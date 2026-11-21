@@ -15,9 +15,9 @@
 #include "msg/health.h"
 
 /*
- * Is a status line due at this major frame (1, 2, 3, ...)? The first comes
- * at major frame 2, after the mode manager has read the test signal in
- * major frame 1; then one every period major frames.
+ * Is a status line (or heartbeat) due at this major frame (1, 2, 3, ...)?
+ * The first comes at major frame 2, after the mode manager has read the
+ * test signal in major frame 1; then one every period major frames.
  */
 bool status_due(uint32_t major_frame, uint32_t period);
 

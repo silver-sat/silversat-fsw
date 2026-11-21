@@ -88,12 +88,16 @@ numbers vary):
 *** Booting Zephyr OS build ... ***
 [00:00:00.005,000] <inf> silversat: SilverSat FSW starting on nucleo_f446re/stm32f446xx
 [00:00:00.014,000] <inf> mode_manager: boot in deploy mode (boot)
+[00:00:01.015,000] <inf> health: alive
 [00:00:01.015,000] <inf> health: boot 1, MET 1 s, mode deploy (boot), least stack 480 B (telemetry_output), stalls 0, short runs 0, stopped 0x0
-[00:00:10.013,000] <inf> silversat: alive
+[00:00:11.015,000] <inf> health: alive
 ```
 
 The **mode manager** logs the boot mode and every mode change. **Health**
-logs a status line about a second after boot and then every minute:
+logs `alive` about a second after boot and then every 10 seconds, in every
+mode: it is the heartbeat that shows the frame manager and health are both
+running, even in deploy mode, when nothing else is said. Health also logs a
+status line about a second after boot and then every minute:
 
 | Part | Meaning |
 |---|---|
